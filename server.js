@@ -4,13 +4,13 @@ const fetch = require("node-fetch");
 const app = express();
 app.use(express.json());
 
-// 🔐 Variáveis de ambiente (Render)
+// 🔐 Variáveis de ambiente
 const VERIFY_TOKEN = "iqg_token_123";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
-// 🔹 Verificação do webhook (Meta)
+// 🔹 Verificação do webhook
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -39,7 +39,7 @@ app.post("/webhook", async (req, res) => {
 
       console.log("Mensagem recebida:", text);
 
-      // 🔥 Chamada para OpenAI
+      // 🔥 CHAMADA OPENAI
       const gptResponse = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -65,18 +65,20 @@ app.post("/webhook", async (req, res) => {
 
       console.log("Resposta da OpenAI:", JSON.stringify(gptData, null, 2));
 
-      // 🔥 Tratamento seguro (evita erro que você teve)
+      // 🔥 TRATAMENTO SEGURO
       let reply = "Olá! Sou o assistente da IQG. Como posso te ajudar sobre o programa de parceiros homologados?";
 
       if (gptData.choices && gptData.choices[0] && gptData.choices[0].message) {
         reply = gptData.choices[0].message.content;
       } else if (gptData.error) {
         console.error("Erro da OpenAI:", gptData.error);
-        reply = "No momento estou com uma instabilidade no atendimento automático. Já já um consultor continua seu atendimento.";
+        reply = "No momento estou com instabilidade no atendimento automático. Um consultor irá te atender em breve.";
       }
 
-      // 🔥 Enviar resposta para WhatsApp
-      await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+      console.log("Resposta final enviada:", reply);
+
+      // 🔥 ENVIO WHATSAPP (COM DEBUG)
+      const whatsappResponse = await fetch(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${WHATSAPP_TOKEN}`,
@@ -88,6 +90,10 @@ app.post("/webhook", async (req, res) => {
           text: { body: reply }
         })
       });
+
+      const whatsappData = await whatsappResponse.json();
+
+      console.log("Resposta do WhatsApp:", JSON.stringify(whatsappData, null, 2));
     }
 
     res.sendStatus(200);
@@ -97,7 +103,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// 🔹 Start servidor
+// 🔹 Iniciar servidor
 app.listen(process.env.PORT || 3000, () => {
   console.log("Servidor rodando...");
 });
