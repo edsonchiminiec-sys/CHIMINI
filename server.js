@@ -6,14 +6,9 @@ app.use(express.json());
 
 const VERIFY_TOKEN = "iqg_token_123";
 
-// 🔴 COLE SUA API KEY DA OPENAI AQUI
-const OPENAI_API_KEY = "SUA_OPENAI_API_KEY";
-
-// 🔴 COLE SEU TOKEN DO WHATSAPP AQUI
-const WHATSAPP_TOKEN = "SEU_TOKEN_META";
-
-// 🔴 COLE SEU PHONE NUMBER ID AQUI
-const PHONE_NUMBER_ID = "SEU_PHONE_NUMBER_ID";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 // 🔹 Verificação webhook
 app.get("/webhook", (req, res) => {
