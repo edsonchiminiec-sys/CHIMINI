@@ -6,16 +6,21 @@ app.use(express.json());
 
 const VERIFY_TOKEN = "iqg_token_123";
 
+app.get("/", (req, res) => {
+  res.send("Bot IQG rodando");
+});
+
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token === VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("Webhook verificado com sucesso");
     return res.status(200).send(challenge);
-  } else {
-    return res.sendStatus(403);
   }
+
+  return res.sendStatus(403);
 });
 
 app.post("/webhook", async (req, res) => {
@@ -30,11 +35,11 @@ app.post("/webhook", async (req, res) => {
     }
 
     const from = message.from;
-    const text = message.text?.body;
+    const text = message.text?.body || "Olá";
 
     console.log("Mensagem recebida:", text);
+    console.log("Número recebido de:", from);
 
-    // 🔥 CHAMADA OPENAI
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -43,17 +48,31 @@ app.post("/webhook", async (req, res) => {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: [{ role: "user", content: text }]
+        messages: [
+          {
+            role: "system",
+            content: "Você é um SDR especializado no programa de parceiros homologados da IQG. Seja claro, objetivo e profissional."
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ]
       })
     });
 
     const data = await openaiResponse.json();
 
-    const resposta = data.choices?.[0]?.message?.content;
+    console.log("Resposta da OpenAI:", JSON.stringify(data, null, 2));
 
-    console.log("Resposta IA:", resposta);
+    let resposta = data.choices?.[0]?.message?.content;
 
-    // 🔥 ENVIO WHATSAPP
+    if (!resposta) {
+      resposta = "Olá! Sou o assistente da IQG. Como posso ajudar você sobre o programa de parceiros homologados?";
+    }
+
+    console.log("Resposta final enviada:", resposta);
+
     const whatsappResponse = await fetch(
       `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
       {
@@ -75,13 +94,13 @@ app.post("/webhook", async (req, res) => {
 
     const whatsappData = await whatsappResponse.json();
 
-    console.log("Resposta do WhatsApp:", whatsappData);
+    console.log("Resposta do WhatsApp:", JSON.stringify(whatsappData, null, 2));
 
-    res.sendStatus(200);
+    return res.sendStatus(200);
 
   } catch (error) {
     console.error("ERRO GERAL:", error);
-    res.sendStatus(500);
+    return res.sendStatus(500);
   }
 });
 
