@@ -1,5 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
+import FormData from "form-data";
 
 const app = express();
 app.use(express.json());
@@ -7,9 +8,35 @@ app.use(express.json());
 const VERIFY_TOKEN = "iqg_token_123";
 const conversations = {};
 
-// Opcional: se quiser notificar consultor depois, crie no Render:
-// CONSULTANT_PHONE=55DDDNÚMERO
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
+
+const FILES = {
+  catalogo: {
+    link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
+    filename: "Catalogo de Produtos de Piscina.pdf",
+    caption: "Segue o catálogo de produtos de piscina da IQG."
+  },
+  contrato: {
+    link: "https://drive.google.com/uc?export=download&id=1DdrKmuB_t1bHvpLvfuymYmGufLXN9qDG",
+    filename: "Modelo de Contrato IQG.pdf",
+    caption: "Segue o modelo de contrato para leitura. A versão oficial para assinatura é liberada após análise cadastral da equipe IQG."
+  },
+  kit: {
+    link: "https://drive.google.com/uc?export=download&id=1a0fLehflAcwxelV-ngESpKSWXwGkb-Ic",
+    filename: "Kit Parceiro Homologado IQG.pdf",
+    caption: "Segue o material do Kit Parceiro Homologado IQG."
+  },
+  manual: {
+    link: "https://drive.google.com/uc?export=download&id=13_HkO_6Kp2sGZYxgbChLzCsSmPVB-4JM",
+    filename: "Manual Curso Tratamento de Piscina IQG.pdf",
+    caption: "Segue o manual/curso prático de tratamento de piscina. Ele ajuda a entender como e quando utilizar cada produto."
+  },
+  folder: {
+    link: "https://drive.google.com/uc?export=download&id=1wER0uBkkvnL_4BNs5AmDJeH0za-S3yFw",
+    filename: "Folder Programa Parceiro Homologado IQG.pdf",
+    caption: "Segue o folder explicativo do Programa Parceiro Homologado IQG."
+  }
+};
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -17,7 +44,7 @@ function delay(ms) {
 
 function humanDelay(text) {
   const base = 2500;
-  const perChar = 32;
+  const perChar = 30;
   const max = 12000;
   return Math.min(base + (text || "").length * perChar, max);
 }
@@ -31,7 +58,7 @@ async function markAsReadAndTyping(messageId) {
       {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
@@ -58,7 +85,7 @@ async function sendWhatsAppMessage(to, body) {
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -77,6 +104,155 @@ async function sendWhatsAppMessage(to, body) {
   return data;
 }
 
+async function sendWhatsAppDocument(to, file) {
+  const response = await fetch(
+    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "document",
+        document: {
+          link: file.link,
+          filename: file.filename,
+          caption: file.caption
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+  console.log("Envio de documento:", JSON.stringify(data, null, 2));
+  return data;
+}
+
+function detectRequestedFile(text) {
+  const lower = (text || "").toLowerCase();
+
+  if (
+    lower.includes("contrato") ||
+    lower.includes("minuta") ||
+    lower.includes("termo")
+  ) {
+    return "contrato";
+  }
+
+  if (
+    lower.includes("catálogo") ||
+    lower.includes("catalogo") ||
+    lower.includes("produtos") ||
+    lower.includes("linha de produtos")
+  ) {
+    return "catalogo";
+  }
+
+  if (
+    lower.includes("kit") ||
+    lower.includes("lote") ||
+    lower.includes("estoque inicial") ||
+    lower.includes("vem no kit")
+  ) {
+    return "kit";
+  }
+
+  if (
+    lower.includes("manual") ||
+    lower.includes("curso") ||
+    lower.includes("treinamento") ||
+    lower.includes("tratar piscina") ||
+    lower.includes("tratamento de piscina") ||
+    lower.includes("como usar") ||
+    lower.includes("quando usar") ||
+    lower.includes("aplicar produto") ||
+    lower.includes("não sei tratar piscina") ||
+    lower.includes("nao sei tratar piscina")
+  ) {
+    return "manual";
+  }
+
+  if (
+    lower.includes("folder") ||
+    lower.includes("resumo") ||
+    lower.includes("explicativo") ||
+    lower.includes("apresentação") ||
+    lower.includes("apresentacao")
+  ) {
+    return "folder";
+  }
+
+  return null;
+}
+
+async function getMediaUrl(mediaId) {
+  const response = await fetch(
+    `https://graph.facebook.com/v18.0/${mediaId}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+      }
+    }
+  );
+
+  return await response.json();
+}
+
+async function downloadMedia(url) {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+    }
+  });
+
+  const buffer = await response.buffer();
+  const contentType = response.headers.get("content-type") || "audio/ogg";
+
+  return { buffer, contentType };
+}
+
+async function transcribeAudio(mediaId) {
+  const mediaData = await getMediaUrl(mediaId);
+
+  console.log("Dados da mídia:", JSON.stringify(mediaData, null, 2));
+
+  if (!mediaData.url) {
+    throw new Error("Não foi possível obter URL da mídia.");
+  }
+
+  const { buffer, contentType } = await downloadMedia(mediaData.url);
+
+  const form = new FormData();
+  form.append("file", buffer, {
+    filename: "audio.ogg",
+    contentType
+  });
+  form.append("model", "whisper-1");
+  form.append("language", "pt");
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      ...form.getHeaders()
+    },
+    body: form
+  });
+
+  const data = await response.json();
+
+  console.log("Transcrição OpenAI:", JSON.stringify(data, null, 2));
+
+  if (data.text) return data.text;
+
+  throw new Error("Falha ao transcrever áudio.");
+}
+
 function shouldNotifyConsultant(answer) {
   const text = (answer || "").toLowerCase();
 
@@ -85,7 +261,8 @@ function shouldNotifyConsultant(answer) {
     text.includes("vou encaminhar") ||
     text.includes("equipe interna") ||
     text.includes("fase contratual") ||
-    text.includes("link de pagamento")
+    text.includes("link de pagamento") ||
+    text.includes("análise interna")
   );
 }
 
@@ -118,7 +295,7 @@ PERSONALIDADE:
 - Use linguagem de WhatsApp.
 - Use emojis com muita moderação.
 - Seja objetiva, mas não seca.
-- Pareça uma pessoa real digitando.
+- Pareça uma pessoa real.
 - Evite frases repetitivas.
 
 REGRA DE HISTÓRICO:
@@ -204,11 +381,6 @@ Se o lead pedir contrato, você pode dizer que pode encaminhar um modelo para le
 - A assinatura do contrato vem antes do pagamento.
 - O pagamento vem somente após contrato assinado.
 
-RESPOSTA SE O LEAD PEDIR CONTRATO:
-"Claro, posso te encaminhar um modelo para leitura das condições gerais.
-
-Só reforço: a versão oficial para assinatura é liberada após a pré-análise e aprovação cadastral pela equipe interna da IQG. Primeiro analisamos o cadastro, depois seguimos para fase contratual."
-
 REGRA SOBRE PAGAMENTO:
 Nunca peça PIX ou cartão antes da análise interna e contrato assinado.
 Antes do contrato, no máximo explique as condições:
@@ -226,6 +398,10 @@ Diga:
 "Essa parte é mais específica e eu prefiro confirmar com um consultor da IQG para te passar a informação correta. Vou encaminhar seu atendimento para um consultor continuar com você com segurança."
 Se o lead chegar em fase contratual, pedido de link, pagamento, análise de restrição, avalista ou dúvida contratual específica, encaminhe para consultor.
 
+ARQUIVOS DISPONÍVEIS:
+Se o lead pedir catálogo, contrato, kit, manual/curso de piscina ou folder, informe que vai enviar o material e o sistema enviará o arquivo.
+O manual/curso de tratamento de piscina serve para orientar como tratar piscina, como usar os produtos e quando aplicar cada produto. Use esse material para reduzir insegurança de leads sem experiência.
+
 BENEFÍCIOS:
 Use quando fizer sentido:
 - 40% de comissão.
@@ -241,27 +417,6 @@ Use quando fizer sentido:
 - Produtos com demanda recorrente.
 - Linha de produtos para piscina, agro, ordenha e cosméticos veterinários.
 - Possibilidade de indicação com 10% vitalício.
-
-KIT INICIAL DE PISCINAS:
-Explique apenas se o lead perguntar sobre produtos ou estoque.
-O lote inicial é estratégico para pronta-entrega e demonstração, cedido em comodato.
-
-Itens:
-- 10 IQG Clarificante 1L
-- 20 IQG Tablete Premium 90% 200g
-- 5 IQG Decantador 2kg
-- 6 IQG Nano 1L
-- 5 IQG Limpa Bordas 1L
-- 5 IQG Elevador de pH 2kg
-- 5 IQG Redutor de pH e Alcalinidade 1L
-- 5 IQG Algicida de Manutenção 1L
-- 5 IQG Elevador de Alcalinidade 2kg
-- 5 IQG Algicida de Choque 1L
-- 5 IQG Action Multiativos 10kg
-- 4 IQG Peroxid/OXI+ 5L
-- 3 IQG Kit 24H 2,4kg
-- 2 IQG Booster Ultrafiltração 400g
-- 1 IQG Clarificante 5L
 
 CONDUTA:
 - Faça perguntas estratégicas.
@@ -315,20 +470,20 @@ Telefone:
 Você já atua com vendas, piscinas ou comércio?
 Possui nome limpo?"
 
-SE O LEAD JÁ ENVIOU ALGUNS DADOS:
-Agradeça e peça somente o que falta.
-Não peça tudo de novo.
-
 SE JÁ TIVER DADOS SUFICIENTES:
 "Perfeito, obrigado. Com esses dados já consigo encaminhar para a análise interna da IQG.
 
 Se estiver tudo certo na análise, o próximo passo será a fase contratual. Depois do contrato assinado, seguimos para pagamento e ativação."
 
-SE ESCOLHER PIX ANTES DO CONTRATO:
-"Perfeito, PIX é uma das opções. Só para mantermos o processo certinho: primeiro seus dados passam pela análise interna e, se aprovado, seguimos para contrato. Após a assinatura, o consultor libera o pagamento com segurança."
+SE O LEAD PEDIR CONTRATO:
+"Claro, posso te encaminhar um modelo para leitura das condições gerais.
 
-SE ESCOLHER CARTÃO ANTES DO CONTRATO:
-"Perfeito. O cartão pode ser feito em até 10x de R$199,00, conforme disponibilidade operacional. Primeiro seguimos com análise interna e contrato; depois da assinatura, o consultor libera o link de pagamento."
+Só reforço: a versão oficial para assinatura é liberada após a pré-análise e aprovação cadastral pela equipe interna da IQG. Primeiro analisamos o cadastro, depois seguimos para fase contratual."
+
+SE O LEAD PEDIR MANUAL / CURSO / COMO TRATAR PISCINA:
+"Boa pergunta. Vou te enviar um material que funciona como um manual/curso prático de tratamento de piscina.
+
+Ele mostra como usar os produtos, quando aplicar e ajuda bastante quem está começando ou quer mais segurança para atender clientes."
 
 SE O LEAD PERGUNTAR INVESTIMENTO:
 "Para entrar no programa, existe um investimento único de adesão e implantação de R$1.990,00. Pode ser via PIX ou em até 10x de R$199,00 no cartão, conforme disponibilidade.
@@ -336,70 +491,6 @@ SE O LEAD PERGUNTAR INVESTIMENTO:
 Esse valor não é compra de mercadoria. Ele cobre sua ativação, implantação, suporte, treinamento, materiais e liberação do lote inicial em comodato.
 
 Mas o pagamento só acontece depois da análise interna e assinatura do contrato, combinado?"
-
-SE O LEAD TIVER MEDO:
-"Entendo totalmente. E é correto avaliar com cuidado.
-
-O ponto aqui é que você não começa comprando estoque. A IQG libera o lote inicial em comodato, dá suporte técnico e comercial, e você atua vendendo produtos de demanda recorrente.
-
-Não é renda garantida, mas para quem tem disposição comercial, é um modelo bem interessante.
-
-Quer que eu siga com sua pré-análise para vermos se seu perfil encaixa?"
-
-OBJEÇÕES:
-"É franquia?"
-"Não. Não é franquia. Você não paga royalties, não precisa montar loja padronizada e não opera uma unidade franqueada. É uma parceria comercial autônoma para venda de produtos IQG."
-
-"Preciso abrir empresa?"
-"Não. Você pode ingressar sem CNPJ. A nota fiscal é emitida pela IQG quando aplicável, conforme regras internas."
-
-"Preciso comprar estoque?"
-"Não. O lote inicial é disponibilizado em comodato. Ele fica com você para pronta-entrega e demonstração, mas continua sendo propriedade da IQG."
-
-"Quanto eu ganho?"
-"Você recebe 40% de comissão sobre a tabela IQG nas vendas liquidadas. Se vender acima do valor sugerido, pode ganhar mais. Se der desconto, esse desconto sai da comissão."
-
-"Quando recebo?"
-"As vendas são fechadas semanalmente, e a comissão é paga na semana seguinte à liquidação, conforme relatório."
-
-"E se eu não vender?"
-"O programa entrega estrutura, produtos e suporte, mas o resultado depende da sua atuação comercial. A prospecção e o relacionamento com clientes são responsabilidade do parceiro."
-
-"Tenho medo de investir e não dar certo"
-"É normal. Por isso o modelo reduz barreiras: você não precisa comprar estoque inicial, não precisa abrir empresa e conta com suporte da indústria. Mas é importante entender que não é renda garantida. É uma operação comercial para quem quer vender e desenvolver clientes."
-
-"Por que R$1.990?"
-"Esse valor é o investimento único de adesão e implantação. Ele cobre ativação, onboarding, suporte, treinamento, materiais e liberação operacional do lote inicial em comodato. Não é compra de mercadoria, não é caução e não vira crédito."
-
-"É devolvido se eu desistir?"
-"Não. O investimento de adesão e implantação não é reembolsável, pois remunera a estrutura de ativação e implantação disponibilizada ao parceiro."
-
-"Posso vender em qualquer cidade?"
-"Sim. Pode vender em todo o Brasil. Não há exclusividade regional."
-
-"Preciso ter nome limpo?"
-"Sim. O programa exige nome limpo por conta do estoque em comodato, que fica sob responsabilidade do parceiro. Se houver alguma restrição, ainda podemos avaliar a entrada com avalista ou garantidor com nome limpo, a critério da IQG."
-
-"É pirâmide?"
-"Não. O programa é baseado na venda real de produtos físicos IQG ao consumidor final, com nota fiscal e comissão sobre vendas liquidadas. A indicação existe como bônus, mas o foco principal é venda de produtos."
-
-CRITÉRIOS:
-Lead quente:
-- Trabalha com piscinas, manutenção, vendas, agro ou comércio.
-- Tem clientes ou rede de contatos.
-- Tem disponibilidade.
-- Pergunta sobre comissão, estoque, investimento ou início.
-- Aceita enviar dados.
-- Tem nome limpo ou avalista.
-
-Mensagem lead quente:
-"Seu perfil parece bem alinhado. O próximo passo é simples: fazer sua pré-análise para encaminharmos à análise interna da IQG. Podemos seguir?"
-
-Lead morno:
-"Faz sentido avaliar com calma. Só reforço que o programa é ideal para quem quer construir uma operação comercial com suporte, produtos recorrentes e margem atrativa. Quer que eu te envie um resumo objetivo?"
-
-Lead frio:
-"Entendi. Nesse caso, talvez o programa não seja o melhor momento, porque ele exige atuação comercial e comprometimento com vendas. Posso deixar seu contato registrado para uma oportunidade futura."
 
 IMPORTANTE:
 - Responda sempre em português do Brasil.
@@ -441,13 +532,40 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from;
     const messageId = message.id;
-    const text = message.text?.body || "Olá";
 
-    console.log("Mensagem recebida:", text);
+    console.log("Mensagem completa:", JSON.stringify(message, null, 2));
     console.log("Número recebido de:", from);
     console.log("ID da mensagem:", messageId);
 
     await markAsReadAndTyping(messageId);
+
+    let text = "";
+
+    if (message.type === "text") {
+      text = message.text?.body || "";
+    } else if (message.type === "audio") {
+      await sendWhatsAppMessage(from, "Recebi seu áudio. Vou ouvir e já te respondo por texto. 😊");
+
+      try {
+        text = await transcribeAudio(message.audio.id);
+        console.log("Texto transcrito do áudio:", text);
+      } catch (error) {
+        console.error("Erro na transcrição:", error);
+        await sendWhatsAppMessage(
+          from,
+          "Não consegui ouvir esse áudio com clareza. Pode me mandar por texto, por favor?"
+        );
+        return res.sendStatus(200);
+      }
+    } else {
+      await sendWhatsAppMessage(
+        from,
+        "Consigo te ajudar melhor por texto ou áudio. Pode me mandar sua dúvida por aqui? 😊"
+      );
+      return res.sendStatus(200);
+    }
+
+    const requestedFileKey = detectRequestedFile(text);
 
     if (!conversations[from]) {
       conversations[from] = [];
@@ -465,12 +583,12 @@ app.post("/webhook", async (req, res) => {
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.55,
+        temperature: 0.52,
         max_tokens: 280,
         messages: [
           {
@@ -509,8 +627,18 @@ app.post("/webhook", async (req, res) => {
 
     await sendWhatsAppMessage(from, resposta);
 
+    if (requestedFileKey && FILES[requestedFileKey]) {
+      await delay(2500);
+      await sendWhatsAppDocument(from, FILES[requestedFileKey]);
+    }
+
     if (CONSULTANT_PHONE && shouldNotifyConsultant(resposta)) {
-      const note = `Novo atendimento IQG possivelmente precisa de consultor.\n\nLead: ${from}\nÚltima mensagem do lead: ${text}\nResposta da IA: ${resposta}`;
+      const note =
+        `Novo atendimento IQG possivelmente precisa de consultor.\n\n` +
+        `Lead: ${from}\n` +
+        `Última mensagem do lead: ${text}\n\n` +
+        `Resposta da IA: ${resposta}`;
+
       await sendWhatsAppMessage(CONSULTANT_PHONE, note);
     }
 
