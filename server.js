@@ -599,7 +599,17 @@ app.post("/webhook", async (req, res) => {
     clearTimers(from);
     state.closed = false;
 
-    let text = message.text?.body || "";
+  if (!message.text?.body) {
+  await sendWhatsAppMessage(
+    from,
+    "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
+  );
+
+  scheduleInactivityFollowup(from);
+  return res.sendStatus(200);
+}
+
+let text = message.text.body.trim();
 
     if (!conversations[from]) conversations[from] = [];
     conversations[from].push({ role: "user", content: text });
