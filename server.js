@@ -593,9 +593,12 @@ app.post("/webhook", async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: conversations[from]
-      })
+  model: "gpt-4o-mini",
+  messages: [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...conversations[from]
+  ]
+})
     });
 
     const data = await openaiResponse.json();
