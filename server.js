@@ -43,510 +43,6 @@ const FILES = {
   }
 };
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function humanDelay(text) {
-  const base = 2500;
-  const perChar = 30;
-  const max = 12000;
-  return Math.min(base + (text || "").length * perChar, max);
-}
-
-function getState(from) {
-  if (!leadState[from]) {
-    leadState[from] = {
-      sentFiles: {},
-      folderSent: false,
-      folderFollowupSent: false,
-      inactivityFollowupCount: 0,
-      inactivityTimer: null,
-      folderTimer: null,
-      lastUserMessageAt: Date.now(),
-      lastAssistantQuestionAt: null,
-      closed: false
-    };
-  }
-
-  return leadState[from];
-}
-
-function clearTimers(from) {
-  const state = getState(from);
-
-  if (state.inactivityTimer) {
-    clearTimeout(state.inactivityTimer);
-    state.inactivityTimer = null;
-  }
-
-  if (state.folderTimer) {
-    clearTimeout(state.folderTimer);
-    state.folderTimer = null;
-  }
-}
-
-function saoPauloNow() {
-  const now = new Date();
-  return new Date(now.getTime() + BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
-}
-
-function isBusinessTime(date = saoPauloNow()) {
-  const day = date.getUTCDay();
-  const hour = date.getUTCHours();
-
-  const isWeekday = day >= 1 && day <= 5;
-  const isWithinHours = hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
-
-  return isWeekday && isWithinHours;
-}
-
-function msUntilNextBusinessTime() {
-  const nowUtc = new Date();
-  let local = saoPauloNow();
-
-  for (let i = 0; i < 14 * 24 * 60; i++) {
-    if (isBusinessTime(local)) {
-      const targetUtc = new Date(local.getTime() - BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
-      return Math.max(targetUtc.getTime() - nowUtc.getTime(), 1000);
-    }
-
-    local = new Date(local.getTime() + 60 * 1000);
-  }
-
-  return 60 * 60 * 1000;
-}
-
-function businessDelayMs(hours) {
-  let remainingMinutes = hours * 60;
-  let local = saoPauloNow();
-
-  while (remainingMinutes > 0) {
-    local = new Date(local.getTime() + 60 * 1000);
-
-    if (isBusinessTime(local)) {
-      remainingMinutes--;
-    }
-  }
-
-  const targetUtc = new Date(local.getTime() - BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
-  return Math.max(targetUtc.getTime() - Date.now(), 1000);
-}
-
-function scheduleInBusinessTime(from, callback, delayHours) {
-  const state = getState(from);
-
-  const wait = isBusinessTime()
-    ? businessDelayMs(delayHours)
-    : msUntilNextBusinessTime() + businessDelayMs(delayHours);
-
-  state.inactivityTimer = setTimeout(callback, wait);
-}
-
-function scheduleFolderFollowup(from) {
-  const state = getState(from);
-
-  if (state.folderTimer || state.folderFollowupSent) return;
-
-  const wait = isBusinessTime()
-    ? businessDelayMs(10 / 60)
-    : msUntilNextBusinessTime() + businessDelayMs(10 / 60);
-
-  state.folderTimer = setTimeout(async () => {
-    const currentState = getState(from);
-
-    if (currentState.folderFollowupSent || currentState.closed) return;
-
-    currentState.folderFollowupSent = true;
-
-    const msg =
-      "Oi, passando só para ver se conseguiu olhar o folder 😊\n\n" +
-      "A ideia principal do programa é você atuar como Parceiro Homologado IQG, começando pela linha de piscinas, com suporte comercial e técnico da indústria.\n\n" +
-      "Ficou alguma dúvida sobre como funciona, benefícios, responsabilidades ou taxa de adesão?";
-
-    await sendWhatsAppMessage(from, msg);
-    addAssistantMessage(from, msg);
-    scheduleInactivityFollowup(from);
-
-  }, wait);
-}
-
-function scheduleInactivityFollowup(from) {
-  const state = getState(from);
-
-  if (state.closed) return;
-
-  if (state.inactivityTimer) {
-    clearTimeout(state.inactivityTimer);
-    state.inactivityTimer = null;
-  }
-
-  scheduleInBusinessTime(from, async () => {
-    const currentState = getState(from);
-
-    if (currentState.closed) return;
-
-    currentState.inactivityFollowupCount++;
-
-    let msg = "";
-
-    if (currentState.inactivityFollowupCount === 1) {
-      msg =
-        "Oi 😊 conseguiu analisar o material com calma?\n\n" +
-        "Me diz uma coisa: a parte do modelo de parceria e do estoque em comodato ficou clara para você?";
-    } else if (currentState.inactivityFollowupCount === 2) {
-      msg =
-        "Passando por aqui para não deixar seu atendimento esfriar.\n\n" +
-        "Você vê esse programa mais como uma renda extra ou como uma operação comercial principal?";
-    } else if (currentState.inactivityFollowupCount === 3) {
-      msg =
-        "Só reforçando um ponto importante: a ideia da IQG é que o parceiro tenha suporte, material e uma linha de produtos com recorrência.\n\n" +
-        "Você já atua com vendas, piscinas, manutenção ou atendimento ao público?";
-    } else if (currentState.inactivityFollowupCount === 4) {
-      msg =
-        "Última tentativa para entender se faz sentido avançarmos 😊\n\n" +
-        "Quer que eu siga com sua pré-análise ou prefere deixar para outro momento?";
-    } else {
-      msg =
-        "Tudo bem, vou encerrar seu atendimento por enquanto.\n\n" +
-        "Agradeço sua atenção e fico à disposição caso queira retomar a conversa sobre o Programa Parceiro Homologado IQG. 😊";
-
-      currentState.closed = true;
-    }
-
-    await sendWhatsAppMessage(from, msg);
-    addAssistantMessage(from, msg);
-
-    if (!currentState.closed) {
-      scheduleInactivityFollowup(from);
-    }
-
-  }, 6);
-}
-
-function addAssistantMessage(from, content) {
-  if (!conversations[from]) conversations[from] = [];
-
-  conversations[from].push({
-    role: "assistant",
-    content
-  });
-
-  if (conversations[from].length > 30) {
-    conversations[from] = conversations[from].slice(-30);
-  }
-}
-
-async function markAsReadAndTyping(messageId) {
-  if (!messageId) return;
-
-  try {
-    const response = await fetch(
-      `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          status: "read",
-          message_id: messageId,
-          typing_indicator: {
-            type: "text"
-          }
-        })
-      }
-    );
-
-    const data = await response.json();
-    console.log("Resposta marcar como lida/digitando:", JSON.stringify(data, null, 2));
-  } catch (error) {
-    console.error("Erro ao marcar como lida/digitando:", error);
-  }
-}
-
-async function sendWhatsAppMessage(to, body) {
-  const response = await fetch(
-    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body }
-      })
-    }
-  );
-
-  const data = await response.json();
-  console.log("Resposta do WhatsApp:", JSON.stringify(data, null, 2));
-  return data;
-}
-
-async function downloadPdfFromDrive(file) {
-  const response = await fetch(file.link);
-
-  if (!response.ok) {
-    throw new Error(`Falha ao baixar PDF: ${file.filename}`);
-  }
-
-  const buffer = await response.buffer();
-
-  return {
-    buffer,
-    filename: file.filename.endsWith(".pdf") ? file.filename : `${file.filename}.pdf`
-  };
-}
-
-async function uploadPdfToWhatsApp(file) {
-  const { buffer, filename } = await downloadPdfFromDrive(file);
-
-  const form = new FormData();
-  form.append("messaging_product", "whatsapp");
-  form.append("type", "application/pdf");
-  form.append("file", buffer, {
-    filename,
-    contentType: "application/pdf"
-  });
-
-  const response = await fetch(
-    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/media`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        ...form.getHeaders()
-      },
-      body: form
-    }
-  );
-
-  const data = await response.json();
-  console.log("Upload PDF WhatsApp:", JSON.stringify(data, null, 2));
-
-  if (!data.id) {
-    throw new Error(`Falha no upload do PDF: ${JSON.stringify(data)}`);
-  }
-
-  return data.id;
-}
-
-async function sendWhatsAppDocument(to, file) {
-  try {
-    const mediaId = await uploadPdfToWhatsApp(file);
-
-    const response = await fetch(
-      `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to,
-          type: "document",
-          document: {
-            id: mediaId,
-            filename: file.filename,
-            caption: file.caption
-          }
-        })
-      }
-    );
-
-    const data = await response.json();
-    console.log("Envio de documento por ID:", JSON.stringify(data, null, 2));
-    return data;
-
-  } catch (error) {
-    console.error("Erro no envio do documento:", error);
-
-    await sendWhatsAppMessage(
-      to,
-      "Tive uma instabilidade para enviar o PDF agora. Vou encaminhar para um consultor da IQG te enviar o material certinho por aqui."
-    );
-  }
-}
-
-function detectRequestedFile(text) {
-  const lower = (text || "").toLowerCase();
-
-  if (lower.includes("contrato") || lower.includes("minuta") || lower.includes("termo")) {
-    return "contrato";
-  }
-
-  if (
-    lower.includes("catálogo") ||
-    lower.includes("catalogo") ||
-    lower.includes("produtos") ||
-    lower.includes("linha de produtos")
-  ) {
-    return "catalogo";
-  }
-
-  if (
-    lower.includes("kit") ||
-    lower.includes("lote") ||
-    lower.includes("estoque inicial") ||
-    lower.includes("vem no kit")
-  ) {
-    return "kit";
-  }
-
-  if (
-    lower.includes("manual") ||
-    lower.includes("curso") ||
-    lower.includes("treinamento") ||
-    lower.includes("tratar piscina") ||
-    lower.includes("tratamento de piscina") ||
-    lower.includes("como usar") ||
-    lower.includes("quando usar") ||
-    lower.includes("aplicar produto") ||
-    lower.includes("não sei tratar piscina") ||
-    lower.includes("nao sei tratar piscina")
-  ) {
-    return "manual";
-  }
-
-  if (
-    lower.includes("folder") ||
-    lower.includes("resumo") ||
-    lower.includes("explicativo") ||
-    lower.includes("apresentação") ||
-    lower.includes("apresentacao")
-  ) {
-    return "folder";
-  }
-
-  return null;
-}
-
-async function sendFileOnce(from, fileKey) {
-  const state = getState(from);
-
-  if (state.sentFiles[fileKey]) {
-    const msg =
-      "Esse material eu já te enviei logo acima 😊\n\n" +
-      "Dá uma olhada com calma e me diz: ficou alguma dúvida sobre essa parte?";
-    await sendWhatsAppMessage(from, msg);
-    addAssistantMessage(from, msg);
-    return;
-  }
-
-  state.sentFiles[fileKey] = true;
-
-  await delay(2000);
-  await sendWhatsAppDocument(from, FILES[fileKey]);
-}
-
-async function sendInitialFolderFlow(from) {
-  const state = getState(from);
-
-  if (state.folderSent) return;
-
-  const msg =
-    "Perfeito 😊\n\n" +
-    "Antes de avançarmos para pré-análise, vou te enviar o folder explicativo do Programa Parceiro Homologado IQG.\n\n" +
-    "Leia com atenção, porque ele mostra como funciona o programa, os benefícios, responsabilidades e a taxa de adesão. Depois fico à disposição para esclarecer qualquer ponto.";
-
-  await delay(humanDelay(msg));
-  await sendWhatsAppMessage(from, msg);
-  addAssistantMessage(from, msg);
-
-  state.folderSent = true;
-  state.sentFiles.folder = true;
-
-  await delay(2500);
-  await sendWhatsAppDocument(from, FILES.folder);
-
-  scheduleFolderFollowup(from);
-}
-
-async function getMediaUrl(mediaId) {
-  const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
-    }
-  });
-
-  return await response.json();
-}
-
-async function downloadMedia(url) {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
-    }
-  });
-
-  const buffer = await response.buffer();
-  const contentType = response.headers.get("content-type") || "audio/ogg";
-
-  return { buffer, contentType };
-}
-
-async function transcribeAudio(mediaId) {
-  const mediaData = await getMediaUrl(mediaId);
-
-  console.log("Dados da mídia:", JSON.stringify(mediaData, null, 2));
-
-  if (!mediaData.url) {
-    throw new Error("Não foi possível obter URL da mídia.");
-  }
-
-  const { buffer, contentType } = await downloadMedia(mediaData.url);
-
-  const form = new FormData();
-  form.append("file", buffer, {
-    filename: "audio.ogg",
-    contentType
-  });
-  form.append("model", "whisper-1");
-  form.append("language", "pt");
-
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      ...form.getHeaders()
-    },
-    body: form
-  });
-
-  const data = await response.json();
-
-  console.log("Transcrição OpenAI:", JSON.stringify(data, null, 2));
-
-  if (data.text) return data.text;
-
-  throw new Error("Falha ao transcrever áudio.");
-}
-
-function shouldNotifyConsultant(answer) {
-  const text = (answer || "").toLowerCase();
-
-  return (
-    text.includes("consultor da iqg") ||
-    text.includes("vou encaminhar") ||
-    text.includes("equipe interna") ||
-    text.includes("fase contratual") ||
-    text.includes("link de pagamento") ||
-    text.includes("análise interna") ||
-    text.includes("análise cadastral")
-  );
-}
-
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial do Programa Parceiro Homologado IQG.
 
@@ -555,7 +51,7 @@ Você atende leads pelo WhatsApp com foco em conversão, mas sem parecer robóti
 OBJETIVO:
 Conduzir o lead de forma natural até:
 1. Entender o Programa Parceiro Homologado IQG.
-2. Ler o folder explicativo do programa.
+2. Receber e ler o folder explicativo do programa.
 3. Tirar dúvidas básicas sobre funcionamento, benefícios, responsabilidades e taxa de adesão.
 4. Aceitar iniciar a pré-análise.
 5. Enviar dados.
@@ -565,9 +61,9 @@ Conduzir o lead de forma natural até:
 9. Após contrato assinado, seguir para pagamento via PIX ou cartão.
 10. Após pagamento, ativação no programa.
 
-IMPORTANTE:
+IMPORTANTE SOBRE O INÍCIO DA CONVERSA:
 No início da conversa, NÃO conduza imediatamente para pré-análise.
-Primeiro, apresente o programa, envie o folder explicativo e peça para o lead ler com atenção.
+Primeiro, apresente-se de forma natural, explique brevemente que vai enviar o folder explicativo e peça para o lead ler com atenção.
 Só conduza para pré-análise depois que o lead demonstrar que entendeu, tiver dúvida respondida ou manifestar interesse real em avançar.
 
 A ordem correta é:
@@ -657,12 +153,27 @@ Se o lead perguntar sobre preço de venda ao consumidor final, tabela, valor de 
 - Reforce que os preços são pensados para serem competitivos e comercialmente viáveis.
 - Envie o link: https://loja.industriaquimicagaucha.com.br/
 
+Resposta base:
+"A IQG trabalha com uma tabela sugestiva de venda ao consumidor final, que é a mesma praticada no e-commerce oficial.
+
+A ideia é justamente o parceiro ter preço competitivo, porque o sucesso do parceiro também é o sucesso da indústria.
+
+Como temos campanhas e ajustes semanais, o melhor é consultar os preços atualizados direto no e-commerce oficial:
+https://loja.industriaquimicagaucha.com.br/"
+
 REGRA SOBRE COMISSIONAMENTO DE 40%:
 A comissão de 40% funciona como referência de ganho quando o parceiro vende pelo preço sugerido pela IQG.
 Se vender exatamente no preço sugerido, a comissão fica em 40%.
 Se vender acima, o ganho aumenta.
 Se vender abaixo ou der desconto, o ganho reduz.
 O parceiro tem liberdade comercial, mas a tabela sugerida existe para ajudar a manter preço competitivo e boa margem.
+
+Resposta base:
+"Funciona assim: a IQG passa uma tabela sugestiva de venda ao consumidor final.
+
+Se você vender exatamente pelo valor sugerido, sua comissão é de 40%. Se vender acima, ganha mais. Se vender abaixo ou der desconto, a comissão reduz.
+
+Então os 40% são uma referência de ganho usando o preço sugerido."
 
 LINHAS DE PRODUTOS DA IQG:
 A IQG possui várias linhas:
@@ -685,6 +196,11 @@ Se o lead disser que possui restrição, protesto ou negativação, não descart
 Explique que ainda é possível avaliar a parceria, mas poderá ser necessário um avalista ou garantidor com nome limpo para seguir para a fase contratual.
 Não constranja o lead. Trate o assunto com naturalidade e discrição.
 
+RESPOSTA SE O LEAD PERGUNTAR "POR QUE PRECISA TER NOME LIMPO?":
+"Boa pergunta. A gente confirma isso porque o programa trabalha com estoque em comodato: o parceiro recebe produtos sob responsabilidade dele, mas eles continuam sendo propriedade da IQG.
+
+Se houver alguma restrição, isso não impede automaticamente. Nesse caso, podemos avaliar a possibilidade de seguir com um avalista ou garantidor com nome limpo para a fase contratual."
+
 REGRA SOBRE ANÁLISE INTERNA:
 A IA faz apenas uma pré-análise inicial.
 A aprovação final depende da análise interna da equipe IQG.
@@ -698,6 +214,11 @@ Se o lead pedir contrato, você pode dizer que pode encaminhar um modelo para le
 - A versão oficial para assinatura só é liberada após análise e aprovação cadastral pela equipe interna da IQG.
 - A assinatura do contrato vem antes do pagamento.
 - O pagamento vem somente após contrato assinado.
+
+RESPOSTA SE O LEAD PEDIR CONTRATO:
+"Claro, posso te encaminhar um modelo para leitura das condições gerais.
+
+Só reforço: a versão oficial para assinatura é liberada após a pré-análise e aprovação cadastral pela equipe interna da IQG. Primeiro analisamos o cadastro, depois seguimos para fase contratual."
 
 REGRA SOBRE PAGAMENTO:
 Nunca peça PIX ou cartão antes da análise interna e contrato assinado.
@@ -715,9 +236,63 @@ ARQUIVOS DISPONÍVEIS:
 Se o lead pedir catálogo, contrato, kit, manual/curso de piscina ou folder, informe que vai enviar o material e o sistema enviará o arquivo.
 O manual/curso de tratamento de piscina serve para orientar como tratar piscina, como usar os produtos e quando aplicar cada produto. Use esse material para reduzir insegurança de leads sem experiência.
 
+BENEFÍCIOS:
+Use quando fizer sentido:
+- Possibilidade de comissão de referência de 40% quando vendido pelo preço sugerido.
+- Possibilidade de ganhar mais vendendo acima do preço sugerido.
+- Sem compra inicial de estoque.
+- Estoque em comodato.
+- Venda direta da indústria.
+- Não precisa abrir empresa.
+- Nota fiscal emitida pela IQG quando aplicável.
+- Suporte técnico e comercial.
+- Treinamentos contínuos.
+- Catálogos e materiais gráficos.
+- Conteúdos institucionais para redes sociais.
+- Produtos com demanda recorrente.
+- Produtos técnicos de alto valor percebido.
+- Possibilidade de indicação com 10% vitalício.
+- Linha ampla de produtos e soluções, começando pela linha de piscinas.
+
+KIT INICIAL DE PISCINAS:
+Explique apenas se o lead perguntar sobre produtos, kit, lote ou estoque.
+O parceiro recebe um lote estratégico inicial para pronta-entrega e demonstração, em comodato.
+O lote não é comprado pelo parceiro. Ele é cedido em comodato e permanece propriedade da IQG.
+
+Itens do kit inicial de piscinas:
+- 10 unidades de IQG Clarificante 1L
+- 20 unidades de IQG Tablete Premium 90% 200g
+- 5 unidades de IQG Decantador 2kg
+- 6 unidades de IQG Nano 1L
+- 5 unidades de IQG Limpa Bordas 1L
+- 5 unidades de IQG Elevador de pH 2kg
+- 5 unidades de IQG Redutor de pH e Alcalinidade 1L
+- 5 unidades de IQG Algicida de Manutenção 1L
+- 5 unidades de IQG Elevador de Alcalinidade 2kg
+- 5 unidades de IQG Algicida de Choque 1L
+- 5 unidades de IQG Action Multiativos 10kg
+- 4 unidades de IQG Peroxid/OXI+ 5L
+- 3 unidades de IQG Kit 24H 2,4kg
+- 2 unidades de IQG Booster Ultrafiltração 400g
+- 1 unidade de IQG Clarificante 5L
+
+CONDUTA:
+- Faça perguntas estratégicas.
+- Não despeje muita informação.
+- Responda curto.
+- Uma ideia por mensagem.
+- Sempre avance a conversa.
+- Se o lead demonstrar interesse, vá para a próxima etapa.
+- Se o lead perguntar algo, responda e depois conduza.
+- Não fique repetindo explicação.
+- Não peça dados que já foram enviados na conversa.
+- Se faltar algum dado, peça apenas o que falta.
+- Adapte a resposta ao perfil do lead.
+- Reforce benefícios sem esconder responsabilidades.
+
 FLUXO NATURAL:
 1. Início: apresente-se.
-2. Envie o folder explicativo.
+2. Envie o folder explicativo após a primeira resposta natural.
 3. Peça para o lead ler com atenção.
 4. Coloque-se à disposição para dúvidas.
 5. Se o lead ficar sem responder, o sistema fará follow-up.
@@ -735,6 +310,11 @@ DADOS PARA PRÉ-ANÁLISE:
 - Se atua com vendas, piscinas, manutenção, agro, limpeza ou comércio
 - Se possui nome limpo
 
+ABERTURA:
+"Olá! Tudo bem? 😊 Aqui é da IQG — Indústria Química Gaúcha.
+
+Vi que você demonstrou interesse no Programa Parceiro Homologado IQG. Vou te explicar de forma simples e também te enviar um folder para você analisar com calma."
+
 SE O LEAD PEDIR PRÉ-ANÁLISE:
 "Ótimo, vamos seguir então.
 
@@ -751,6 +331,78 @@ SE JÁ TIVER DADOS SUFICIENTES:
 
 Se estiver tudo certo na análise, o próximo passo será a fase contratual. Depois do contrato assinado, seguimos para pagamento e ativação."
 
+SE O LEAD PEDIR MANUAL / CURSO / COMO TRATAR PISCINA:
+"Boa pergunta. Vou te enviar um material que funciona como um manual/curso prático de tratamento de piscina.
+
+Ele mostra como usar os produtos, quando aplicar e ajuda bastante quem está começando ou quer mais segurança para atender clientes."
+
+OBJEÇÕES:
+"É franquia?"
+"Não. Não é franquia. Você não paga royalties, não precisa montar loja padronizada e não opera uma unidade franqueada. É uma parceria comercial autônoma para venda de produtos IQG."
+
+"Preciso abrir empresa?"
+"Não. Você pode ingressar sem CNPJ. A nota fiscal é emitida pela IQG quando aplicável, conforme regras internas."
+
+"Preciso comprar estoque?"
+"Não. O lote inicial é disponibilizado em comodato. Ele fica com você para pronta-entrega e demonstração, mas continua sendo propriedade da IQG."
+
+"Os produtos são meus?"
+"Não. Os produtos continuam sendo propriedade da IQG. Você fica responsável pela guarda, conservação e venda conforme as regras do programa."
+
+"Quanto eu ganho?"
+"Você recebe uma comissão de referência de 40% quando vende pelo preço sugerido da IQG. Se vender acima, pode ganhar mais. Se vender abaixo ou der desconto, sua comissão reduz."
+
+"Quando recebo?"
+"As vendas são fechadas semanalmente, e a comissão é paga na semana seguinte à liquidação, conforme relatório."
+
+"E se eu não vender?"
+"O programa entrega estrutura, produtos e suporte, mas o resultado depende da sua atuação comercial. A IQG apoia com treinamento, materiais e orientação, mas a prospecção e o relacionamento com clientes são responsabilidade do parceiro."
+
+"Tenho medo de investir e não dar certo"
+"É normal. Por isso o modelo reduz barreiras: você não precisa comprar estoque inicial, não precisa abrir empresa e conta com suporte da indústria. Mas é importante entender que não é renda garantida. É uma operação comercial para quem quer vender e desenvolver clientes."
+
+"Por que R$1.990?"
+"Esse valor é o investimento único de adesão e implantação. Ele cobre ativação, onboarding, suporte, treinamento, materiais e liberação operacional do lote inicial em comodato. Não é compra de mercadoria, não é caução e não vira crédito."
+
+"É devolvido se eu desistir?"
+"Não. O investimento de adesão e implantação não é reembolsável, pois remunera a estrutura de ativação e implantação disponibilizada ao parceiro."
+
+"Posso vender em qualquer cidade?"
+"Sim. Pode vender em todo o Brasil. Não há exclusividade regional."
+
+"Tem outro parceiro na minha cidade?"
+"Não há exclusividade regional, mas isso não impede sua atuação. Inclusive, se você conhecer outro profissional forte, pode indicá-lo ao programa e receber 10% sobre as vendas dele enquanto estiver ativo, conforme as regras."
+
+"Preciso ter nome limpo?"
+"Sim. O programa exige nome limpo por conta do estoque em comodato, que fica sob responsabilidade do parceiro. Se houver alguma restrição, ainda podemos avaliar a entrada com avalista ou garantidor com nome limpo, a critério da IQG."
+
+"É pirâmide?"
+"Não. O programa é baseado na venda real de produtos físicos IQG ao consumidor final, com nota fiscal e comissão sobre vendas liquidadas. A indicação existe como bônus, mas o foco principal é venda de produtos."
+
+"Quem cobra o cliente?"
+"O recebimento das vendas é responsabilidade do parceiro. A IQG pode auxiliar com alertas e mensagens de cobrança, desde que o cliente esteja corretamente cadastrado, mas o risco de inadimplência é do parceiro."
+
+"Tenho que seguir preço fixo?"
+"A IQG fornece uma tabela sugerida, que é a mesma referência praticada no e-commerce oficial. Você pode vender acima e aumentar seu ganho. Se vender com desconto, esse desconto reduz sua comissão."
+
+CRITÉRIOS:
+Lead quente:
+- Trabalha com piscinas, manutenção, vendas, agro ou comércio.
+- Tem clientes ou rede de contatos.
+- Tem disponibilidade.
+- Pergunta sobre comissão, estoque, investimento, preço ou início.
+- Aceita enviar dados.
+- Tem nome limpo ou avalista.
+
+Mensagem lead quente:
+"Seu perfil parece bem alinhado. O próximo passo é simples: fazer sua pré-análise para encaminharmos à análise interna da IQG. Podemos seguir?"
+
+Lead morno:
+"Faz sentido avaliar com calma. Só reforço que o programa é ideal para quem quer construir uma operação comercial com suporte, produtos recorrentes e margem atrativa. Quer que eu te envie um resumo objetivo?"
+
+Lead frio:
+"Entendi. Nesse caso, talvez o programa não seja o melhor momento, porque ele exige atuação comercial e comprometimento com vendas. Posso deixar seu contato registrado para uma oportunidade futura."
+
 IMPORTANTE:
 - Responda sempre em português do Brasil.
 - Máximo de 3 parágrafos curtos por resposta.
@@ -761,109 +413,146 @@ IMPORTANTE:
 - O fechamento final de contrato, pagamento e link deve ser encaminhado para consultor humano.
 `;
 
-app.get("/", (req, res) => {
-  res.send("Bot IQG rodando");
-});
+async function sendWhatsAppMessage(to, body) {
+  await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body }
+    })
+  });
+}
 
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+async function sendWhatsAppDocument(to, file) {
+  const fileResponse = await fetch(file.link);
+  const buffer = await fileResponse.buffer();
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verificado com sucesso");
-    return res.status(200).send(challenge);
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", "application/pdf");
+  form.append("file", buffer, {
+    filename: file.filename,
+    contentType: "application/pdf"
+  });
+
+  const upload = await fetch(
+    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/media`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        ...form.getHeaders()
+      },
+      body: form
+    }
+  );
+
+  const uploadData = await upload.json();
+
+  await fetch(
+    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "document",
+        document: {
+          id: uploadData.id,
+          filename: file.filename,
+          caption: file.caption
+        }
+      })
+    }
+  );
+}
+
+function detectRequestedFile(text) {
+  text = text.toLowerCase();
+  if (text.includes("contrato")) return "contrato";
+  if (text.includes("catalogo")) return "catalogo";
+  if (text.includes("kit")) return "kit";
+  if (text.includes("manual")) return "manual";
+  if (text.includes("folder")) return "folder";
+  return null;
+}
+
+async function sendFileOnce(from, key) {
+  const state = getState(from);
+
+  if (state.sentFiles[key]) {
+    await sendWhatsAppMessage(
+      from,
+      "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se ficou claro."
+    );
+    return;
   }
 
-  return res.sendStatus(403);
-});
+  state.sentFiles[key] = true;
+  await delay(2000);
+  await sendWhatsAppDocument(from, FILES[key]);
+}
 
+function scheduleInactivityFollowup(from) {
+  const state = getState(from);
+
+  if (state.closed) return;
+
+  if (state.inactivityTimer) clearTimeout(state.inactivityTimer);
+
+  state.inactivityTimer = setTimeout(async () => {
+    state.inactivityFollowupCount++;
+
+    let msg = "";
+
+    if (state.inactivityFollowupCount === 1) {
+      msg = "Conseguiu dar uma olhada no material? 😊";
+    } else if (state.inactivityFollowupCount === 2) {
+      msg = "Você vê isso como renda extra ou negócio principal?";
+    } else if (state.inactivityFollowupCount === 3) {
+      msg = "Você já trabalha com vendas ou atendimento?";
+    } else if (state.inactivityFollowupCount === 4) {
+      msg = "Quer que eu siga com sua pré-análise?";
+    } else {
+      msg = "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!";
+      state.closed = true;
+    }
+
+    await sendWhatsAppMessage(from, msg);
+
+    if (!state.closed) {
+      scheduleInactivityFollowup(from);
+    }
+
+  }, 6 * 60 * 60 * 1000);
+}
 app.post("/webhook", async (req, res) => {
   try {
-    const entry = req.body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
-    const message = value?.messages?.[0];
-
-    if (!message) {
-      return res.sendStatus(200);
-    }
+    const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (!message) return res.sendStatus(200);
 
     const from = message.from;
-    const messageId = message.id;
     const state = getState(from);
 
-    state.lastUserMessageAt = Date.now();
-    state.closed = false;
-    state.inactivityFollowupCount = 0;
     clearTimers(from);
+    state.closed = false;
 
-    console.log("Mensagem completa:", JSON.stringify(message, null, 2));
-    console.log("Número recebido de:", from);
-    console.log("ID da mensagem:", messageId);
+    let text = message.text?.body || "";
 
-    await markAsReadAndTyping(messageId);
+    if (!conversations[from]) conversations[from] = [];
+    conversations[from].push({ role: "user", content: text });
 
-    let text = "";
-
-    if (message.type === "text") {
-      text = message.text?.body || "";
-    } else if (message.type === "audio") {
-      await sendWhatsAppMessage(from, "Recebi seu áudio. Vou ouvir e já te respondo por texto. 😊");
-
-      try {
-        text = await transcribeAudio(message.audio.id);
-        console.log("Texto transcrito do áudio:", text);
-      } catch (error) {
-        console.error("Erro na transcrição:", error);
-        await sendWhatsAppMessage(
-          from,
-          "Não consegui ouvir esse áudio com clareza. Pode me mandar por texto, por favor?"
-        );
-        return res.sendStatus(200);
-      }
-    } else {
-      await sendWhatsAppMessage(
-        from,
-        "Consigo te ajudar melhor por texto ou áudio. Pode me mandar sua dúvida por aqui? 😊"
-      );
-      return res.sendStatus(200);
-    }
-
-    if (!conversations[from]) {
-      conversations[from] = [];
-    }
-
-    conversations[from].push({
-      role: "user",
-      content: text
-    });
-
-    if (conversations[from].length > 30) {
-      conversations[from] = conversations[from].slice(-30);
-    }
-
-    const requestedFileKey = detectRequestedFile(text);
-
-    if (!state.folderSent && !requestedFileKey) {
-      await sendInitialFolderFlow(from);
-      scheduleInactivityFollowup(from);
-      return res.sendStatus(200);
-    }
-
-    if (requestedFileKey && FILES[requestedFileKey]) {
-      const intro =
-        requestedFileKey === "folder"
-          ? "Claro, vou te enviar o folder explicativo do programa."
-          : "Claro, vou te enviar esse material para você analisar com calma.";
-
-      await sendWhatsAppMessage(from, intro);
-      addAssistantMessage(from, intro);
-      await sendFileOnce(from, requestedFileKey);
-      scheduleInactivityFollowup(from);
-      return res.sendStatus(200);
-    }
-
+    // 🔥 OPENAI PRIMEIRO
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -872,55 +561,45 @@ app.post("/webhook", async (req, res) => {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0.52,
-        max_tokens: 320,
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT
-          },
-          ...conversations[from]
-        ]
+        messages: conversations[from]
       })
     });
 
     const data = await openaiResponse.json();
+    const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
 
-    console.log("Resposta da OpenAI:", JSON.stringify(data, null, 2));
-
-    let resposta = data.choices?.[0]?.message?.content;
-
-    if (!resposta) {
-      resposta = "Olá! Sou a especialista comercial da IQG. Posso te ajudar com o Programa Parceiro Homologado?";
-    }
-
-    addAssistantMessage(from, resposta);
-
-    console.log("Resposta final enviada:", resposta);
-
-    const waitTime = humanDelay(resposta);
-    console.log(`Aguardando ${waitTime}ms para simular digitação...`);
-    await delay(waitTime);
-
+    await delay(humanDelay(resposta));
     await sendWhatsAppMessage(from, resposta);
 
-    if (CONSULTANT_PHONE && shouldNotifyConsultant(resposta)) {
-      const note =
-        `Novo atendimento IQG possivelmente precisa de consultor.\n\n` +
-        `Lead: ${from}\n` +
-        `Última mensagem do lead: ${text}\n\n` +
-        `Resposta da IA: ${resposta}`;
+    conversations[from].push({ role: "assistant", content: resposta });
 
-      await sendWhatsAppMessage(CONSULTANT_PHONE, note);
+    // 🔥 ENVIA FOLDER SOMENTE DEPOIS DA PRIMEIRA RESPOSTA
+    if (!state.folderSent && conversations[from].length <= 2) {
+      state.folderSent = true;
+
+      await delay(2000);
+
+      await sendWhatsAppMessage(
+        from,
+        "Vou te enviar um material explicativo para você entender melhor 👇"
+      );
+
+      await delay(2000);
+      await sendWhatsAppDocument(from, FILES.folder);
+    }
+
+    const fileKey = detectRequestedFile(text);
+    if (fileKey) {
+      await sendFileOnce(from, fileKey);
     }
 
     scheduleInactivityFollowup(from);
 
-    return res.sendStatus(200);
+    res.sendStatus(200);
 
   } catch (error) {
-    console.error("ERRO GERAL:", error);
-    return res.sendStatus(500);
+    console.error(error);
+    res.sendStatus(500);
   }
 });
 
