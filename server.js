@@ -447,7 +447,7 @@ IMPORTANTE:
 `;
 
 async function sendWhatsAppMessage(to, body) {
-  await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+  const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -460,6 +460,20 @@ async function sendWhatsAppMessage(to, body) {
       text: { body }
     })
   });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao enviar mensagem WhatsApp:", data);
+    throw new Error("Falha ao enviar mensagem WhatsApp");
+  }
+}
+const data = await response.json();
+
+if (!response.ok) {
+  console.error("Erro ao enviar mensagem WhatsApp:", data);
+  throw new Error("Falha ao enviar mensagem WhatsApp");
+};
 }
 
 async function sendWhatsAppDocument(to, file) {
