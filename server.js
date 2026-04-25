@@ -687,6 +687,9 @@ const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
     await sendWhatsAppMessage(from, resposta);
 
     conversations[from].push({ role: "assistant", content: resposta });
+    if (conversations[from].length > 20) {
+  conversations[from] = conversations[from].slice(-20);
+}
 
     // 🔥 ENVIA FOLDER SOMENTE DEPOIS DA PRIMEIRA RESPOSTA
     if (!state.folderSent && conversations[from].length <= 2) {
