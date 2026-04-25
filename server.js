@@ -464,7 +464,13 @@ async function sendWhatsAppMessage(to, body) {
 
 async function sendWhatsAppDocument(to, file) {
   const fileResponse = await fetch(file.link);
-  const buffer = await fileResponse.buffer();
+
+if (!fileResponse.ok) {
+  throw new Error(`Erro ao baixar arquivo: ${fileResponse.status}`);
+}
+
+const arrayBuffer = await fileResponse.arrayBuffer();
+const buffer = Buffer.from(arrayBuffer);
 
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
