@@ -17,6 +17,7 @@ const BUSINESS_TIMEZONE_OFFSET = -3;
 
 const conversations = {};
 const leadState = {};
+const processedMessages = new Set();
 
 function getState(from) {
   if (!leadState[from]) {
@@ -646,6 +647,12 @@ app.get("/webhook", (req, res) => {
 app.post("/webhook", async (req, res) => {
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const messageId = message?.id;
+if (processedMessages.has(messageId)) {
+  return res.sendStatus(200);
+}
+
+processedMessages.add(messageId);
     if (!message) return res.sendStatus(200);
 
     const from = message.from;
