@@ -32,6 +32,13 @@ function getState(from) {
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+function humanDelay(text = "") {
+  const base = 1200;
+  const perChar = 25;
+  const total = base + text.length * perChar;
+
+  return Math.min(total, 7000);
+}
 
 const FILES = {
   catalogo: {
