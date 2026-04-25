@@ -508,7 +508,12 @@ const buffer = Buffer.from(arrayBuffer);
 
   const uploadData = await upload.json();
 
-  await fetch(
+if (!upload.ok) {
+  console.error("Erro ao subir documento para WhatsApp:", uploadData);
+  throw new Error("Falha ao subir documento para WhatsApp");
+}
+
+await fetch(
     `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
