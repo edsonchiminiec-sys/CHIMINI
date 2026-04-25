@@ -15,6 +15,20 @@ const BUSINESS_TIMEZONE_OFFSET = -3;
 const conversations = {};
 const leadState = {};
 
+function getState(from) {
+  if (!leadState[from]) {
+    leadState[from] = {
+      folderSent: false,
+      sentFiles: {},
+      closed: false,
+      inactivityTimer: null,
+      inactivityFollowupCount: 0
+    };
+  }
+
+  return leadState[from];
+}
+
 const FILES = {
   catalogo: {
     link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
