@@ -604,7 +604,7 @@ function scheduleInactivityFollowup(from) {
     } catch (error) {
       console.error("Erro no follow-up de inatividade:", error);
     }
-  }, 6 * 60 * 60 * 1000);
+  }, 6 * 60 * 1000);
 }
 
 app.get("/webhook", (req, res) => {
