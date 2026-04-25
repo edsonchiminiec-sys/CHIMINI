@@ -17,7 +17,11 @@ const BUSINESS_TIMEZONE_OFFSET = -3;
 
 const conversations = {};
 const leadState = {};
-const processedMessages = new Set();
+
+const processedMessages = new Map();
+const processingMessages = new Set();
+const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_PROCESSED_MESSAGES = 5000;
 
 function getState(from) {
   if (!leadState[from]) {
@@ -53,9 +57,25 @@ function clearTimers(from) {
     clearTimeout(state.inactivityTimer);
     state.inactivityTimer = null;
   }
+
   if (state.shortTimer) {
-  clearTimeout(state.shortTimer);
-  state.shortTimer = null;
+    clearTimeout(state.shortTimer);
+    state.shortTimer = null;
+  }
+}
+
+function cleanupProcessedMessages() {
+  const now = Date.now();
+
+  for (const [id, timestamp] of processedMessages.entries()) {
+    if (now - timestamp > PROCESSED_MESSAGE_TTL_MS) {
+      processedMessages.delete(id);
+    }
+  }
+
+  while (processedMessages.size > MAX_PROCESSED_MESSAGES) {
+    const oldestId = processedMessages.keys().next().value;
+    processedMessages.delete(oldestId);
   }
 }
 
@@ -574,7 +594,7 @@ async function sendFileOnce(from, key) {
   state.sentFiles[key] = true;
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
-        scheduleShortFollowupAfterFile(from);
+  scheduleShortFollowupAfterFile(from);
 }
 
 function scheduleInactivityFollowup(from) {
@@ -591,7 +611,7 @@ function scheduleInactivityFollowup(from) {
       let msg = "";
 
       if (state.inactivityFollowupCount === 1) {
-        msg = "Conseguiu dar uma olhada no material? 😊";
+        msg = "Passando só para saber se ficou alguma dúvida sobre o programa 😊";
       } else if (state.inactivityFollowupCount === 2) {
         msg = "Você vê isso como renda extra ou negócio principal?";
       } else if (state.inactivityFollowupCount === 3) {
@@ -613,6 +633,7 @@ function scheduleInactivityFollowup(from) {
     }
   }, 6 * 60 * 60 * 1000);
 }
+
 function scheduleShortFollowupAfterFile(from) {
   const state = getState(from);
 
@@ -621,12 +642,18 @@ function scheduleShortFollowupAfterFile(from) {
   }
 
   state.shortTimer = setTimeout(async () => {
-    if (state.closed) return;
+    try {
+      if (state.closed) return;
 
-    await sendWhatsAppMessage(
-      from,
-      "Conseguiu dar uma olhada no material? 😊"
-    );
+      await sendWhatsAppMessage(
+        from,
+        "Conseguiu dar uma olhada no material? 😊"
+      );
+
+      state.shortTimer = null;
+    } catch (error) {
+      console.error("Erro no follow-up curto após arquivo:", error);
+    }
   }, 6 * 60 * 1000);
 }
 
@@ -645,15 +672,23 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", async (req, res) => {
+  let messageId = null;
+
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    const messageId = message?.id;
-if (processedMessages.has(messageId)) {
-  return res.sendStatus(200);
-}
-
-processedMessages.add(messageId);
     if (!message) return res.sendStatus(200);
+
+    messageId = message.id || null;
+
+    if (messageId) {
+      cleanupProcessedMessages();
+
+      if (processedMessages.has(messageId) || processingMessages.has(messageId)) {
+        return res.sendStatus(200);
+      }
+
+      processingMessages.add(messageId);
+    }
 
     const from = message.from;
     const state = getState(from);
@@ -709,9 +744,12 @@ processedMessages.add(messageId);
       conversations[from] = conversations[from].slice(-20);
     }
 
+    let autoFolderSentThisTurn = false;
+
     if (!state.folderSent && conversations[from].length <= 2) {
       state.folderSent = true;
       state.sentFiles.folder = true;
+      autoFolderSentThisTurn = true;
 
       await delay(2000);
 
@@ -722,18 +760,27 @@ processedMessages.add(messageId);
 
       await delay(2000);
       await sendWhatsAppDocument(from, FILES.folder);
-            scheduleShortFollowupAfterFile(from);
+      scheduleShortFollowupAfterFile(from);
     }
 
     const fileKey = detectRequestedFile(text);
-    if (fileKey) {
+    if (fileKey && !(fileKey === "folder" && autoFolderSentThisTurn)) {
       await sendFileOnce(from, fileKey);
     }
 
     scheduleInactivityFollowup(from);
 
+    if (messageId) {
+      processingMessages.delete(messageId);
+      processedMessages.set(messageId, Date.now());
+    }
+
     return res.sendStatus(200);
   } catch (error) {
+    if (messageId) {
+      processingMessages.delete(messageId);
+    }
+
     console.error("Erro no webhook:", error);
     return res.sendStatus(500);
   }
