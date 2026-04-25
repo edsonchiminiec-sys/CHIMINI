@@ -25,6 +25,7 @@ function getState(from) {
       sentFiles: {},
       closed: false,
       inactivityTimer: null,
+      shortTimer: null,
       inactivityFollowupCount: 0
     };
   }
@@ -50,6 +51,10 @@ function clearTimers(from) {
   if (state.inactivityTimer) {
     clearTimeout(state.inactivityTimer);
     state.inactivityTimer = null;
+  }
+  if (state.shortTimer) {
+  clearTimeout(state.shortTimer);
+  state.shortTimer = null;
   }
 }
 
@@ -568,6 +573,7 @@ async function sendFileOnce(from, key) {
   state.sentFiles[key] = true;
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
+        scheduleShortFollowupAfterFile(from);
 }
 
 function scheduleInactivityFollowup(from) {
@@ -605,6 +611,22 @@ function scheduleInactivityFollowup(from) {
       console.error("Erro no follow-up de inatividade:", error);
     }
   }, 6 * 60 * 60 * 1000);
+}
+function scheduleShortFollowupAfterFile(from) {
+  const state = getState(from);
+
+  if (state.shortTimer) {
+    clearTimeout(state.shortTimer);
+  }
+
+  state.shortTimer = setTimeout(async () => {
+    if (state.closed) return;
+
+    await sendWhatsAppMessage(
+      from,
+      "Conseguiu dar uma olhada no material? 😊"
+    );
+  }, 6 * 60 * 1000);
 }
 
 app.get("/webhook", (req, res) => {
@@ -693,6 +715,7 @@ app.post("/webhook", async (req, res) => {
 
       await delay(2000);
       await sendWhatsAppDocument(from, FILES.folder);
+            scheduleShortFollowupAfterFile(from);
     }
 
     const fileKey = detectRequestedFile(text);
