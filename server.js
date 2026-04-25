@@ -29,6 +29,10 @@ function getState(from) {
   return leadState[from];
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 const FILES = {
   catalogo: {
     link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
