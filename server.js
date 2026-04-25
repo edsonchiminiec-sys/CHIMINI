@@ -40,6 +40,14 @@ function humanDelay(text = "") {
   return Math.min(total, 7000);
 }
 
+function clearTimers(from) {
+  const state = getState(from);
+
+  if (state.inactivityTimer) {
+    clearTimeout(state.inactivityTimer);
+    state.inactivityTimer = null;
+  }
+}
 const FILES = {
   catalogo: {
     link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
