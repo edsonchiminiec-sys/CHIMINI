@@ -631,7 +631,13 @@ let text = message.text.body.trim();
     });
 
     const data = await openaiResponse.json();
-    const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
+
+if (!openaiResponse.ok) {
+  console.error("Erro OpenAI:", data);
+  throw new Error("Falha ao chamar OpenAI");
+}
+
+const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
 
     await delay(humanDelay(resposta));
     await sendWhatsAppMessage(from, resposta);
