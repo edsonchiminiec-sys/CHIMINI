@@ -494,8 +494,33 @@ const buffer = Buffer.from(arrayBuffer);
     contentType: "application/pdf"
   });
 
-  const upload = await fetch(
-    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/media`,
+  const upload = const sendDocument = await fetch(
+  `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+  {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "document",
+      document: {
+        id: uploadData.id,
+        filename: file.filename,
+        caption: file.caption
+      }
+    })
+  }
+);
+
+const sendDocumentData = await sendDocument.json();
+
+if (!sendDocument.ok) {
+  console.error("Erro ao enviar documento WhatsApp:", sendDocumentData);
+  throw new Error("Falha ao enviar documento WhatsApp");
+}
     {
       method: "POST",
       headers: {
