@@ -631,6 +631,7 @@ app.post("/webhook", async (req, res) => {
     // 🔥 ENVIA FOLDER SOMENTE DEPOIS DA PRIMEIRA RESPOSTA
     if (!state.folderSent && conversations[from].length <= 2) {
       state.folderSent = true;
+      state.sentFiles.folder = true;
 
       await delay(2000);
 
