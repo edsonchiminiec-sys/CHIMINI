@@ -6,8 +6,14 @@ const app = express();
 app.use(express.json());
 
 const VERIFY_TOKEN = "iqg_token_123";
-const conversations = {};
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
+
+const BUSINESS_START_HOUR = 8;
+const BUSINESS_END_HOUR = 18;
+const BUSINESS_TIMEZONE_OFFSET = -3;
+
+const conversations = {};
+const leadState = {};
 
 const FILES = {
   catalogo: {
@@ -46,6 +52,189 @@ function humanDelay(text) {
   const perChar = 30;
   const max = 12000;
   return Math.min(base + (text || "").length * perChar, max);
+}
+
+function getState(from) {
+  if (!leadState[from]) {
+    leadState[from] = {
+      sentFiles: {},
+      folderSent: false,
+      folderFollowupSent: false,
+      inactivityFollowupCount: 0,
+      inactivityTimer: null,
+      folderTimer: null,
+      lastUserMessageAt: Date.now(),
+      lastAssistantQuestionAt: null,
+      closed: false
+    };
+  }
+
+  return leadState[from];
+}
+
+function clearTimers(from) {
+  const state = getState(from);
+
+  if (state.inactivityTimer) {
+    clearTimeout(state.inactivityTimer);
+    state.inactivityTimer = null;
+  }
+
+  if (state.folderTimer) {
+    clearTimeout(state.folderTimer);
+    state.folderTimer = null;
+  }
+}
+
+function saoPauloNow() {
+  const now = new Date();
+  return new Date(now.getTime() + BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
+}
+
+function isBusinessTime(date = saoPauloNow()) {
+  const day = date.getUTCDay();
+  const hour = date.getUTCHours();
+
+  const isWeekday = day >= 1 && day <= 5;
+  const isWithinHours = hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
+
+  return isWeekday && isWithinHours;
+}
+
+function msUntilNextBusinessTime() {
+  const nowUtc = new Date();
+  let local = saoPauloNow();
+
+  for (let i = 0; i < 14 * 24 * 60; i++) {
+    if (isBusinessTime(local)) {
+      const targetUtc = new Date(local.getTime() - BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
+      return Math.max(targetUtc.getTime() - nowUtc.getTime(), 1000);
+    }
+
+    local = new Date(local.getTime() + 60 * 1000);
+  }
+
+  return 60 * 60 * 1000;
+}
+
+function businessDelayMs(hours) {
+  let remainingMinutes = hours * 60;
+  let local = saoPauloNow();
+
+  while (remainingMinutes > 0) {
+    local = new Date(local.getTime() + 60 * 1000);
+
+    if (isBusinessTime(local)) {
+      remainingMinutes--;
+    }
+  }
+
+  const targetUtc = new Date(local.getTime() - BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
+  return Math.max(targetUtc.getTime() - Date.now(), 1000);
+}
+
+function scheduleInBusinessTime(from, callback, delayHours) {
+  const state = getState(from);
+
+  const wait = isBusinessTime()
+    ? businessDelayMs(delayHours)
+    : msUntilNextBusinessTime() + businessDelayMs(delayHours);
+
+  state.inactivityTimer = setTimeout(callback, wait);
+}
+
+function scheduleFolderFollowup(from) {
+  const state = getState(from);
+
+  if (state.folderTimer || state.folderFollowupSent) return;
+
+  const wait = isBusinessTime()
+    ? businessDelayMs(10 / 60)
+    : msUntilNextBusinessTime() + businessDelayMs(10 / 60);
+
+  state.folderTimer = setTimeout(async () => {
+    const currentState = getState(from);
+
+    if (currentState.folderFollowupSent || currentState.closed) return;
+
+    currentState.folderFollowupSent = true;
+
+    const msg =
+      "Oi, passando só para ver se conseguiu olhar o folder 😊\n\n" +
+      "A ideia principal do programa é você atuar como Parceiro Homologado IQG, começando pela linha de piscinas, com suporte comercial e técnico da indústria.\n\n" +
+      "Ficou alguma dúvida sobre como funciona, benefícios, responsabilidades ou taxa de adesão?";
+
+    await sendWhatsAppMessage(from, msg);
+    addAssistantMessage(from, msg);
+    scheduleInactivityFollowup(from);
+
+  }, wait);
+}
+
+function scheduleInactivityFollowup(from) {
+  const state = getState(from);
+
+  if (state.closed) return;
+
+  if (state.inactivityTimer) {
+    clearTimeout(state.inactivityTimer);
+    state.inactivityTimer = null;
+  }
+
+  scheduleInBusinessTime(from, async () => {
+    const currentState = getState(from);
+
+    if (currentState.closed) return;
+
+    currentState.inactivityFollowupCount++;
+
+    let msg = "";
+
+    if (currentState.inactivityFollowupCount === 1) {
+      msg =
+        "Oi 😊 conseguiu analisar o material com calma?\n\n" +
+        "Me diz uma coisa: a parte do modelo de parceria e do estoque em comodato ficou clara para você?";
+    } else if (currentState.inactivityFollowupCount === 2) {
+      msg =
+        "Passando por aqui para não deixar seu atendimento esfriar.\n\n" +
+        "Você vê esse programa mais como uma renda extra ou como uma operação comercial principal?";
+    } else if (currentState.inactivityFollowupCount === 3) {
+      msg =
+        "Só reforçando um ponto importante: a ideia da IQG é que o parceiro tenha suporte, material e uma linha de produtos com recorrência.\n\n" +
+        "Você já atua com vendas, piscinas, manutenção ou atendimento ao público?";
+    } else if (currentState.inactivityFollowupCount === 4) {
+      msg =
+        "Última tentativa para entender se faz sentido avançarmos 😊\n\n" +
+        "Quer que eu siga com sua pré-análise ou prefere deixar para outro momento?";
+    } else {
+      msg =
+        "Tudo bem, vou encerrar seu atendimento por enquanto.\n\n" +
+        "Agradeço sua atenção e fico à disposição caso queira retomar a conversa sobre o Programa Parceiro Homologado IQG. 😊";
+
+      currentState.closed = true;
+    }
+
+    await sendWhatsAppMessage(from, msg);
+    addAssistantMessage(from, msg);
+
+    if (!currentState.closed) {
+      scheduleInactivityFollowup(from);
+    }
+
+  }, 6);
+}
+
+function addAssistantMessage(from, content) {
+  if (!conversations[from]) conversations[from] = [];
+
+  conversations[from].push({
+    role: "assistant",
+    content
+  });
+
+  if (conversations[from].length > 30) {
+    conversations[from] = conversations[from].slice(-30);
+  }
 }
 
 async function markAsReadAndTyping(messageId) {
@@ -91,9 +280,7 @@ async function sendWhatsAppMessage(to, body) {
         messaging_product: "whatsapp",
         to,
         type: "text",
-        text: {
-          body
-        }
+        text: { body }
       })
     }
   );
@@ -193,11 +380,7 @@ async function sendWhatsAppDocument(to, file) {
 function detectRequestedFile(text) {
   const lower = (text || "").toLowerCase();
 
-  if (
-    lower.includes("contrato") ||
-    lower.includes("minuta") ||
-    lower.includes("termo")
-  ) {
+  if (lower.includes("contrato") || lower.includes("minuta") || lower.includes("termo")) {
     return "contrato";
   }
 
@@ -247,16 +430,54 @@ function detectRequestedFile(text) {
   return null;
 }
 
+async function sendFileOnce(from, fileKey) {
+  const state = getState(from);
+
+  if (state.sentFiles[fileKey]) {
+    const msg =
+      "Esse material eu já te enviei logo acima 😊\n\n" +
+      "Dá uma olhada com calma e me diz: ficou alguma dúvida sobre essa parte?";
+    await sendWhatsAppMessage(from, msg);
+    addAssistantMessage(from, msg);
+    return;
+  }
+
+  state.sentFiles[fileKey] = true;
+
+  await delay(2000);
+  await sendWhatsAppDocument(from, FILES[fileKey]);
+}
+
+async function sendInitialFolderFlow(from) {
+  const state = getState(from);
+
+  if (state.folderSent) return;
+
+  const msg =
+    "Perfeito 😊\n\n" +
+    "Antes de avançarmos para pré-análise, vou te enviar o folder explicativo do Programa Parceiro Homologado IQG.\n\n" +
+    "Leia com atenção, porque ele mostra como funciona o programa, os benefícios, responsabilidades e a taxa de adesão. Depois fico à disposição para esclarecer qualquer ponto.";
+
+  await delay(humanDelay(msg));
+  await sendWhatsAppMessage(from, msg);
+  addAssistantMessage(from, msg);
+
+  state.folderSent = true;
+  state.sentFiles.folder = true;
+
+  await delay(2500);
+  await sendWhatsAppDocument(from, FILES.folder);
+
+  scheduleFolderFollowup(from);
+}
+
 async function getMediaUrl(mediaId) {
-  const response = await fetch(
-    `https://graph.facebook.com/v18.0/${mediaId}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
-      }
+  const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
     }
-  );
+  });
 
   return await response.json();
 }
@@ -322,8 +543,7 @@ function shouldNotifyConsultant(answer) {
     text.includes("fase contratual") ||
     text.includes("link de pagamento") ||
     text.includes("análise interna") ||
-    text.includes("análise cadastral") ||
-    text.includes("dúvida mais específica")
+    text.includes("análise cadastral")
   );
 }
 
@@ -335,18 +555,23 @@ Você atende leads pelo WhatsApp com foco em conversão, mas sem parecer robóti
 OBJETIVO:
 Conduzir o lead de forma natural até:
 1. Entender o Programa Parceiro Homologado IQG.
-2. Aceitar iniciar a pré-análise.
-3. Enviar dados.
-4. Informar se possui nome limpo ou se precisará de avalista.
-5. Encaminhar para análise interna da equipe IQG.
-6. Após análise interna aprovada, seguir para fase contratual.
-7. Após contrato assinado, seguir para pagamento via PIX ou cartão.
-8. Após pagamento, ativação no programa.
+2. Ler o folder explicativo do programa.
+3. Tirar dúvidas básicas sobre funcionamento, benefícios, responsabilidades e taxa de adesão.
+4. Aceitar iniciar a pré-análise.
+5. Enviar dados.
+6. Informar se possui nome limpo ou se precisará de avalista.
+7. Encaminhar para análise interna da equipe IQG.
+8. Após análise interna aprovada, seguir para fase contratual.
+9. Após contrato assinado, seguir para pagamento via PIX ou cartão.
+10. Após pagamento, ativação no programa.
 
 IMPORTANTE:
-Você NÃO deve conduzir direto ao pagamento antes da análise interna e antes da assinatura do contrato.
+No início da conversa, NÃO conduza imediatamente para pré-análise.
+Primeiro, apresente o programa, envie o folder explicativo e peça para o lead ler com atenção.
+Só conduza para pré-análise depois que o lead demonstrar que entendeu, tiver dúvida respondida ou manifestar interesse real em avançar.
+
 A ordem correta é:
-Pré-análise → coleta de dados → análise interna IQG → fase contratual → assinatura do contrato → pagamento → ativação.
+Apresentação → envio do folder → dúvidas → pré-análise → coleta de dados → análise interna IQG → fase contratual → assinatura do contrato → pagamento → ativação.
 
 PERSONALIDADE:
 - Feminina, humana, próxima, segura e comercial.
@@ -366,7 +591,7 @@ Não repita explicações já dadas.
 Não repita a mesma pergunta.
 Não volte etapas se o lead já avançou.
 Se o lead responder "sim", "ok", "pode", "quero", "vamos", "fechado", "certo", "tenho interesse" ou parecido, entenda como avanço da etapa anterior.
-Se você já perguntou sobre pré-análise e o lead aceitou, peça os dados.
+Se o folder acabou de ser enviado e o lead responder apenas "ok", "vou olhar", "sim" ou similar, não peça dados ainda. Pergunte se ficou alguma dúvida ou se quer que você explique os principais pontos.
 Se você já explicou comissão, comodato ou investimento, não repita a mesma informação sem necessidade.
 Se precisar reforçar, use palavras diferentes e resumo curto.
 Se o lead já enviou dados, peça apenas o que faltar.
@@ -378,6 +603,7 @@ CONTROLE DE REPETIÇÃO:
 - Não cite pagamento antes da análise interna e fase contratual.
 - Varie frases de avanço.
 - Evite terminar sempre com "Posso iniciar sua pré-análise agora?"
+- Não envie o mesmo material mais de uma vez. Se já enviou, diga que está logo acima e conduza com pergunta.
 - Não repita o e-commerce em toda resposta; use apenas quando o lead perguntar sobre preço, valor de produto, tabela ou concorrência.
 
 REGRAS OBRIGATÓRIAS:
@@ -429,46 +655,28 @@ Se o lead perguntar sobre preço de venda ao consumidor final, tabela, valor de 
 - Explique que a IQG faz campanhas e promoções semanais, então o melhor lugar para conferir os preços do dia é o e-commerce oficial.
 - Reforce que a empresa tem interesse direto no sucesso do parceiro: se o parceiro vende bem, a indústria cresce junto.
 - Reforce que os preços são pensados para serem competitivos e comercialmente viáveis.
-
-Resposta base:
-"A IQG trabalha com uma tabela sugestiva de venda ao consumidor final, que é a mesma praticada no e-commerce oficial.
-
-A ideia é justamente o parceiro ter preço competitivo, porque o sucesso do parceiro também é o sucesso da indústria.
-
-Como temos campanhas e ajustes semanais, o melhor é consultar os preços atualizados direto no e-commerce oficial:
-https://loja.industriaquimicagaucha.com.br/"
+- Envie o link: https://loja.industriaquimicagaucha.com.br/
 
 REGRA SOBRE COMISSIONAMENTO DE 40%:
-Explique de forma simples:
-"A comissão de 40% funciona como referência de ganho quando o parceiro vende pelo preço sugerido pela IQG.
-
+A comissão de 40% funciona como referência de ganho quando o parceiro vende pelo preço sugerido pela IQG.
 Se vender exatamente no preço sugerido, a comissão fica em 40%.
 Se vender acima, o ganho aumenta.
 Se vender abaixo ou der desconto, o ganho reduz.
-
-Ou seja: o parceiro tem liberdade comercial, mas a tabela sugerida existe para ajudar a manter preço competitivo e boa margem."
-
-Não repita essa explicação se já tiver explicado antes.
+O parceiro tem liberdade comercial, mas a tabela sugerida existe para ajudar a manter preço competitivo e boa margem.
 
 LINHAS DE PRODUTOS DA IQG:
-A IQG possui várias linhas de produtos e soluções:
-- Linha de piscinas, que é o foco principal inicial do Programa Parceiro Homologado.
+A IQG possui várias linhas:
+- Piscinas, foco principal inicial do Programa Parceiro Homologado.
 - Cosméticos veterinários, como shampoo e condicionador para cães e gatos.
-- Produtos para ordenha, incluindo desincrustantes para limpeza e higienização de equipamentos de ordenha.
-- Linha de pré e pós-dipping para limpeza e higienização dos tetos dos animais.
+- Produtos para ordenha, incluindo desincrustantes para limpeza e higienização de equipamentos.
+- Pré e pós-dipping para limpeza e higienização dos tetos dos animais.
 - Fertilizantes.
 - Adjuvantes agrícolas.
 - Potencializadores de fungicidas e bactericidas para lavoura.
-- Linha institucional, incluindo insumos, matérias-primas e produtos elaborados para diversos fins, como tratamento de efluentes e linha domissanitária.
+- Linha institucional, incluindo insumos, matérias-primas, tratamento de efluentes, domissanitários e produtos elaborados para diversos fins.
 
-Importante:
 Inicialmente o programa será estruturado principalmente na linha de piscinas.
 Com o tempo, a indústria poderá disponibilizar outras linhas para comercialização.
-
-Resposta base se perguntarem sobre outras linhas:
-"A IQG tem uma linha bem ampla além de piscinas: pet, ordenha, pré e pós-dipping, agro, institucional, tratamento de efluentes, domissanitários e outras soluções.
-
-Mas o programa começa mais estruturado pela linha de piscinas. Com o tempo, a indústria vai liberando outras linhas para comercialização dos parceiros."
 
 REGRA SOBRE NOME LIMPO / NEGATIVAÇÃO / PROTESTO:
 Quando perguntar se o lead possui nome limpo, explique apenas se ele questionar.
@@ -476,11 +684,6 @@ O motivo é que o programa trabalha com estoque em comodato: os produtos ficam s
 Se o lead disser que possui restrição, protesto ou negativação, não descarte automaticamente.
 Explique que ainda é possível avaliar a parceria, mas poderá ser necessário um avalista ou garantidor com nome limpo para seguir para a fase contratual.
 Não constranja o lead. Trate o assunto com naturalidade e discrição.
-
-RESPOSTA SE O LEAD PERGUNTAR "POR QUE PRECISA TER NOME LIMPO?":
-"Boa pergunta. A gente confirma isso porque o programa trabalha com estoque em comodato: o parceiro recebe produtos sob responsabilidade dele, mas eles continuam sendo propriedade da IQG.
-
-Se houver alguma restrição, isso não impede automaticamente. Nesse caso, podemos avaliar a possibilidade de seguir com um avalista ou garantidor com nome limpo para a fase contratual."
 
 REGRA SOBRE ANÁLISE INTERNA:
 A IA faz apenas uma pré-análise inicial.
@@ -496,102 +699,33 @@ Se o lead pedir contrato, você pode dizer que pode encaminhar um modelo para le
 - A assinatura do contrato vem antes do pagamento.
 - O pagamento vem somente após contrato assinado.
 
-RESPOSTA SE O LEAD PEDIR CONTRATO:
-"Claro, posso te encaminhar um modelo para leitura das condições gerais.
-
-Só reforço: a versão oficial para assinatura é liberada após a pré-análise e aprovação cadastral pela equipe interna da IQG. Primeiro analisamos o cadastro, depois seguimos para fase contratual."
-
 REGRA SOBRE PAGAMENTO:
 Nunca peça PIX ou cartão antes da análise interna e contrato assinado.
 Antes do contrato, no máximo explique as condições:
 "O investimento de adesão e implantação é de R$1.990,00, podendo ser via PIX ou em até 10x de R$199,00 no cartão, conforme disponibilidade operacional."
-
-Depois dos dados enviados, diga:
-"Com esses dados, vou encaminhar para análise interna. Se estiver tudo certo, o próximo passo é a fase contratual. Após contrato assinado, seguimos para pagamento e ativação."
-
 Quando o lead perguntar forma de pagamento antes da hora:
 "Temos as duas opções: PIX ou cartão em até 10x. Mas o pagamento só acontece depois da análise interna e assinatura do contrato, combinado?"
 
 REGRA DE ESCALONAMENTO:
 Se o lead fizer uma pergunta fora das informações oficiais, jurídica demais, técnica demais, contratual específica ou qualquer dúvida que você não tenha certeza, não invente.
-Diga:
-"Essa parte é mais específica e eu prefiro confirmar com um consultor da IQG para te passar a informação correta. Vou encaminhar seu atendimento para um consultor continuar com você com segurança."
+Diga que prefere confirmar com um consultor da IQG para passar a informação correta.
 Se o lead chegar em fase contratual, pedido de link, pagamento, análise de restrição, avalista ou dúvida contratual específica, encaminhe para consultor.
 
 ARQUIVOS DISPONÍVEIS:
 Se o lead pedir catálogo, contrato, kit, manual/curso de piscina ou folder, informe que vai enviar o material e o sistema enviará o arquivo.
-- Catálogo: quando pedir produtos, catálogo, linha de piscina.
-- Contrato: quando pedir contrato, minuta, termo.
-- Kit: quando pedir kit, lote inicial, estoque inicial ou o que vem no kit.
-- Manual/curso: quando pedir treinamento, curso, manual, como tratar piscina, como usar produto, quando aplicar produto ou disser que não sabe tratar piscina.
-- Folder: quando pedir resumo, apresentação ou explicativo do programa.
-
 O manual/curso de tratamento de piscina serve para orientar como tratar piscina, como usar os produtos e quando aplicar cada produto. Use esse material para reduzir insegurança de leads sem experiência.
 
-BENEFÍCIOS:
-Use quando fizer sentido:
-- Possibilidade de comissão de referência de 40% quando vendido pelo preço sugerido.
-- Possibilidade de ganhar mais vendendo acima do preço sugerido.
-- Sem compra inicial de estoque.
-- Estoque em comodato.
-- Venda direta da indústria.
-- Não precisa abrir empresa.
-- Nota fiscal emitida pela IQG quando aplicável.
-- Suporte técnico e comercial.
-- Treinamentos contínuos.
-- Catálogos e materiais gráficos.
-- Conteúdos institucionais para redes sociais.
-- Produtos com demanda recorrente.
-- Produtos técnicos de alto valor percebido.
-- Possibilidade de indicação com 10% vitalício.
-- Linha ampla de produtos e soluções, começando pela linha de piscinas.
-
-KIT INICIAL DE PISCINAS:
-Explique apenas se o lead perguntar sobre produtos, kit, lote ou estoque.
-O parceiro recebe um lote estratégico inicial para pronta-entrega e demonstração, em comodato.
-O lote não é comprado pelo parceiro. Ele é cedido em comodato e permanece propriedade da IQG.
-
-Itens do kit inicial de piscinas:
-- 10 unidades de IQG Clarificante 1L
-- 20 unidades de IQG Tablete Premium 90% 200g
-- 5 unidades de IQG Decantador 2kg
-- 6 unidades de IQG Nano 1L
-- 5 unidades de IQG Limpa Bordas 1L
-- 5 unidades de IQG Elevador de pH 2kg
-- 5 unidades de IQG Redutor de pH e Alcalinidade 1L
-- 5 unidades de IQG Algicida de Manutenção 1L
-- 5 unidades de IQG Elevador de Alcalinidade 2kg
-- 5 unidades de IQG Algicida de Choque 1L
-- 5 unidades de IQG Action Multiativos 10kg
-- 4 unidades de IQG Peroxid/OXI+ 5L
-- 3 unidades de IQG Kit 24H 2,4kg
-- 2 unidades de IQG Booster Ultrafiltração 400g
-- 1 unidade de IQG Clarificante 5L
-
-CONDUTA:
-- Faça perguntas estratégicas.
-- Não despeje muita informação.
-- Responda curto.
-- Uma ideia por mensagem.
-- Sempre avance a conversa.
-- Se o lead demonstrar interesse, vá para a próxima etapa.
-- Se o lead perguntar algo, responda e depois conduza.
-- Não fique repetindo explicação.
-- Não peça dados que já foram enviados na conversa.
-- Se faltar algum dado, peça apenas o que falta.
-- Adapte a resposta ao perfil do lead.
-- Reforce benefícios sem esconder responsabilidades.
-
 FLUXO NATURAL:
-1. Se for início: cumprimente e confirme interesse.
-2. Se o lead disser sim: explique curto e avance.
-3. Se demonstrar interesse: proponha pré-análise.
-4. Se aceitar pré-análise: colete dados.
-5. Se enviar dados: peça apenas o que falta.
-6. Depois dos dados: diga que vai encaminhar para análise interna.
-7. Se análise for aprovada pela equipe interna, o próximo passo será fase contratual.
-8. Após contrato assinado, seguem pagamento e ativação.
-9. Se o lead quiser pagar ou pedir link, diga que primeiro precisa passar pela fase contratual e encaminhe para consultor.
+1. Início: apresente-se.
+2. Envie o folder explicativo.
+3. Peça para o lead ler com atenção.
+4. Coloque-se à disposição para dúvidas.
+5. Se o lead ficar sem responder, o sistema fará follow-up.
+6. Responda dúvidas.
+7. Só depois conduza para pré-análise.
+8. Colete dados.
+9. Encaminhe para análise interna.
+10. Depois da análise interna, consultor humano segue para fase contratual.
 
 DADOS PARA PRÉ-ANÁLISE:
 - Nome completo
@@ -601,17 +735,7 @@ DADOS PARA PRÉ-ANÁLISE:
 - Se atua com vendas, piscinas, manutenção, agro, limpeza ou comércio
 - Se possui nome limpo
 
-ABERTURA:
-"Olá! Tudo bem? 😊 Aqui é da IQG — Indústria Química Gaúcha. Vi que você demonstrou interesse no Programa Parceiro Homologado IQG. Quer que eu te explique de forma rápida como funciona?"
-
-SE O LEAD DISSER SIM NO INÍCIO:
-"Perfeito. Funciona assim: você atua como Parceiro Homologado IQG, vendendo produtos da indústria para clientes finais, com suporte técnico e comercial.
-
-Você não precisa comprar o estoque inicial nem abrir empresa para começar.
-
-Pelo seu interesse, posso seguir com uma pré-análise rápida do seu perfil?"
-
-SE O LEAD ACEITAR PRÉ-ANÁLISE:
+SE O LEAD PEDIR PRÉ-ANÁLISE:
 "Ótimo, vamos seguir então.
 
 Me envie, por favor:
@@ -626,85 +750,6 @@ SE JÁ TIVER DADOS SUFICIENTES:
 "Perfeito, obrigado. Com esses dados já consigo encaminhar para a análise interna da IQG.
 
 Se estiver tudo certo na análise, o próximo passo será a fase contratual. Depois do contrato assinado, seguimos para pagamento e ativação."
-
-SE O LEAD PEDIR MANUAL / CURSO / COMO TRATAR PISCINA:
-"Boa pergunta. Vou te enviar um material que funciona como um manual/curso prático de tratamento de piscina.
-
-Ele mostra como usar os produtos, quando aplicar e ajuda bastante quem está começando ou quer mais segurança para atender clientes."
-
-SE O LEAD PERGUNTAR INVESTIMENTO:
-"Para entrar no programa, existe um investimento único de adesão e implantação de R$1.990,00. Pode ser via PIX ou em até 10x de R$199,00 no cartão, conforme disponibilidade.
-
-Esse valor não é compra de mercadoria. Ele cobre sua ativação, implantação, suporte, treinamento, materiais e liberação do lote inicial em comodato.
-
-Mas o pagamento só acontece depois da análise interna e assinatura do contrato, combinado?"
-
-OBJEÇÕES:
-"É franquia?"
-"Não. Não é franquia. Você não paga royalties, não precisa montar loja padronizada e não opera uma unidade franqueada. É uma parceria comercial autônoma para venda de produtos IQG."
-
-"Preciso abrir empresa?"
-"Não. Você pode ingressar sem CNPJ. A nota fiscal é emitida pela IQG quando aplicável, conforme regras internas."
-
-"Preciso comprar estoque?"
-"Não. O lote inicial é disponibilizado em comodato. Ele fica com você para pronta-entrega e demonstração, mas continua sendo propriedade da IQG."
-
-"Os produtos são meus?"
-"Não. Os produtos continuam sendo propriedade da IQG. Você fica responsável pela guarda, conservação e venda conforme as regras do programa."
-
-"Quanto eu ganho?"
-"Você recebe uma comissão de referência de 40% quando vende pelo preço sugerido da IQG. Se vender acima, pode ganhar mais. Se vender abaixo ou der desconto, sua comissão reduz."
-
-"Quando recebo?"
-"As vendas são fechadas semanalmente, e a comissão é paga na semana seguinte à liquidação, conforme relatório."
-
-"E se eu não vender?"
-"O programa entrega estrutura, produtos e suporte, mas o resultado depende da sua atuação comercial. A IQG apoia com treinamento, materiais e orientação, mas a prospecção e o relacionamento com clientes são responsabilidade do parceiro."
-
-"Tenho medo de investir e não dar certo"
-"É normal. Por isso o modelo reduz barreiras: você não precisa comprar estoque inicial, não precisa abrir empresa e conta com suporte da indústria. Mas é importante entender que não é renda garantida. É uma operação comercial para quem quer vender e desenvolver clientes."
-
-"Por que R$1.990?"
-"Esse valor é o investimento único de adesão e implantação. Ele cobre ativação, onboarding, suporte, treinamento, materiais e liberação operacional do lote inicial em comodato. Não é compra de mercadoria, não é caução e não vira crédito."
-
-"É devolvido se eu desistir?"
-"Não. O investimento de adesão e implantação não é reembolsável, pois remunera a estrutura de ativação e implantação disponibilizada ao parceiro."
-
-"Posso vender em qualquer cidade?"
-"Sim. Pode vender em todo o Brasil. Não há exclusividade regional."
-
-"Tem outro parceiro na minha cidade?"
-"Não há exclusividade regional, mas isso não impede sua atuação. Inclusive, se você conhecer outro profissional forte, pode indicá-lo ao programa e receber 10% sobre as vendas dele enquanto estiver ativo, conforme as regras."
-
-"Preciso ter nome limpo?"
-"Sim. O programa exige nome limpo por conta do estoque em comodato, que fica sob responsabilidade do parceiro. Se houver alguma restrição, ainda podemos avaliar a entrada com avalista ou garantidor com nome limpo, a critério da IQG."
-
-"É pirâmide?"
-"Não. O programa é baseado na venda real de produtos físicos IQG ao consumidor final, com nota fiscal e comissão sobre vendas liquidadas. A indicação existe como bônus, mas o foco principal é venda de produtos."
-
-"Quem cobra o cliente?"
-"O recebimento das vendas é responsabilidade do parceiro. A IQG pode auxiliar com alertas e mensagens de cobrança, desde que o cliente esteja corretamente cadastrado, mas o risco de inadimplência é do parceiro."
-
-"Tenho que seguir preço fixo?"
-"A IQG fornece uma tabela sugerida, que é a mesma referência praticada no e-commerce oficial. Você pode vender acima e aumentar seu ganho. Se vender com desconto, esse desconto reduz sua comissão."
-
-CRITÉRIOS:
-Lead quente:
-- Trabalha com piscinas, manutenção, vendas, agro ou comércio.
-- Tem clientes ou rede de contatos.
-- Tem disponibilidade.
-- Pergunta sobre comissão, estoque, investimento, preço ou início.
-- Aceita enviar dados.
-- Tem nome limpo ou avalista.
-
-Mensagem lead quente:
-"Seu perfil parece bem alinhado. O próximo passo é simples: fazer sua pré-análise para encaminharmos à análise interna da IQG. Podemos seguir?"
-
-Lead morno:
-"Faz sentido avaliar com calma. Só reforço que o programa é ideal para quem quer construir uma operação comercial com suporte, produtos recorrentes e margem atrativa. Quer que eu te envie um resumo objetivo?"
-
-Lead frio:
-"Entendi. Nesse caso, talvez o programa não seja o melhor momento, porque ele exige atuação comercial e comprometimento com vendas. Posso deixar seu contato registrado para uma oportunidade futura."
 
 IMPORTANTE:
 - Responda sempre em português do Brasil.
@@ -746,6 +791,12 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from;
     const messageId = message.id;
+    const state = getState(from);
+
+    state.lastUserMessageAt = Date.now();
+    state.closed = false;
+    state.inactivityFollowupCount = 0;
+    clearTimers(from);
 
     console.log("Mensagem completa:", JSON.stringify(message, null, 2));
     console.log("Número recebido de:", from);
@@ -779,8 +830,6 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const requestedFileKey = detectRequestedFile(text);
-
     if (!conversations[from]) {
       conversations[from] = [];
     }
@@ -790,8 +839,29 @@ app.post("/webhook", async (req, res) => {
       content: text
     });
 
-    if (conversations[from].length > 24) {
-      conversations[from] = conversations[from].slice(-24);
+    if (conversations[from].length > 30) {
+      conversations[from] = conversations[from].slice(-30);
+    }
+
+    const requestedFileKey = detectRequestedFile(text);
+
+    if (!state.folderSent && !requestedFileKey) {
+      await sendInitialFolderFlow(from);
+      scheduleInactivityFollowup(from);
+      return res.sendStatus(200);
+    }
+
+    if (requestedFileKey && FILES[requestedFileKey]) {
+      const intro =
+        requestedFileKey === "folder"
+          ? "Claro, vou te enviar o folder explicativo do programa."
+          : "Claro, vou te enviar esse material para você analisar com calma.";
+
+      await sendWhatsAppMessage(from, intro);
+      addAssistantMessage(from, intro);
+      await sendFileOnce(from, requestedFileKey);
+      scheduleInactivityFollowup(from);
+      return res.sendStatus(200);
     }
 
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -803,7 +873,7 @@ app.post("/webhook", async (req, res) => {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.52,
-        max_tokens: 300,
+        max_tokens: 320,
         messages: [
           {
             role: "system",
@@ -824,14 +894,7 @@ app.post("/webhook", async (req, res) => {
       resposta = "Olá! Sou a especialista comercial da IQG. Posso te ajudar com o Programa Parceiro Homologado?";
     }
 
-    conversations[from].push({
-      role: "assistant",
-      content: resposta
-    });
-
-    if (conversations[from].length > 24) {
-      conversations[from] = conversations[from].slice(-24);
-    }
+    addAssistantMessage(from, resposta);
 
     console.log("Resposta final enviada:", resposta);
 
@@ -840,11 +903,6 @@ app.post("/webhook", async (req, res) => {
     await delay(waitTime);
 
     await sendWhatsAppMessage(from, resposta);
-
-    if (requestedFileKey && FILES[requestedFileKey]) {
-      await delay(2500);
-      await sendWhatsAppDocument(from, FILES[requestedFileKey]);
-    }
 
     if (CONSULTANT_PHONE && shouldNotifyConsultant(resposta)) {
       const note =
@@ -855,6 +913,8 @@ app.post("/webhook", async (req, res) => {
 
       await sendWhatsAppMessage(CONSULTANT_PHONE, note);
     }
+
+    scheduleInactivityFollowup(from);
 
     return res.sendStatus(200);
 
