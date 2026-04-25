@@ -1,11 +1,14 @@
 import express from "express";
 import fetch from "node-fetch";
 import FormData from "form-data";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const VERIFY_TOKEN = "iqg_token_123";
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "iqg_token_123";
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
 
 const BUSINESS_START_HOUR = 8;
@@ -32,6 +35,7 @@ function getState(from) {
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
 function humanDelay(text = "") {
   const base = 1200;
   const perChar = 25;
@@ -48,6 +52,7 @@ function clearTimers(from) {
     state.inactivityTimer = null;
   }
 }
+
 const FILES = {
   catalogo: {
     link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
@@ -468,23 +473,16 @@ async function sendWhatsAppMessage(to, body) {
     throw new Error("Falha ao enviar mensagem WhatsApp");
   }
 }
-const data = await response.json();
-
-if (!response.ok) {
-  console.error("Erro ao enviar mensagem WhatsApp:", data);
-  throw new Error("Falha ao enviar mensagem WhatsApp");
-};
-}
 
 async function sendWhatsAppDocument(to, file) {
   const fileResponse = await fetch(file.link);
 
-if (!fileResponse.ok) {
-  throw new Error(`Erro ao baixar arquivo: ${fileResponse.status}`);
-}
+  if (!fileResponse.ok) {
+    throw new Error(`Erro ao baixar arquivo: ${fileResponse.status}`);
+  }
 
-const arrayBuffer = await fileResponse.arrayBuffer();
-const buffer = Buffer.from(arrayBuffer);
+  const arrayBuffer = await fileResponse.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
 
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
@@ -494,33 +492,8 @@ const buffer = Buffer.from(arrayBuffer);
     contentType: "application/pdf"
   });
 
-  const upload = const sendDocument = await fetch(
-  `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-  {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "document",
-      document: {
-        id: uploadData.id,
-        filename: file.filename,
-        caption: file.caption
-      }
-    })
-  }
-);
-
-const sendDocumentData = await sendDocument.json();
-
-if (!sendDocument.ok) {
-  console.error("Erro ao enviar documento WhatsApp:", sendDocumentData);
-  throw new Error("Falha ao enviar documento WhatsApp");
-}
+  const upload = await fetch(
+    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/media`,
     {
       method: "POST",
       headers: {
@@ -533,12 +506,12 @@ if (!sendDocument.ok) {
 
   const uploadData = await upload.json();
 
-if (!upload.ok) {
-  console.error("Erro ao subir documento para WhatsApp:", uploadData);
-  throw new Error("Falha ao subir documento para WhatsApp");
-}
+  if (!upload.ok) {
+    console.error("Erro ao subir documento para WhatsApp:", uploadData);
+    throw new Error("Falha ao subir documento para WhatsApp");
+  }
 
-await fetch(
+  const sendDocument = await fetch(
     `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
@@ -558,20 +531,31 @@ await fetch(
       })
     }
   );
+
+  const sendDocumentData = await sendDocument.json();
+
+  if (!sendDocument.ok) {
+    console.error("Erro ao enviar documento WhatsApp:", sendDocumentData);
+    throw new Error("Falha ao enviar documento WhatsApp");
+  }
 }
 
-function detectRequestedFile(text) {
-  text = text.toLowerCase();
-  if (text.includes("contrato")) return "contrato";
-  if (text.includes("catalogo")) return "catalogo";
-  if (text.includes("kit")) return "kit";
-  if (text.includes("manual")) return "manual";
-  if (text.includes("folder")) return "folder";
+function detectRequestedFile(text = "") {
+  const normalizedText = text.toLowerCase();
+
+  if (normalizedText.includes("contrato")) return "contrato";
+  if (normalizedText.includes("catálogo") || normalizedText.includes("catalogo")) return "catalogo";
+  if (normalizedText.includes("kit")) return "kit";
+  if (normalizedText.includes("manual") || normalizedText.includes("curso")) return "manual";
+  if (normalizedText.includes("folder")) return "folder";
+
   return null;
 }
 
 async function sendFileOnce(from, key) {
   const state = getState(from);
+
+  if (!FILES[key]) return;
 
   if (state.sentFiles[key]) {
     await sendWhatsAppMessage(
@@ -594,31 +578,35 @@ function scheduleInactivityFollowup(from) {
   if (state.inactivityTimer) clearTimeout(state.inactivityTimer);
 
   state.inactivityTimer = setTimeout(async () => {
-    state.inactivityFollowupCount++;
+    try {
+      state.inactivityFollowupCount++;
 
-    let msg = "";
+      let msg = "";
 
-    if (state.inactivityFollowupCount === 1) {
-      msg = "Conseguiu dar uma olhada no material? 😊";
-    } else if (state.inactivityFollowupCount === 2) {
-      msg = "Você vê isso como renda extra ou negócio principal?";
-    } else if (state.inactivityFollowupCount === 3) {
-      msg = "Você já trabalha com vendas ou atendimento?";
-    } else if (state.inactivityFollowupCount === 4) {
-      msg = "Quer que eu siga com sua pré-análise?";
-    } else {
-      msg = "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!";
-      state.closed = true;
+      if (state.inactivityFollowupCount === 1) {
+        msg = "Conseguiu dar uma olhada no material? 😊";
+      } else if (state.inactivityFollowupCount === 2) {
+        msg = "Você vê isso como renda extra ou negócio principal?";
+      } else if (state.inactivityFollowupCount === 3) {
+        msg = "Você já trabalha com vendas ou atendimento?";
+      } else if (state.inactivityFollowupCount === 4) {
+        msg = "Quer que eu siga com sua pré-análise?";
+      } else {
+        msg = "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!";
+        state.closed = true;
+      }
+
+      await sendWhatsAppMessage(from, msg);
+
+      if (!state.closed) {
+        scheduleInactivityFollowup(from);
+      }
+    } catch (error) {
+      console.error("Erro no follow-up de inatividade:", error);
     }
-
-    await sendWhatsAppMessage(from, msg);
-
-    if (!state.closed) {
-      scheduleInactivityFollowup(from);
-    }
-
   }, 6 * 60 * 60 * 1000);
 }
+
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -632,6 +620,7 @@ app.get("/webhook", (req, res) => {
   console.log("Falha na verificação do webhook.");
   return res.sendStatus(403);
 });
+
 app.post("/webhook", async (req, res) => {
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
@@ -643,22 +632,21 @@ app.post("/webhook", async (req, res) => {
     clearTimers(from);
     state.closed = false;
 
-  if (!message.text?.body) {
-  await sendWhatsAppMessage(
-    from,
-    "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
-  );
+    if (!message.text?.body) {
+      await sendWhatsAppMessage(
+        from,
+        "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
+      );
 
-  scheduleInactivityFollowup(from);
-  return res.sendStatus(200);
-}
+      scheduleInactivityFollowup(from);
+      return res.sendStatus(200);
+    }
 
-let text = message.text.body.trim();
+    const text = message.text.body.trim();
 
     if (!conversations[from]) conversations[from] = [];
     conversations[from].push({ role: "user", content: text });
 
-    // 🔥 OPENAI PRIMEIRO
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -666,32 +654,32 @@ let text = message.text.body.trim();
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-  model: "gpt-4o-mini",
-  messages: [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...conversations[from]
-  ]
-})
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          ...conversations[from]
+        ]
+      })
     });
 
     const data = await openaiResponse.json();
 
-if (!openaiResponse.ok) {
-  console.error("Erro OpenAI:", data);
-  throw new Error("Falha ao chamar OpenAI");
-}
+    if (!openaiResponse.ok) {
+      console.error("Erro OpenAI:", data);
+      throw new Error("Falha ao chamar OpenAI");
+    }
 
-const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
+    const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
 
     await delay(humanDelay(resposta));
     await sendWhatsAppMessage(from, resposta);
 
     conversations[from].push({ role: "assistant", content: resposta });
-    if (conversations[from].length > 20) {
-  conversations[from] = conversations[from].slice(-20);
-}
 
-    // 🔥 ENVIA FOLDER SOMENTE DEPOIS DA PRIMEIRA RESPOSTA
+    if (conversations[from].length > 20) {
+      conversations[from] = conversations[from].slice(-20);
+    }
+
     if (!state.folderSent && conversations[from].length <= 2) {
       state.folderSent = true;
       state.sentFiles.folder = true;
@@ -714,12 +702,15 @@ const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
 
     scheduleInactivityFollowup(from);
 
-    res.sendStatus(200);
-
+    return res.sendStatus(200);
   } catch (error) {
-    console.error(error);
-    res.sendStatus(500);
+    console.error("Erro no webhook:", error);
+    return res.sendStatus(500);
   }
+});
+
+app.get("/", (req, res) => {
+  res.status(200).send("IQG WhatsApp Bot online.");
 });
 
 app.listen(process.env.PORT || 3000, () => {
