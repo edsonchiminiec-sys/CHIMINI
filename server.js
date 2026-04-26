@@ -105,6 +105,7 @@ async function saveLeadProfile(user, data = {}) {
   },
   { upsert: true }
 );
+    }
 
 async function loadLeadProfile(user) {
   await connectMongo();
@@ -1560,41 +1561,37 @@ Esses dados estão corretos?`;
 }
 
 function getMissingFieldQuestion(field) {
- function getMissingFieldQuestion(field) {
   const variations = {
     nome: [
       "Perfeito. Para continuar, preciso do seu nome completo.",
       "Pode me enviar seu nome completo, por favor?",
-      "Só preciso do seu nome completo para seguir.",
+      "Só preciso do seu nome completo para seguir."
     ],
     cpf: [
       "Agora preciso do seu CPF, pode me enviar?",
       "Pode me passar seu CPF, por favor?",
-      "Só falta seu CPF para avançarmos.",
+      "Só falta seu CPF para avançarmos."
     ],
     telefone: [
       "Pode me enviar seu telefone com DDD?",
       "Qual é o melhor telefone para contato?",
-      "Me passa seu número com DDD, por favor.",
+      "Me passa seu número com DDD, por favor."
     ],
     cidade: [
       "Qual cidade você mora?",
       "Pode me informar sua cidade?",
-      "Só falta sua cidade para continuar.",
+      "Só falta sua cidade para continuar."
     ],
     estado: [
       "E o seu estado? Pode ser a sigla (SP, RS, etc).",
       "Qual é o seu estado (UF)?",
-      "Me passa seu estado, por favor.",
+      "Me passa seu estado, por favor."
     ]
   };
 
   const options = variations[field] || ["Preciso de uma informação para continuar."];
 
   return options[Math.floor(Math.random() * options.length)];
-}
-
-  return questions[field] || "Perfeito. Pode me enviar o dado que ficou faltando?";
 }
 
 function buildPartialLeadDataMessage(data = {}, missingFields = []) {
