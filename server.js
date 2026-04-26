@@ -1939,54 +1939,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
 
   return res.sendStatus(200);
 }
-   const confirmedLead = await loadLeadProfile(from);
-
-if (canSendLeadToCRM(confirmedLead)) {
-  const lockedLead = await db.collection("leads").findOneAndUpdate(
-    {
-      user: from,
-      crmEnviado: { $ne: true },
-      dadosConfirmadosPeloLead: true,
-      faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
-      status: "quente"
-    },
-    {
-      $set: {
-        crmEnviado: true,
-        crmEnviadoEm: new Date(),
-        faseQualificacao: "enviado_crm",
-        status: "enviado_crm",
-        updatedAt: new Date()
-      }
-    },
-    { returnDocument: "after" }
-  );
-
-  if (lockedLead.value) {
-    // aqui entra o envio real ao CRM
-    console.log("🚀 Lead travado para envio ao CRM");
-  }
-}
-   await notifyConsultant({
-  user: from,
-  telefoneWhatsApp: from,
-  ultimaMensagem: text,
-  status: "qualificado"
-});
-}
-  const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
-
-await sendWhatsAppMessage(from, confirmedMsg);
-await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-
-    
-     
+        
 if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
   await saveLeadProfile(from, {
     ...extractedData,
