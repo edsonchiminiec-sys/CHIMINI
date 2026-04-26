@@ -2135,7 +2135,7 @@ ${validation.errors.join("\n")}
 Pode me enviar novamente?`;
 
       await sendWhatsAppMessage(from, errorMsg);
-      await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
+      await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
 
       if (messageId) {
         markMessageAsProcessed(messageId);
@@ -2173,7 +2173,6 @@ const remainingPendingData = Object.fromEntries(
 
 const nextPendingField = Object.keys(remainingPendingData)[0];
 
-     let msg = "";
 if (nextPendingField) {
   await saveLeadProfile(from, {
     [campo]: valor,
@@ -2192,13 +2191,13 @@ if (nextPendingField) {
     estado: "estado"
   };
 
-  msg = `Perfeito, ${labels[campo] || campo} confirmado ✅
+  respostaConfirmacaoCampo = `Perfeito, ${labels[campo] || campo} confirmado ✅
 
 Também identifiquei seu ${labels[nextPendingField] || nextPendingField} como: ${remainingPendingData[nextPendingField]}
 
 Está correto?`;
 
-  await sendWhatsAppMessage(from, msg);
+  await sendWhatsAppMessage(from, respostaConfirmacaoCampo);
 } else {
   const updatedLead = {
     ...(currentLead || {}),
@@ -2224,14 +2223,14 @@ Está correto?`;
     estado: "estado"
   };
 
- msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+ respostaConfirmacaoCampo = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
 
   if (missingFields.length > 0) {
     const nextField = missingFields[0];
-    msg += `\n\n${getMissingFieldQuestion(nextField)}`;
+    respostaConfirmacaoCampo += `\n\n${getMissingFieldQuestion(nextField)}`;
   }
 
-  await sendWhatsAppMessage(from, msg);
+  await sendWhatsAppMessage(from, respostaConfirmacaoCampo);
 }
     await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
@@ -2279,12 +2278,12 @@ Está correto?`;
   estado: "estado"
 };
 
-const msg = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?
+const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?
 
 Pode responder sim ou não.`;
 
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+  await sendWhatsAppMessage(from, respostaReconfirmacao);
+await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
