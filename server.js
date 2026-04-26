@@ -1057,6 +1057,99 @@ app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
 });
 
+   app.get("/dashboard", async (req, res) => {
+  try {
+    await connectMongo();
+
+    const leads = await db
+      .collection("leads")
+      .find({})
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .toArray();
+
+    const rows = leads.map(lead => {
+      const phone = lead.telefoneWhatsApp || lead.user || "";
+      const link = phone ? `https://wa.me/${phone}` : "#";
+
+      return `
+        <tr>
+          <td>${lead.status || "-"}</td>
+          <td>${phone}</td>
+          <td>${lead.nome || "-"}</td>
+          <td>${lead.cidadeEstado || "-"}</td>
+          <td>${lead.ultimaMensagem || "-"}</td>
+          <td><a href="${link}" target="_blank">Abrir WhatsApp</a></td>
+        </tr>
+      `;
+    }).join("");
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Dashboard IQG</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 30px;
+          }
+          h1 {
+            color: #222;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+          }
+          th, td {
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+            vertical-align: top;
+          }
+          th {
+            background: #111;
+            color: white;
+          }
+          tr:hover {
+            background: #f0f0f0;
+          }
+          a {
+            color: #0a7cff;
+            font-weight: bold;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Dashboard de Leads IQG</h1>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Telefone</th>
+              <th>Nome</th>
+              <th>Cidade/Estado</th>
+              <th>Última mensagem</th>
+              <th>Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows || `<tr><td colspan="6">Nenhum lead encontrado.</td></tr>`}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Erro no dashboard:", error);
+    res.status(500).send("Erro ao carregar dashboard.");
+  }
+});
+   
 app.listen(process.env.PORT || 3000, () => {
   console.log("Servidor rodando...");
 });
