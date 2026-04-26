@@ -1841,15 +1841,20 @@ app.get("/lead/:user/status/:status", async (req, res) => {
     if (!requireDashboardAuth(req, res)) return;
 
     const allowedStatus = [
-      "novo",
-      "morno",
-      "qualificando",
-      "pre_analise",
-      "quente",
-      "em_atendimento",
-      "fechado",
-      "perdido"
-    ];
+  "novo",
+  "morno",
+  "qualificando",
+  "dados_parciais",
+  "aguardando_confirmacao_dados",
+  "dados_confirmados",
+  "pre_analise",
+  "quente",
+  "em_atendimento",
+  "fechado",
+  "perdido",
+  "erro_dados",
+  "erro_envio_crm"
+];
 
     const { user, status } = req.params;
 
@@ -2101,6 +2106,11 @@ app.get("/lead/:user/status/:status", async (req, res) => {
           .em_atendimento { background: #ffedd5; color: #c2410c; }
           .fechado { background: #bbf7d0; color: #14532d; }
           .perdido { background: #fee2e2; color: #991b1b; }
+          .dados_parciais { background: #fef3c7; color: #92400e; }
+.aguardando_confirmacao_dados { background: #ffedd5; color: #c2410c; }
+.dados_confirmados { background: #dcfce7; color: #166534; }
+.erro_dados { background: #fee2e2; color: #991b1b; }
+.erro_envio_crm { background: #fee2e2; color: #991b1b; }
 
           .actions {
             display: flex;
@@ -2214,6 +2224,11 @@ app.get("/lead/:user/status/:status", async (req, res) => {
               <option value="em_atendimento" ${statusFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
               <option value="fechado" ${statusFilter === "fechado" ? "selected" : ""}>Fechado</option>
               <option value="perdido" ${statusFilter === "perdido" ? "selected" : ""}>Perdido</option>
+              <option value="dados_parciais" ${statusFilter === "dados_parciais" ? "selected" : ""}>Dados parciais</option>
+<option value="aguardando_confirmacao_dados" ${statusFilter === "aguardando_confirmacao_dados" ? "selected" : ""}>Aguardando confirmação</option>
+<option value="dados_confirmados" ${statusFilter === "dados_confirmados" ? "selected" : ""}>Dados confirmados</option>
+<option value="erro_dados" ${statusFilter === "erro_dados" ? "selected" : ""}>Erro nos dados</option>
+<option value="erro_envio_crm" ${statusFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
             </select>
 
             <button type="submit">Filtrar</button>
