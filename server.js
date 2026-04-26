@@ -1918,8 +1918,18 @@ const historyText = history
   .map(m => m.content || "")
   .join("\n");
 
+const isDataCollectionContext =
+  currentLead?.faseQualificacao === "coletando_dados" ||
+  currentLead?.faseQualificacao === "dados_parciais" ||
+  currentLead?.faseQualificacao === "aguardando_dados" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+  currentLead?.faseQualificacao === "corrigir_dado" ||
+  currentLead?.dadosConfirmadosPeloLead === true ||
+  /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(text);
+
 const rawExtracted = extractLeadData(
-  `${historyText}\n${text}`,
+  isDataCollectionContext ? `${historyText}\n${text}` : text,
   currentLead || {}
 );
 
