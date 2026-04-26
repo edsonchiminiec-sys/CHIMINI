@@ -304,6 +304,12 @@ Se o lead já enviou dados, peça apenas o que faltar.
 
 REGRA CRÍTICA DE DADOS (INTEGRAÇÃO COM CRM):
 
+REGRA DE CONFIRMAÇÃO CAMPO A CAMPO:
+- Quando o lead enviar um dado pessoal como nome, CPF, telefone, cidade ou estado, o sistema poderá pedir confirmação daquele dado antes de salvar no CRM.
+- Nunca trate um dado como definitivo antes da confirmação do lead.
+- Se o lead negar a confirmação, peça o dado correto de forma simples e natural.
+- Depois que o lead confirmar, considere aquele dado como validado.
+- Não pressione o lead para enviar todos os dados de uma vez se ele estiver respondendo campo por campo.
 - Os dados do lead (nome, CPF, telefone, cidade e estado) são analisados automaticamente pelo sistema a partir do histórico da conversa.
 - O sistema pode identificar dados mesmo que estejam desorganizados, incompletos ou enviados em mensagens separadas.
 
@@ -2211,7 +2217,11 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
 }
 
    
-   if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
+   if (
+  hasAllRequiredLeadFields(extractedData) &&
+  !currentLead?.dadosConfirmadosPeloLead &&
+  !currentLead?.aguardandoConfirmacaoCampo
+) {
   await saveLeadProfile(from, {
     ...extractedData,
     cpf: formatCPF(extractedData.cpf),
