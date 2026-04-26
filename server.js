@@ -1306,6 +1306,40 @@ function validateLeadData(data = {}) {
   };
 }
 
+const REQUIRED_LEAD_FIELDS = ["nome", "cpf", "telefone", "cidade", "estado"];
+
+function getMissingLeadFields(data = {}) {
+  return REQUIRED_LEAD_FIELDS.filter(field => !data[field]);
+}
+
+function hasAllRequiredLeadFields(data = {}) {
+  return getMissingLeadFields(data).length === 0;
+}
+
+function buildLeadConfirmationMessage(data = {}) {
+  return `Perfeito, só para eu confirmar se entendi tudo certinho:
+
+Nome: ${data.nome || "-"}
+CPF: ${formatCPF(data.cpf || "")}
+Telefone: ${formatPhone(data.telefone || "")}
+Cidade: ${data.cidade || "-"}
+Estado: ${normalizeUF(data.estado || "-")}
+
+Esses dados estão corretos?`;
+}
+
+function getMissingFieldQuestion(field) {
+  const questions = {
+    nome: "Perfeito. Para continuar, preciso só do seu nome completo.",
+    cpf: "Perfeito. Para continuar, preciso só do seu CPF.",
+    telefone: "Perfeito. Para continuar, preciso só do seu telefone com DDD.",
+    cidade: "Perfeito. Para continuar, preciso só da sua cidade.",
+    estado: "Perfeito. Para continuar, preciso só do seu estado, pode ser a sigla UF."
+  };
+
+  return questions[field] || "Perfeito. Pode me enviar o dado que ficou faltando?";
+}
+
 function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
 
@@ -1568,6 +1602,73 @@ const currentLead = await loadLeadProfile(from);
 const extractedData = extractLeadData(text, currentLead || {});
 const validation = validateLeadData(extractedData);
 const leadStatus = classifyLead(text, extractedData, history);
+     const missingFields = getMissingLeadFields(extractedData);
+const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
+if (awaitingConfirmation && isPositiveConfirmation(text)) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    cpf: formatCPF(extractedData.cpf),
+    telefone: formatPhone(extractedData.telefone),
+    estado: normalizeUF(extractedData.estado),
+    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
+    dadosConfirmadosPeloLead: true,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "dados_confirmados",
+    status: "pre_analise"
+  });
+
+  await sendWhatsAppMessage(
+    from,
+    "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual."
+  );
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+
+if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    cpf: formatCPF(extractedData.cpf),
+    telefone: formatPhone(extractedData.telefone),
+    estado: normalizeUF(extractedData.estado),
+    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: true,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "qualificando"
+  });
+
+  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+
+if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "dados_parciais",
+    status: "qualificando"
+  });
+
+  await sendWhatsAppMessage(from, getMissingFieldQuestion(missingFields[0]));
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
 
 if (!validation.isValid) {
   await sendWhatsAppMessage(
