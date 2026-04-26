@@ -839,9 +839,9 @@ Se estiver tudo certo, aí seguimos com seus dados."
 
 SE O LEAD CONFIRMAR QUE ENTENDEU (ex: "sim", "entendi", "pode seguir"):
 
-"Perfeito. Então pra seguir com a pré-análise, preciso de alguns dados básicos.
+"Perfeito. Então vamos seguir com a pré-análise aos poucos.
 
-Pode me enviar seu nome completo, CPF, telefone e cidade/estado?"
+Primeiro, pode me enviar seu nome completo?"
 
 SE JÁ TIVER DADOS SUFICIENTES:
 "Perfeito, obrigado. Com esses dados já consigo encaminhar para a análise interna da IQG.
