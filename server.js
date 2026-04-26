@@ -1940,29 +1940,7 @@ const pendingExtractedData = Object.fromEntries(
   })
 );
 
-     const validation = validateLeadData(extractedData);
-
-if (!validation.isValid) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: false,
-    faseQualificacao: "erro_dados",
-    status: "erro_dados",
-    errosValidacao: validation.errors
-  });
-
-  const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
-
-  await sendWhatsAppMessage(from, errorMsg);
-  await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
+    
 
 const changedConfirmedData =
   currentLead?.dadosConfirmadosPeloLead === true &&
