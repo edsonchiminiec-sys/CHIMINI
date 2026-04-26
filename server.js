@@ -2012,21 +2012,21 @@ async function sendFileOnce(from, key) {
 
   if (!FILES[key]) return;
 
+  // 🚫 Se já enviou, não envia de novo
   if (state.sentFiles[key]) {
     await sendWhatsAppMessage(
       from,
-      "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se ficou claro."
+      "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se fez sentido pra você."
     );
     return;
   }
 
+  // ✅ Marca ANTES de enviar
   state.sentFiles[key] = true;
+
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
-
-  // Follow-up curto desativado para evitar mensagens automáticas em excesso
 }
-
 function scheduleInactivityFollowup(from) {
   const state = getState(from);
 
