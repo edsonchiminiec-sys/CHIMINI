@@ -1945,14 +1945,58 @@ const extractedData = {
   ...(currentLead || {})
 };
 
+function normalizeLeadFieldValue(field, value = "") {
+  if (value === null || value === undefined) return "";
+
+  if (field === "cpf" || field === "telefone") {
+    return onlyDigits(value);
+  }
+
+  if (field === "estado") {
+    return normalizeUF(value);
+  }
+
+  return String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const pendingExtractedData = Object.fromEntries(
   Object.entries(rawExtracted || {}).filter(([key, value]) => {
-    return (
-      value !== null &&
-      value !== undefined &&
-      value !== "" &&
-      REQUIRED_LEAD_FIELDS.includes(key)
-    );
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      !REQUIRED_LEAD_FIELDS.includes(key)
+    ) {
+      return false;
+    }
+
+    const newValue = normalizeLeadFieldValue(key, value);
+    const savedValue = normalizeLeadFieldValue(key, currentLead?.[key]);
+
+    if (!newValue) {
+      return false;
+    }
+
+    // Não pergunta novamente dado que já foi salvo/confirmado
+    if (savedValue && newValue === savedValue) {
+      return false;
+    }
+
+    // Não repete pergunta sobre o mesmo campo pendente
+    if (
+      currentLead?.aguardandoConfirmacaoCampo &&
+      currentLead?.campoPendente === key &&
+      normalizeLeadFieldValue(key, currentLead?.valorPendente) === newValue
+    ) {
+      return false;
+    }
+
+    return true;
   })
 );
 
@@ -2051,26 +2095,82 @@ Pode me enviar novamente?`;
       return res.sendStatus(200);
     }
 
-    await saveLeadProfile(from, {
-      [campo]: valor,
-      campoPendente: null,
-      valorPendente: null,
-      aguardandoConfirmacaoCampo: false,
-      faseQualificacao: "dados_parciais",
-      status: "dados_parciais"
-    });
+    const updatedLeadAfterField = {
+  ...(currentLead || {}),
+  [campo]: valor
+};
 
-    const labels = {
-      nome: "nome",
-      cpf: "CPF",
-      telefone: "telefone",
-      cidade: "cidade",
-      estado: "estado"
-    };
+const remainingPendingData = Object.fromEntries(
+  Object.entries(rawExtracted || {}).filter(([key, value]) => {
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      !REQUIRED_LEAD_FIELDS.includes(key) ||
+      key === campo
+    ) {
+      return false;
+    }
 
-    const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+    const newValue = normalizeLeadFieldValue(key, value);
+    const savedValue = normalizeLeadFieldValue(key, updatedLeadAfterField?.[key]);
 
-    await sendWhatsAppMessage(from, msg);
+    if (!newValue) return false;
+    if (savedValue && newValue === savedValue) return false;
+
+    return true;
+  })
+);
+
+const nextPendingField = Object.keys(remainingPendingData)[0];
+
+if (nextPendingField) {
+  await saveLeadProfile(from, {
+    [campo]: valor,
+    campoPendente: nextPendingField,
+    valorPendente: remainingPendingData[nextPendingField],
+    aguardandoConfirmacaoCampo: true,
+    faseQualificacao: "aguardando_confirmacao_campo",
+    status: "aguardando_confirmacao_campo"
+  });
+
+  const labels = {
+    nome: "nome",
+    cpf: "CPF",
+    telefone: "telefone",
+    cidade: "cidade",
+    estado: "estado"
+  };
+
+  const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅
+
+Também identifiquei seu ${labels[nextPendingField] || nextPendingField} como: ${remainingPendingData[nextPendingField]}
+
+Está correto?`;
+
+  await sendWhatsAppMessage(from, msg);
+} else {
+  await saveLeadProfile(from, {
+    [campo]: valor,
+    campoPendente: null,
+    valorPendente: null,
+    aguardandoConfirmacaoCampo: false,
+    faseQualificacao: "dados_parciais",
+    status: "dados_parciais"
+  });
+
+  const labels = {
+    nome: "nome",
+    cpf: "CPF",
+    telefone: "telefone",
+    cidade: "cidade",
+    estado: "estado"
+  };
+
+  const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+
+  await sendWhatsAppMessage(from, msg);
+}
     await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
     if (messageId) {
