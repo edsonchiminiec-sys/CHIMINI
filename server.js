@@ -932,7 +932,14 @@ app.post("/webhook", async (req, res) => {
     const text = message.text.body.trim();
     const extractedData = extractLeadData(text);
 const leadStatus = classifyLead(text);
-
+if (leadStatus === "quente") {
+  await notifyConsultant({
+    user: from,
+    telefoneWhatsApp: from,
+    ultimaMensagem: text,
+    status: leadStatus
+  });
+}
 await saveLeadProfile(from, {
   telefoneWhatsApp: from,
   ultimaMensagem: text,
