@@ -1312,23 +1312,6 @@ if (!data.nome) {
   }
 }
 
-  if (hasNameContext) {
-    let textWithoutNumbers = fullText
-      .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ")
-      .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d[\d\s.-]{7,}\b/g, " ")
-      .replace(/\b(oi|olá|ola|bom dia|boa tarde|boa noite|cpf|telefone|celular|whatsapp|cidade|estado|uf|nome limpo|sem restrição|sem restricao|já informei|ja informei|curioso|claro|sim|ok|pode|certo|entendi|legal)\b/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const possibleName = textWithoutNumbers.match(
-      /\b[A-Za-zÀ-ÿ]{2,}\s+[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,})?\b/
-    );
-
-    if (possibleName) {
-      data.nome = possibleName[0].trim();
-    }
-  }
-}
    
   // Área de atuação
   if (
