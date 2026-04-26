@@ -2012,18 +2012,6 @@ if (changedConfirmedData) {
     faseQualificacao: "aguardando_confirmacao_dados",
     status: "aguardando_confirmacao_dados"
   });
-
-  const confirmationMsg = buildLeadConfirmationMessage(extractedData);
-
-  await sendWhatsAppMessage(from, confirmationMsg);
-  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
    
 const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
@@ -2089,40 +2077,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
 
   return res.sendStatus(200);
 }
-        
 
-
-const confirmationMsg = buildLeadConfirmationMessage(extractedData);
-
-await sendWhatsAppMessage(from, confirmationMsg);
-await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-
-// 🔥 FLUXO UM DADO POR VEZ
-if (!currentLead?.campoAtual) {
-  await saveLeadProfile(from, {
-    campoAtual: "nome",
-    faseQualificacao: "coletando_dados",
-    status: "coletando_dados"
-  });
-
-  const msg = "Perfeito, vamos começar. Pode me informar seu nome completo?";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
    
    if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
   await saveLeadProfile(from, {
@@ -2157,6 +2112,27 @@ await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
 
   return res.sendStatus(200);
 }
+
+      // 🔥 FLUXO UM DADO POR VEZ
+if (!currentLead?.campoAtual) {
+  await saveLeadProfile(from, {
+    campoAtual: "nome",
+    faseQualificacao: "coletando_dados",
+    status: "coletando_dados"
+  });
+
+  const msg = "Perfeito, vamos começar. Pode me informar seu nome completo?";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+
      
 if (leadStatus === "quente") {
   await notifyConsultant({
