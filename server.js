@@ -2184,8 +2184,9 @@ ${validation.errors.join("\n")}
 Pode me enviar novamente?`;
 
       await sendWhatsAppMessage(from, errorMsg);
-     await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
-      if (messageId) {
+     await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
+       
+       if (messageId) {
         markMessageAsProcessed(messageId);
       }
 
@@ -2341,7 +2342,8 @@ Está correto?`;
     const msg = `Sem problema 😊 Pode me enviar o ${labels[campo] || campo} correto?`;
 
     await sendWhatsAppMessage(from, msg);
-    await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+     
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
@@ -2362,7 +2364,7 @@ const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "
 Pode responder sim ou não.`;
 
   await sendWhatsAppMessage(from, respostaReconfirmacao);
-   await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
+   await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -2392,8 +2394,8 @@ if (changedConfirmedData) {
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
   await sendWhatsAppMessage(from, confirmationMsg);
-  await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
-  if (messageId) {
+  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
@@ -2456,8 +2458,8 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
 
   await sendWhatsAppMessage(from, confirmedMsg);
-   await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
-
+   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+   
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
@@ -2486,7 +2488,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
   await sendWhatsAppMessage(from, confirmationMsg);
-  await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
+  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
@@ -2518,8 +2520,7 @@ if (
   const missingMsg = buildPartialLeadDataMessage(extractedData, missingFields);
 
   await sendWhatsAppMessage(from, missingMsg);
-   await saveHistoryStep(from, history, text, respostaConfirmacaoCampo, !!message.audio?.id);
-
+   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
