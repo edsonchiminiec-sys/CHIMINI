@@ -1940,7 +1940,170 @@ const pendingExtractedData = Object.fromEntries(
   })
 );
 
-    
+ function isNegativeConfirmation(value = "") {
+  const t = String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  return [
+    "nao",
+    "não",
+    "errado",
+    "incorreto",
+    "nao esta",
+    "não está",
+    "não esta",
+    "ta errado",
+    "esta errado",
+    "está errado"
+  ].includes(t);
+}
+
+     const pendingFields = Object.keys(pendingExtractedData);
+
+if (
+  pendingFields.length > 0 &&
+  !currentLead?.aguardandoConfirmacaoCampo
+) {
+  const field = pendingFields[0];
+  const value = pendingExtractedData[field];
+
+  await saveLeadProfile(from, {
+    campoPendente: field,
+    valorPendente: value,
+    aguardandoConfirmacaoCampo: true,
+    faseQualificacao: "aguardando_confirmacao_campo",
+    status: "aguardando_confirmacao_campo"
+  });
+
+  const labels = {
+    nome: "nome",
+    cpf: "CPF",
+    telefone: "telefone",
+    cidade: "cidade",
+    estado: "estado"
+  };
+
+  const msg = `Identifiquei seu ${labels[field] || field} como: ${value}
+
+Está correto?`;
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+     
+if (currentLead?.aguardandoConfirmacaoCampo) {
+  const campo = currentLead.campoPendente;
+  const valor = currentLead.valorPendente;
+
+  if (isPositiveConfirmation(text)) {
+    const validation = validateLeadData({
+      [campo]: valor
+    });
+
+    if (!validation.isValid) {
+      await saveLeadProfile(from, {
+        campoPendente: null,
+        valorPendente: null,
+        aguardandoConfirmacaoCampo: false,
+        faseQualificacao: "erro_dados",
+        status: "erro_dados",
+        errosValidacao: validation.errors
+      });
+
+      const errorMsg = `Esse dado parece ter algum problema 😊
+
+${validation.errors.join("\n")}
+
+Pode me enviar novamente?`;
+
+      await sendWhatsAppMessage(from, errorMsg);
+      await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+
+      return res.sendStatus(200);
+    }
+
+    await saveLeadProfile(from, {
+      [campo]: valor,
+      campoPendente: null,
+      valorPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: "dados_parciais",
+      status: "dados_parciais"
+    });
+
+    const labels = {
+      nome: "nome",
+      cpf: "CPF",
+      telefone: "telefone",
+      cidade: "cidade",
+      estado: "estado"
+    };
+
+    const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+
+    await sendWhatsAppMessage(from, msg);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return res.sendStatus(200);
+  }
+
+  if (isNegativeConfirmation(text)) {
+    await saveLeadProfile(from, {
+      campoPendente: null,
+      valorPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: "corrigir_dado",
+      status: "corrigir_dado"
+    });
+
+    const labels = {
+      nome: "nome completo",
+      cpf: "CPF",
+      telefone: "telefone com DDD",
+      cidade: "cidade",
+      estado: "estado"
+    };
+
+    const msg = `Sem problema 😊 Pode me enviar o ${labels[campo] || campo} correto?`;
+
+    await sendWhatsAppMessage(from, msg);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return res.sendStatus(200);
+  }
+
+  const msg = "Só para confirmar: esse dado está correto? Pode responder sim ou não.";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}   
 
 const changedConfirmedData =
   currentLead?.dadosConfirmadosPeloLead === true &&
@@ -2233,7 +2396,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "fechado",
   "perdido",
   "erro_dados",
-  "erro_envio_crm"
+  "erro_envio_crm",
        "aguardando_confirmacao_campo",
 "corrigir_dado",
 ];
