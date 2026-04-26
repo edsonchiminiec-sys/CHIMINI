@@ -2456,8 +2456,18 @@ if (
   });
 }
 
-await delay(humanDelay(resposta));
-await sendWhatsAppMessage(from, resposta);
+let respostaFinal = resposta;
+
+// 🔥 BLOQUEIO: impedir pedido de múltiplos dados
+const multiDataRequestPattern =
+  /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
+
+if (multiDataRequestPattern.test(respostaFinal)) {
+  respostaFinal = "Perfeito 😊 Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
+}
+
+await delay(humanDelay(respostaFinal));
+await sendWhatsAppMessage(from, respostaFinal);
 
 history.push({ role: "assistant", content: resposta });
 
@@ -2556,6 +2566,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "aguardando_confirmacao_dados",
   "dados_confirmados",
        "qualificado",
+       "coletando_dados",
   "pre_analise",
   "quente",
   "em_atendimento",
