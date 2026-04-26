@@ -1273,7 +1273,7 @@ if (!data.nome) {
   let textWithoutNumbers = fullText
     .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ")
     .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d[\d\s.-]{7,}\b/g, " ")
-    .replace(/\b(cpf|telefone|celular|whatsapp|cidade|estado|uf|nome limpo|sem restrição|sem restricao)\b/gi, " ")
+    .replace(/\b(oi|olá|ola|bom dia|boa tarde|boa noite|cpf|telefone|celular|whatsapp|cidade|estado|uf|nome limpo|sem restrição|sem restricao|já informei|ja informei)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
