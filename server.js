@@ -24,6 +24,20 @@ async function connectMongo() {
   }
 }
 
+async function updateLeadStatus(user, status) {
+  await connectMongo();
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        status,
+        updatedAt: new Date()
+      }
+    }
+  );
+}
+
 /* =========================
    MONGO HISTÓRICO (ÚNICO - SEM DUPLICAÇÃO)
 ========================= */
