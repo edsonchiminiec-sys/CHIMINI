@@ -1247,43 +1247,20 @@ history.push({ role: "assistant", content: resposta });
 
 await saveConversation(from, history);
 
-// 🔥 Envio inteligente de arquivos
-let fileKey = detectRequestedFile(text);
+// 🔥 Envio de arquivos por decisão da IA
+const fileKeys = new Set();
 
-// Se o lead respondeu "sim/pode/quero" e a IA acabou de falar em folder/material,
-// o sistema envia o folder automaticamente.
-const respostaLower = resposta.toLowerCase();
-const textLower = text.toLowerCase();
-
-const leadAutorizouEnvio =
-  textLower === "ok" ||
-  textLower === "ok." ||
-  textLower === "sim" ||
-  textLower === "sim." ||
-  textLower === "certo" ||
-  textLower === "certo." ||
-  textLower === "pode" ||
-  textLower === "pode." ||
-  textLower.includes("pode") ||
-  textLower.includes("quero") ||
-  textLower.includes("manda") ||
-  textLower.includes("mande") ||
-  textLower.includes("envia") ||
-  textLower.includes("enviar");
-
-const iaFalouDeFolder =
-  respostaLower.includes("folder") ||
-  respostaLower.includes("material explicativo") ||
-  respostaLower.includes("vou te enviar") ||
-  respostaLower.includes("vou enviar") ||
-  respostaLower.includes("te envio");
-
-if (!fileKey && leadAutorizouEnvio && iaFalouDeFolder) {
-  fileKey = "folder";
+const requestedFile = detectRequestedFile(text);
+if (requestedFile) {
+  fileKeys.add(requestedFile);
 }
 
-if (fileKey) {
-  await sendFileOnce(from, fileKey);
+for (const action of actions) {
+  fileKeys.add(action);
+}
+
+for (const key of fileKeys) {
+  await sendFileOnce(from, key);
 }
 
 // 🔥 follow-up só após alguma interação maior
