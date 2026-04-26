@@ -2949,6 +2949,166 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   }
 });
 
+app.get("/conversation/:user", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const user = decodeURIComponent(req.params.user);
+
+    const conversation = await db.collection("conversations").findOne({ user });
+    const lead = await db.collection("leads").findOne({ user });
+
+    const messages = Array.isArray(conversation?.messages)
+      ? conversation.messages
+      : [];
+
+    const senhaQuery = req.query.senha
+      ? `?senha=${encodeURIComponent(req.query.senha)}`
+      : "";
+
+    const rows = messages.map(msg => {
+      const role = msg.role === "user" ? "Lead" : "SDR";
+      const cssClass = msg.role === "user" ? "user" : "assistant";
+
+      return `
+        <div class="message ${cssClass}">
+          <div class="role">${escapeHtml(role)}</div>
+          <div class="content">${escapeHtml(msg.content || "").replaceAll("\n", "<br>")}</div>
+        </div>
+      `;
+    }).join("");
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Conversa - ${escapeHtml(lead?.nome || user)}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+        <style>
+          body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            color: #111827;
+          }
+
+          header {
+            background: #111827;
+            color: white;
+            padding: 20px 28px;
+          }
+
+          header h1 {
+            margin: 0;
+            font-size: 24px;
+          }
+
+          header p {
+            margin: 6px 0 0;
+            color: #d1d5db;
+          }
+
+          .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 24px;
+          }
+
+          .topbar {
+            margin-bottom: 18px;
+          }
+
+          .btn {
+            display: inline-block;
+            padding: 9px 12px;
+            background: #374151;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 14px;
+          }
+
+          .card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            margin-bottom: 18px;
+          }
+
+          .message {
+            max-width: 75%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            line-height: 1.45;
+          }
+
+          .message.user {
+            background: #dcfce7;
+            margin-left: auto;
+          }
+
+          .message.assistant {
+            background: #e5e7eb;
+            margin-right: auto;
+          }
+
+          .role {
+            font-size: 12px;
+            font-weight: bold;
+            color: #374151;
+            margin-bottom: 5px;
+          }
+
+          .content {
+            font-size: 15px;
+            white-space: normal;
+          }
+
+          .empty {
+            color: #6b7280;
+            font-style: italic;
+          }
+        </style>
+      </head>
+
+      <body>
+        <header>
+          <h1>Conversa do Lead</h1>
+          <p>${escapeHtml(lead?.nome || "-")} — ${escapeHtml(user)}</p>
+        </header>
+
+        <div class="container">
+          <div class="topbar">
+            <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
+          </div>
+
+          <div class="card">
+            <strong>Status:</strong> ${escapeHtml(lead?.status || "-")}<br>
+            <strong>CPF:</strong> ${escapeHtml(lead?.cpf || "-")}<br>
+            <strong>Telefone:</strong> ${escapeHtml(lead?.telefone || lead?.telefoneWhatsApp || user || "-")}<br>
+            <strong>Cidade/Estado:</strong> ${escapeHtml(lead?.cidade || "-")}/${escapeHtml(lead?.estado || "-")}
+          </div>
+
+          <div class="card">
+            ${rows || `<p class="empty">Nenhuma mensagem encontrada para este lead.</p>`}
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Erro ao carregar conversa:", error);
+    res.status(500).send("Erro ao carregar conversa.");
+  }
+});
+
+
    app.get("/dashboard", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
