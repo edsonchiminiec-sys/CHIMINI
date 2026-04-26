@@ -947,15 +947,14 @@ if (from === process.env.CONSULTANT_PHONE) {
 clearTimers(from);
     state.closed = false;
 
-    if (!message.text?.body) {
-      await sendWhatsAppMessage(
-        from,
-        "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
-      );
+   if (!message.text?.body) {
+  await sendWhatsAppMessage(
+    from,
+    "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
+  );
 
-      scheduleInactivityFollowup(from);
-      return res.sendStatus(200);
-    }
+  return res.sendStatus(200);
+}
 
     const text = message.text.body.trim();
     const extractedData = extractLeadData(text);
