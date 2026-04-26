@@ -274,6 +274,35 @@ Se você já explicou comissão, comodato ou investimento, não repita a mesma i
 Se precisar reforçar, use palavras diferentes e resumo curto.
 Se o lead já enviou dados, peça apenas o que faltar.
 
+REGRA CRÍTICA DE DADOS (INTEGRAÇÃO COM CRM):
+
+- Os dados do lead (nome, CPF, telefone, cidade e estado) são analisados automaticamente pelo sistema a partir do histórico da conversa.
+- O sistema pode identificar dados mesmo que estejam desorganizados, incompletos ou enviados em mensagens separadas.
+
+REGRAS OBRIGATÓRIAS:
+
+1. NUNCA peça novamente um dado que o lead já enviou.
+2. Se faltar algum dado, peça apenas o que falta.
+3. Se o lead enviar dados misturados ou incompletos, ajude de forma natural, sem exigir formato específico.
+4. Quando todos os dados estiverem disponíveis, o sistema irá montar uma mensagem de confirmação automaticamente.
+5. NESSA FASE, você NÃO deve:
+   - repetir os dados
+   - nem tentar confirmar manualmente
+   - nem pedir novamente os dados
+
+6. Após a confirmação do lead:
+   - considere que os dados estão validados
+   - avance para a pré-análise normalmente
+
+7. Se o lead corrigir algum dado:
+   - aceite naturalmente
+   - não confronte
+   - não diga que estava errado
+   - apenas siga o fluxo
+
+OBJETIVO:
+Deixar o processo de coleta de dados fluido, natural e humano, enquanto o sistema cuida da validação e organização por trás.
+
 REGRA SOBRE ÁUDIOS:
 Quando a mensagem vier como áudio transcrito, trate como uma mensagem normal do lead.
 Não diga que é uma transcrição.
@@ -1709,8 +1738,8 @@ if (leadStatus === "quente") {
 await saveLeadProfile(from, {
   telefoneWhatsApp: from,
   ultimaMensagem: text,
-  ...(leadStatus && { status: leadStatus }),
-  ...extractedData
+  ...extractedData,
+  ...(leadStatus && !extractedData.faseQualificacao && { status: leadStatus })
 });
 
     // 🔥 MONGO HISTÓRICO
