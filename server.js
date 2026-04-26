@@ -1163,25 +1163,38 @@ if (cpfMatch) {
   }
 }
 
-  // Telefone com DDD, com ou sem pontuação
-  const phoneCandidates = fullText.match(/\b(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?\d{4,5}[-\s]?\d{4}\b/g);
+  // Telefone com DDD, aceitando espaços, hífen, parênteses e +55
+const phoneRegex = /(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4}/g;
+const phoneCandidates = fullText.match(phoneRegex);
 
-  if (phoneCandidates?.length) {
-    const validPhone = phoneCandidates.find(candidate => {
-      const digits = onlyDigits(candidate);
-      return digits.length >= 10 && digits.length <= 13 && !onlyDigits(candidate).endsWith(onlyDigits(data.cpf || ""));
-    });
+if (phoneCandidates?.length) {
+  const cpfDigits = onlyDigits(data.cpf || "");
 
-    if (validPhone) {
-      let digits = onlyDigits(validPhone);
+  const validPhone = phoneCandidates.find(candidate => {
+    let digits = onlyDigits(candidate);
 
-      if (digits.startsWith("55") && digits.length > 11) {
-        digits = digits.slice(2);
-      }
-
-      data.telefone = formatPhone(digits);
+    if (digits.startsWith("55") && digits.length > 11) {
+      digits = digits.slice(2);
     }
+
+    return (
+      digits.length >= 10 &&
+      digits.length <= 11 &&
+      digits !== cpfDigits &&
+      !isRepeatedDigits(digits)
+    );
+  });
+
+  if (validPhone) {
+    let digits = onlyDigits(validPhone);
+
+    if (digits.startsWith("55") && digits.length > 11) {
+      digits = digits.slice(2);
+    }
+
+    data.telefone = formatPhone(digits);
   }
+}
 
   // Linhas organizadas: Nome:, CPF:, Cidade:, Estado:, Telefone:
   const lines = fullText.split("\n").map(line => line.trim()).filter(Boolean);
@@ -1265,6 +1278,24 @@ if (cidadeUfMatch) {
     }
   }
 
+   // Nome solto, exemplo: "Edson Chimini"
+if (!data.nome) {
+  let textWithoutNumbers = fullText
+    .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ")
+    .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d[\d\s.-]{7,}\b/g, " ")
+    .replace(/\b(cpf|telefone|celular|whatsapp|cidade|estado|uf|nome limpo|sem restrição|sem restricao)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const possibleName = textWithoutNumbers.match(
+    /\b[A-Za-zÀ-ÿ]{2,}\s+[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,})?\b/
+  );
+
+  if (possibleName) {
+    data.nome = possibleName[0].trim();
+  }
+}
+   
   // Área de atuação
   if (
     lower.includes("vendas") ||
@@ -1551,6 +1582,38 @@ function getMissingFieldQuestion(field) {
   return questions[field] || "Perfeito. Pode me enviar o dado que ficou faltando?";
 }
 
+function buildPartialLeadDataMessage(data = {}, missingFields = []) {
+  const found = [];
+
+  if (data.nome) found.push(`Nome: ${data.nome}`);
+  if (data.cpf) found.push(`CPF: ${formatCPF(data.cpf)}`);
+  if (data.telefone) found.push(`Telefone: ${formatPhone(data.telefone)}`);
+  if (data.cidade) found.push(`Cidade: ${data.cidade}`);
+  if (data.estado) found.push(`Estado: ${normalizeUF(data.estado)}`);
+
+  const nextField = missingFields[0];
+
+  const questionMap = {
+    nome: "Só ficou faltando seu nome completo.",
+    cpf: "Só ficou faltando seu CPF.",
+    telefone: "Só ficou faltando seu telefone com DDD.",
+    cidade: "Só ficou faltando sua cidade.",
+    estado: "Só ficou faltando seu estado (UF)."
+  };
+
+  const question = questionMap[nextField] || "Só ficou faltando uma informação.";
+
+  if (found.length === 0) {
+    return getMissingFieldQuestion(nextField);
+  }
+
+  return `Perfeito, consegui identificar até agora:
+
+${found.join("\n")}
+
+${question}`;
+}
+
 function canSendLeadToCRM(lead = {}) {
   return (
     lead.dadosConfirmadosPeloLead === true &&
@@ -1828,7 +1891,16 @@ if (message.text?.body) {
 let history = await loadConversation(from);
 
 const currentLead = await loadLeadProfile(from);
-const extractedData = extractLeadData(text, currentLead || {});
+
+const historyText = history
+  .filter(m => m.role === "user")
+  .map(m => m.content || "")
+  .join("\n");
+
+const extractedData = extractLeadData(
+  `${historyText}\n${text}`,
+  currentLead || {}
+);
     
      const validation = validateLeadData(extractedData);
 
@@ -1983,7 +2055,7 @@ if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_
 status: "dados_parciais"
   });
 
-  const missingMsg = getMissingFieldQuestion(missingFields[0]);
+  const missingMsg = buildPartialLeadDataMessage(extractedData, missingFields);
 
 await sendWhatsAppMessage(from, missingMsg);
 await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
