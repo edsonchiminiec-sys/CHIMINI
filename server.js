@@ -2008,13 +2008,12 @@ if (changedConfirmedData) {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: true,
-    crmEnviado: false,
+    crmPendenteAtualizacao: true,
     faseQualificacao: "aguardando_confirmacao_dados",
     status: "aguardando_confirmacao_dados"
   });
-}
 
-const leadStatus = classifyLead(text, extractedData, history);
+  const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
   await sendWhatsAppMessage(from, confirmationMsg);
   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
@@ -2025,7 +2024,7 @@ const leadStatus = classifyLead(text, extractedData, history);
 
   return res.sendStatus(200);
 }
-     
+
 const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
