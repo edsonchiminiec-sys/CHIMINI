@@ -428,7 +428,7 @@ INFORMAÇÕES OFICIAIS:
 - Não precisa abrir CNPJ para ingressar.
 - Pode vender em todo o Brasil, sem exclusividade regional.
 - A IQG emite nota fiscal quando aplicável, conforme regras internas.
-- Estoque inicial cedido em comodato e continua propriedade da IQG.
+- Estoque inicial cedido em comodato e continua propriedade da IQG. Caso algo não seja vendido ou esteja próximo da data de vencimento a IQG pode substituir, desde que esteja em condições perfeitas de armazenamento.
 - Investimento de adesão e implantação: R$1.990,00.
 - Pode ser via PIX ou até 10x de R$199,00 no cartão, conforme disponibilidade operacional.
 - O valor não é compra de mercadoria, caução, garantia ou crédito.
