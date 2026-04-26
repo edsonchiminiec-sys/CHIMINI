@@ -25,14 +25,19 @@ async function connectMongo() {
 }
 
 /* =========================
-   MONGO HISTÓRICO
+   MONGO HISTÓRICO (ÚNICO - SEM DUPLICAÇÃO)
 ========================= */
 
 async function loadConversation(user) {
   await connectMongo();
 
   const data = await db.collection("conversations").findOne({ user });
-  return data?.messages || [];
+
+  if (!data?.messages || !Array.isArray(data.messages)) {
+    return [];
+  }
+
+  return data.messages;
 }
 
 async function saveConversation(user, messages) {
@@ -40,7 +45,16 @@ async function saveConversation(user, messages) {
 
   await db.collection("conversations").updateOne(
     { user },
-    { $set: { messages } },
+    {
+      $set: {
+        user,
+        messages,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date()
+      }
+    },
     { upsert: true }
   );
 }
@@ -48,7 +62,6 @@ async function saveConversation(user, messages) {
 /* =========================
    CONFIG
 ========================= */
-
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "iqg_token_123";
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
 
