@@ -2,11 +2,32 @@ import express from "express";
 import fetch from "node-fetch";
 import FormData from "form-data";
 import dotenv from "dotenv";
+import { MongoClient } from "mongodb";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+/* =========================
+   MONGODB
+========================= */
+
+const mongoClient = new MongoClient(process.env.MONGODB_URI);
+let db;
+
+try {
+  await mongoClient.connect();
+  db = mongoClient.db(process.env.MONGODB_DB || "iqg");
+  console.log("MongoDB conectado com sucesso.");
+} catch (error) {
+  console.error("Erro ao conectar no MongoDB:", error);
+  process.exit(1);
+}
+
+/* =========================
+   CONFIG
+========================= */
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "iqg_token_123";
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
@@ -15,13 +36,17 @@ const BUSINESS_START_HOUR = 8;
 const BUSINESS_END_HOUR = 18;
 const BUSINESS_TIMEZONE_OFFSET = -3;
 
-const conversations = {};
 const leadState = {};
 
 const processedMessages = new Map();
 const processingMessages = new Set();
+
 const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_MESSAGES = 5000;
+
+/* =========================
+   STATE
+========================= */
 
 function getState(from) {
   if (!leadState[from]) {
@@ -79,6 +104,48 @@ function cleanupProcessedMessages() {
   }
 }
 
+function markMessageAsProcessed(messageId) {
+  if (!messageId) return;
+
+  processingMessages.delete(messageId);
+  processedMessages.set(messageId, Date.now());
+}
+
+/* =========================
+   MONGO HISTÓRICO
+========================= */
+
+async function loadConversation(user) {
+  const data = await db.collection("conversations").findOne({ user });
+
+  if (!data?.messages || !Array.isArray(data.messages)) {
+    return [];
+  }
+
+  return data.messages;
+}
+
+async function saveConversation(user, messages) {
+  await db.collection("conversations").updateOne(
+    { user },
+    {
+      $set: {
+        user,
+        messages,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+}
+
+/* =========================
+   FILES
+========================= */
+
 const FILES = {
   catalogo: {
     link: "https://drive.google.com/uc?export=download&id=1uhC33i70whN9fdjoucnlJjrDZABG3DKS",
@@ -106,6 +173,10 @@ const FILES = {
     caption: "Segue o folder explicativo do Programa Parceiro Homologado IQG."
   }
 };
+
+/* =========================
+   PROMPT
+========================= */
 
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial do Programa Parceiro Homologado IQG.
@@ -708,8 +779,11 @@ app.post("/webhook", async (req, res) => {
 
     const text = message.text.body.trim();
 
-    if (!conversations[from]) conversations[from] = [];
-    conversations[from].push({ role: "user", content: text });
+    // 🔥 MONGO HISTÓRICO
+    let history = await loadConversation(from);
+
+    history.push({ role: "user", content: text });
+    history = history.slice(-20);
 
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -721,7 +795,7 @@ app.post("/webhook", async (req, res) => {
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          ...conversations[from]
+          ...history
         ]
       })
     });
@@ -738,15 +812,13 @@ app.post("/webhook", async (req, res) => {
     await delay(humanDelay(resposta));
     await sendWhatsAppMessage(from, resposta);
 
-    conversations[from].push({ role: "assistant", content: resposta });
+    history.push({ role: "assistant", content: resposta });
 
-    if (conversations[from].length > 20) {
-      conversations[from] = conversations[from].slice(-20);
-    }
+    await saveConversation(from, history);
 
     let autoFolderSentThisTurn = false;
 
-    if (!state.folderSent && conversations[from].length <= 2) {
+    if (!state.folderSent && history.length <= 2) {
       state.folderSent = true;
       state.sentFiles.folder = true;
       autoFolderSentThisTurn = true;
@@ -776,6 +848,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     return res.sendStatus(200);
+
   } catch (error) {
     if (messageId) {
       processingMessages.delete(messageId);
