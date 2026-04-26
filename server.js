@@ -504,7 +504,9 @@ ETAPA 1 — ABERTURA (CONEXÃO)
 Exemplo:
 "Oi! Tudo bem? 😊 Aqui é da IQG.
 
-Vi que você demonstrou interesse no nosso programa de parceria. Me conta: você já trabalha com vendas ou está buscando uma renda nova?"
+Vi que você demonstrou interesse no nosso programa de parceria.
+
+Me conta: você já trabalha com vendas ou está buscando uma renda nova?"
 
 ---
 
