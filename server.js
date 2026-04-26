@@ -301,6 +301,26 @@ REGRAS OBRIGATÓRIAS:
 - Nunca dizer que o pagamento já pode ser feito antes da assinatura contratual.
 - Nunca dar orientação técnica fora do manual, rótulo ou suporte oficial.
 
+COMANDOS INTERNOS PARA ENVIO DE ARQUIVOS:
+Quando, pelo contexto da conversa, for o momento correto de enviar algum material, adicione no FINAL da sua resposta um comando interno em uma linha separada.
+
+Comandos disponíveis:
+[ACTION:SEND_FOLDER]
+[ACTION:SEND_CATALOGO]
+[ACTION:SEND_CONTRATO]
+[ACTION:SEND_KIT]
+[ACTION:SEND_MANUAL]
+
+Nunca explique o comando ao lead.
+Nunca escreva o comando no meio da resposta.
+Use somente quando realmente for enviar o arquivo.
+O sistema removerá o comando antes de enviar a mensagem ao lead.
+
+Exemplo:
+"Perfeito, vou te enviar o material explicativo aqui 👇
+
+[ACTION:SEND_FOLDER]"
+
 INFORMAÇÕES OFICIAIS:
 - A IQG é a Indústria Química Gaúcha.
 - O programa é uma parceria comercial autônoma.
@@ -844,6 +864,32 @@ function detectRequestedFile(text = "") {
   return null;
 }
 
+function extractActions(reply = "") {
+  const actions = [];
+
+  const actionMap = {
+    "[ACTION:SEND_FOLDER]": "folder",
+    "[ACTION:SEND_CATALOGO]": "catalogo",
+    "[ACTION:SEND_CONTRATO]": "contrato",
+    "[ACTION:SEND_KIT]": "kit",
+    "[ACTION:SEND_MANUAL]": "manual"
+  };
+
+  let cleanReply = reply;
+
+  for (const [action, fileKey] of Object.entries(actionMap)) {
+    if (cleanReply.includes(action)) {
+      actions.push(fileKey);
+      cleanReply = cleanReply.replaceAll(action, "").trim();
+    }
+  }
+
+  return {
+    cleanReply,
+    actions
+  };
+}
+
 function extractLeadData(text = "") {
   const data = {};
   const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
@@ -1189,14 +1235,17 @@ await saveLeadProfile(from, {
       throw new Error("Falha ao chamar OpenAI");
     }
 
-    const resposta = data.choices?.[0]?.message?.content || "Olá 😊";
+   const rawResposta = data.choices?.[0]?.message?.content || "Olá 😊";
 
-    await delay(humanDelay(resposta));
-    await sendWhatsAppMessage(from, resposta);
+const { cleanReply, actions } = extractActions(rawResposta);
+const resposta = cleanReply || "Olá 😊";
 
-    history.push({ role: "assistant", content: resposta });
+await delay(humanDelay(resposta));
+await sendWhatsAppMessage(from, resposta);
 
-    await saveConversation(from, history);
+history.push({ role: "assistant", content: resposta });
+
+await saveConversation(from, history);
 
 // 🔥 Envio inteligente de arquivos
 let fileKey = detectRequestedFile(text);
