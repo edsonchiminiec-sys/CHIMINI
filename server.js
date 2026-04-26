@@ -416,6 +416,35 @@ Exemplo:
 
 [ACTION:SEND_FOLDER]"
 
+REGRA DE USO INTELIGENTE DE MATERIAIS (CRÍTICA):
+
+Você possui materiais de apoio que ajudam na conversão do lead:
+- Folder (visão geral do programa)
+- Catálogo (produtos e aplicações)
+- Manual/curso (como usar os produtos, ideal para iniciantes)
+- Kit (itens do lote inicial)
+- Contrato (condições gerais)
+
+Você NÃO deve esperar o lead pedir.
+
+Sempre que surgir uma dúvida, insegurança ou oportunidade de reforço, você pode OFERECER o envio de forma natural.
+
+Exemplos de quando usar:
+
+- Lead sem experiência → oferecer o manual
+- Lead com dúvida de produto → oferecer catálogo
+- Lead inseguro → oferecer kit ou material explicativo
+- Lead analítico → oferecer contrato
+
+Forma correta:
+"Se fizer sentido, posso te enviar um material que explica isso melhor. Quer dar uma olhada?"
+
+Só envie o arquivo se o lead aceitar.
+
+Nunca envie arquivos sem contexto.
+Nunca envie mais de um arquivo ao mesmo tempo.
+Nunca force envio.
+
 INFORMAÇÕES OFICIAIS:
 - A IQG é a Indústria Química Gaúcha.
 - O programa é uma parceria comercial autônoma.
@@ -2235,10 +2264,11 @@ Está correto?`;
 } else {
   const updatedLead = {
     ...(currentLead || {}),
-    [campo]: valor
+    ...dadosConfirmadosDoCampo
   };
 
   const missingFields = getMissingLeadFields(updatedLead);
+   
 
   await saveLeadProfile(from, {
   ...updatedLead,
@@ -2477,8 +2507,11 @@ const shouldAskMissingFields =
 if (
   shouldAskMissingFields &&
   missingFields.length > 0 &&
-  Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))
-) {
+  Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key)) &&
+  !currentLead?.aguardandoConfirmacaoCampo
+)
+
+{
   await saveLeadProfile(from, {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
@@ -2533,6 +2566,39 @@ if (
 const { cleanReply, actions } = extractActions(rawResposta);
 const resposta = cleanReply || "Olá 😊";
      const respostaLower = resposta.toLowerCase();
+     const jaExplicouPrograma =
+  historyText.includes("parceria") &&
+  historyText.includes("iqg");
+
+const jaFalouBeneficios =
+  historyText.includes("benef") ||
+  historyText.includes("comissão") ||
+  historyText.includes("comodato");
+
+const jaFalouRegras =
+  historyText.includes("nome limpo") ||
+  historyText.includes("contrato") ||
+  historyText.includes("responsabilidade");
+
+const jaFalouInvestimento =
+  historyText.includes("1990") ||
+  historyText.includes("1.990") ||
+  historyText.includes("investimento");
+
+const leadConfirmouCiencia =
+  isPositiveConfirmation(text) &&
+  (
+    historyText.includes("ficou claro") ||
+    historyText.includes("posso seguir") ||
+    historyText.includes("podemos seguir")
+  );
+
+const podeIniciarColeta =
+  jaExplicouPrograma &&
+  jaFalouBeneficios &&
+  jaFalouRegras &&
+  jaFalouInvestimento &&
+  leadConfirmouCiencia;
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
@@ -2551,6 +2617,12 @@ if (
 }
 
 let respostaFinal = resposta;
+
+// 🚨 BLOQUEIO DE COLETA PREMATURA
+if (startedDataCollection && !podeIniciarColeta) {
+  respostaFinal = "Antes de seguirmos, só quero te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+}
+     
 
 // 🔥 BLOQUEIO: impedir pedido de múltiplos dados
 const multiDataRequestPattern =
