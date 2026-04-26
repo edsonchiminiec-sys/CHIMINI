@@ -1030,10 +1030,16 @@ function extractLeadData(text = "", currentLead = {}) {
   const lower = fullText.toLowerCase();
 
   // CPF com ou sem pontuação
-  const cpfMatch = fullText.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
-  if (cpfMatch) {
-    data.cpf = formatCPF(cpfMatch[0]);
+const cpfMatch = fullText.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
+
+if (cpfMatch) {
+  const possibleCpf = cpfMatch[0];
+  const hasCpfLabel = /\bcpf\b/i.test(fullText);
+
+  if (hasCpfLabel || isValidCPF(possibleCpf)) {
+    data.cpf = formatCPF(possibleCpf);
   }
+}
 
   // Telefone com DDD, com ou sem pontuação
   const phoneCandidates = fullText.match(/\b(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?\d{4,5}[-\s]?\d{4}\b/g);
@@ -1095,15 +1101,24 @@ function extractLeadData(text = "", currentLead = {}) {
   }
 
   // Cidade/UF no meio do texto: "Curitiba PR", "São Paulo/SP"
-  const cidadeUfMatch = fullText.match(/([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
+  const cidadeUfMatch = fullText.match(
+  /(?:moro em|sou de|resido em|cidade\s*[:\-]?\s*)?\s*([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i
+);
 
-  if (cidadeUfMatch) {
-    data.cidade = cidadeUfMatch[1]
-  .replace(/moro em|sou de|cidade|estado|uf/gi, "")
-  .trim();
-    data.estado = normalizeUF(cidadeUfMatch[2]);
-    data.cidadeEstado = `${data.cidade}/${data.estado}`;
-  }
+if (cidadeUfMatch) {
+  const rawCity = cidadeUfMatch[1].trim();
+
+  const cityWords = rawCity
+    .split(/\s+/)
+    .slice(-3)
+    .join(" ")
+    .replace(/moro em|sou de|resido em|cidade|estado|uf/gi, "")
+    .trim();
+
+  data.cidade = cityWords;
+  data.estado = normalizeUF(cidadeUfMatch[2]);
+  data.cidadeEstado = `${data.cidade}/${data.estado}`;
+}
 
   // Nome solto quando a pessoa escreve "meu nome é..."
   const namePatterns = [
