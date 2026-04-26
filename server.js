@@ -2726,7 +2726,8 @@ if (
   const missingMsg = buildPartialLeadDataMessage(extractedData, missingFields);
 
   await sendWhatsAppMessage(from, missingMsg);
-   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+   await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
+   
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
@@ -3443,7 +3444,7 @@ app.get("/conversation/:user", async (req, res) => {
       <body>
         <header>
           <h1>CRM IQG — Leads</h1>
-          <p>Atualização automática a cada 30 segundos</p>
+          <p>Atualização automática a cada 5 segundos</p>
         </header>
 
         <div class="container">
