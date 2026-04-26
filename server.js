@@ -853,6 +853,73 @@ async function sendWhatsAppDocument(to, file) {
     throw new Error("Falha ao enviar documento WhatsApp");
   }
 }
+async function getWhatsAppMediaUrl(mediaId) {
+  const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+    }
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao buscar URL da mídia:", data);
+    throw new Error("Falha ao buscar URL da mídia do WhatsApp");
+  }
+
+  return data.url;
+}
+
+async function downloadWhatsAppMedia(mediaUrl) {
+  const response = await fetch(mediaUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao baixar mídia do WhatsApp: ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function transcribeAudioBuffer(buffer, filename = "audio.ogg") {
+  const form = new FormData();
+
+  form.append("model", "gpt-4o-mini-transcribe");
+  form.append("language", "pt");
+  form.append(
+    "prompt",
+    "Transcreva o áudio em português do Brasil. O contexto é uma conversa comercial sobre o Programa Parceiro Homologado IQG."
+  );
+
+  form.append("file", buffer, {
+    filename,
+    contentType: "audio/ogg"
+  });
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      ...form.getHeaders()
+    },
+    body: form
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao transcrever áudio:", data);
+    throw new Error("Falha ao transcrever áudio");
+  }
+
+  return data.text || "";
+}
 
 function detectRequestedFile(text = "") {
   const normalizedText = text.toLowerCase();
@@ -1218,16 +1285,34 @@ if (from === process.env.CONSULTANT_PHONE) {
 clearTimers(from);
     state.closed = false;
 
-   if (!message.text?.body) {
+  let text = "";
+
+if (message.text?.body) {
+  text = message.text.body.trim();
+} else if (message.audio?.id) {
+  await sendWhatsAppMessage(from, "Vou ouvir seu áudio rapidinho e já te respondo 😊");
+
+  const mediaUrl = await getWhatsAppMediaUrl(message.audio.id);
+  const audioBuffer = await downloadWhatsAppMedia(mediaUrl);
+
+  text = await transcribeAudioBuffer(audioBuffer, "audio.ogg");
+
+  if (!text) {
+    await sendWhatsAppMessage(
+      from,
+      "Não consegui entender bem o áudio. Pode me enviar novamente ou escrever sua dúvida?"
+    );
+
+    return res.sendStatus(200);
+  }
+} else {
   await sendWhatsAppMessage(
     from,
-    "No momento consigo te atender melhor por mensagem de texto 😊 Pode me escrever sua dúvida?"
+    "No momento consigo te atender melhor por texto ou áudio 😊 Pode me enviar sua dúvida?"
   );
 
   return res.sendStatus(200);
 }
-
-   const text = message.text.body.trim();
 
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
