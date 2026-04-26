@@ -2158,15 +2158,6 @@ if (!currentLead?.campoAtual) {
   return res.sendStatus(200);
 }
 
-     
-if (leadStatus === "quente") {
-  await notifyConsultant({
-    user: from,
-    telefoneWhatsApp: from,
-    ultimaMensagem: text,
-    status: leadStatus
-  });
-}
 await saveLeadProfile(from, {
   telefoneWhatsApp: from,
   ultimaMensagem: text,
