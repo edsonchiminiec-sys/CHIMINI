@@ -1717,7 +1717,20 @@ errosValidacao: validation.errors
   });
        
      const changedConfirmedData =
-  currentLead?.dadosConfirmadosPeloLead === true &&
+  
+  const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
+
+await sendWhatsAppMessage(from, errorMsg);
+await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+
+     currentLead?.dadosConfirmadosPeloLead === true &&
   REQUIRED_LEAD_FIELDS.some(field =>
     extractedData[field] &&
     currentLead[field] &&
@@ -1738,18 +1751,6 @@ if (changedConfirmedData) {
 
 await sendWhatsAppMessage(from, confirmationMsg);
 await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-
-  const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
-
-await sendWhatsAppMessage(from, errorMsg);
-await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
