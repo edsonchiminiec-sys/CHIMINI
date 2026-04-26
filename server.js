@@ -990,6 +990,11 @@ function extractActions(reply = "") {
     actions
   };
 }
+
+function onlyDigits(value = "") {
+  return String(value).replace(/\D/g, "");
+}
+
 function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
@@ -1601,8 +1606,31 @@ let history = await loadConversation(from);
 const currentLead = await loadLeadProfile(from);
 const extractedData = extractLeadData(text, currentLead || {});
 const validation = validateLeadData(extractedData);
+
+if (!validation.isValid) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "erro_dados",
+    status: "qualificando",
+    errosValidacao: validation.errors
+  });
+
+  await sendWhatsAppMessage(
+    from,
+    `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`
+  );
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+
 const leadStatus = classifyLead(text, extractedData, history);
-     const missingFields = getMissingLeadFields(extractedData);
+const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
 if (awaitingConfirmation && isPositiveConfirmation(text)) {
@@ -1665,20 +1693,6 @@ if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_
 
   if (messageId) {
     markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-
-if (!validation.isValid) {
-  await sendWhatsAppMessage(
-    from,
-    `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`
-  );
-
-  if (messageId) {
-    processingMessages.delete(messageId);
-    processedMessages.set(messageId, Date.now());
   }
 
   return res.sendStatus(200);
