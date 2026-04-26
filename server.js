@@ -2008,10 +2008,11 @@ if (changedConfirmedData) {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: true,
-    crmPendenteAtualizacao: true,
+    crmEnviado: false,
     faseQualificacao: "aguardando_confirmacao_dados",
     status: "aguardando_confirmacao_dados"
   });
+} 
 
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
