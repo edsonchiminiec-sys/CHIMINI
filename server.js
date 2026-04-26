@@ -1612,9 +1612,9 @@ if (!validation.isValid) {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: false,
-    faseQualificacao: "erro_dados",
-    status: "qualificando",
-    errosValidacao: validation.errors
+faseQualificacao: "erro_dados",
+status: "erro_dados",
+errosValidacao: validation.errors
   });
 
   await sendWhatsAppMessage(
@@ -1643,7 +1643,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     dadosConfirmadosPeloLead: true,
     aguardandoConfirmacao: false,
     faseQualificacao: "dados_confirmados",
-    status: "pre_analise"
+status: "dados_confirmados"
   });
 
   await sendWhatsAppMessage(
@@ -1668,7 +1668,7 @@ if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPel
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: true,
     faseQualificacao: "aguardando_confirmacao_dados",
-    status: "qualificando"
+status: "aguardando_confirmacao_dados"
   });
 
   await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
@@ -1686,7 +1686,7 @@ if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: false,
     faseQualificacao: "dados_parciais",
-    status: "qualificando"
+status: "dados_parciais"
   });
 
   await sendWhatsAppMessage(from, getMissingFieldQuestion(missingFields[0]));
