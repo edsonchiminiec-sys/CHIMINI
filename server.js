@@ -836,7 +836,8 @@ async function sendFileOnce(from, key) {
   state.sentFiles[key] = true;
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
-  scheduleShortFollowupAfterFile(from);
+
+  // Follow-up curto desativado para evitar mensagens automáticas em excesso
 }
 
 function scheduleInactivityFollowup(from) {
