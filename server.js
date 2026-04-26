@@ -1006,11 +1006,19 @@ function extractLeadData(text = "") {
       data.cpf = line.split(":").slice(1).join(":").trim();
     }
 
-    if (lower.startsWith("cidade") || lower.startsWith("cidade/estado")) {
+    if (lower.startsWith("cidade/estado")) {
       data.cidadeEstado = line.split(":").slice(1).join(":").trim();
     }
 
-    if (lower.startsWith("telefone")) {
+    if (lower.startsWith("cidade") && !lower.startsWith("cidade/estado")) {
+      data.cidade = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (lower.startsWith("estado") || lower.startsWith("uf")) {
+      data.estado = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (lower.startsWith("telefone") || lower.startsWith("celular") || lower.startsWith("whatsapp")) {
       data.telefone = line.split(":").slice(1).join(":").trim();
     }
 
@@ -1045,6 +1053,10 @@ function extractLeadData(text = "") {
     ) {
       data.nomeLimpo = "nao";
     }
+  }
+
+  if (!data.cidadeEstado && data.cidade && data.estado) {
+    data.cidadeEstado = `${data.cidade}/${data.estado}`;
   }
 
   return data;
