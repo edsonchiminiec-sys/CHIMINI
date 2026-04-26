@@ -1940,189 +1940,6 @@ const pendingExtractedData = Object.fromEntries(
   })
 );
 
-     // 🔥 AVANÇO AUTOMÁTICO DE ETAPAS
-const fluxoCampos = ["nome", "telefone", "cpf", "cidade", "estado"];
-
-if (currentLead?.campoAtual) {
-  const campoAtual = currentLead.campoAtual;
-
-  // Se o campo atual foi preenchido
-  if (extractedData[campoAtual]) {
-    const indexAtual = fluxoCampos.indexOf(campoAtual);
-    const proximoCampo = fluxoCampos[indexAtual + 1];
-
-    // Se ainda tem próximo campo
-    if (proximoCampo) {
-     await saveLeadProfile(from, {
-  ...extractedData,
-  campoAtual: proximoCampo
-});
-
-      const perguntas = {
-        nome: `Perfeito, ${extractedData.nome} anotado 👍`,
-        telefone: `Ótimo, telefone anotado 👍`,
-        cpf: `CPF recebido 👍`,
-        cidade: `Cidade anotada 👍`,
-        estado: `Estado anotado 👍`
-      };
-
-      const perguntasProximo = {
-        telefone: "Agora me informe seu telefone com DDD.",
-        cpf: "Agora preciso do seu CPF.",
-        cidade: "Qual a sua cidade?",
-        estado: "E o seu estado (UF)?"
-      };
-
-      const resposta = `${perguntas[campoAtual] || ""}\n\n${perguntasProximo[proximoCampo]}`;
-
-      await sendWhatsAppMessage(from, resposta);
-      await saveHistoryStep(from, history, text, resposta, !!message.audio?.id);
-
-      if (messageId) {
-        markMessageAsProcessed(messageId);
-      }
-
-      return res.sendStatus(200);
-    }
-
-    // Se não tem próximo campo → vai cair na confirmação automática (correção 6)
-  }
-}
-const isNegativeConfirmation = (value = "") => {
-  const t = String(value)
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-
-  return (
-    t === "nao" ||
-    t === "não" ||
-    t === "errado" ||
-    t === "incorreto" ||
-    t === "nao esta" ||
-    t === "não está" ||
-    t === "não esta" ||
-    t === "ta errado" ||
-    t === "está errado" ||
-    t === "esta errado"
-  );
-};
-
-if (currentLead?.aguardandoConfirmacaoCampo) {
-  const campo = currentLead.campoPendente;
-  const valor = currentLead.valorPendente;
-
-  if (isPositiveConfirmation(text)) {
-    await saveLeadProfile(from, {
-      [campo]: valor,
-      campoPendente: null,
-      valorPendente: null,
-      aguardandoConfirmacaoCampo: false,
-      faseQualificacao: "dados_parciais",
-      status: "dados_parciais"
-    });
-
-    const labels = {
-      nome: "nome",
-      cpf: "CPF",
-      telefone: "telefone",
-      cidade: "cidade",
-      estado: "estado"
-    };
-
-    const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
-
-    await sendWhatsAppMessage(from, msg);
-    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-    if (messageId) {
-      markMessageAsProcessed(messageId);
-    }
-
-    return res.sendStatus(200);
-  }
-
-  if (isNegativeConfirmation(text)) {
-    await saveLeadProfile(from, {
-      campoPendente: null,
-      valorPendente: null,
-      aguardandoConfirmacaoCampo: false,
-      faseQualificacao: "corrigir_dado",
-      status: "corrigir_dado"
-    });
-
-    const labels = {
-      nome: "nome completo",
-      cpf: "CPF",
-      telefone: "telefone com DDD",
-      cidade: "cidade",
-      estado: "estado"
-    };
-
-    const msg = `Sem problema 😊 Pode me enviar o ${labels[campo] || campo} correto?`;
-
-    await sendWhatsAppMessage(from, msg);
-    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-    if (messageId) {
-      markMessageAsProcessed(messageId);
-    }
-
-    return res.sendStatus(200);
-  }
-
-  const msg = "Só para confirmar: esse dado está correto? Pode responder sim ou não.";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-     
-const pendingFields = Object.keys(pendingExtractedData);
-
-if (
-  pendingFields.length > 0 &&
-  !currentLead?.aguardandoConfirmacaoCampo
-) {
-  const field = pendingFields[0];
-  const value = pendingExtractedData[field];
-
-  await saveLeadProfile(from, {
-    campoPendente: field,
-    valorPendente: value,
-    aguardandoConfirmacaoCampo: true,
-    faseQualificacao: "aguardando_confirmacao_campo",
-    status: "aguardando_confirmacao_campo"
-  });
-
-  const labels = {
-    nome: "nome",
-    cpf: "CPF",
-    telefone: "telefone",
-    cidade: "cidade",
-    estado: "estado"
-  };
-
-  const msg = `Identifiquei seu ${labels[field] || field} como: ${value}
-
-Está correto?`;
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-     
      const validation = validateLeadData(extractedData);
 
 if (!validation.isValid) {
@@ -2698,6 +2515,8 @@ app.get("/lead/:user/status/:status", async (req, res) => {
 .dados_confirmados { background: #dcfce7; color: #166534; }
 .erro_dados { background: #fee2e2; color: #991b1b; }
 .erro_envio_crm { background: #fee2e2; color: #991b1b; }
+.aguardando_confirmacao_campo { background: #e0f2fe; color: #075985; }
+.corrigir_dado { background: #fef3c7; color: #92400e; }
 .qualificado { background: #dcfce7; color: #166534; }
 
           .actions {
@@ -2817,6 +2636,8 @@ app.get("/lead/:user/status/:status", async (req, res) => {
 <option value="dados_confirmados" ${statusFilter === "dados_confirmados" ? "selected" : ""}>Dados confirmados</option>
 <option value="erro_dados" ${statusFilter === "erro_dados" ? "selected" : ""}>Erro nos dados</option>
 <option value="erro_envio_crm" ${statusFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
+<option value="aguardando_confirmacao_campo" ${statusFilter === "aguardando_confirmacao_campo" ? "selected" : ""}>Aguardando confirmação de campo</option>
+<option value="corrigir_dado" ${statusFilter === "corrigir_dado" ? "selected" : ""}>Corrigir dado</option>
 <option value="qualificado" ${statusFilter === "qualificado" ? "selected" : ""}>Qualificado</option>
             </select>
 
