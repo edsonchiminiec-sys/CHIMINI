@@ -1128,8 +1128,24 @@ clearTimers(from);
 }
 
     const text = message.text.body.trim();
-    const extractedData = extractLeadData(text);
+const extractedData = extractLeadData(text);
+const validation = validateLeadData(extractedData);
 const leadStatus = classifyLead(text);
+
+if (!validation.isValid) {
+  await sendWhatsAppMessage(
+    from,
+    `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`
+  );
+
+  if (messageId) {
+    processingMessages.delete(messageId);
+    processedMessages.set(messageId, Date.now());
+  }
+
+  return res.sendStatus(200);
+}
+     
 if (leadStatus === "quente") {
   await notifyConsultant({
     user: from,
