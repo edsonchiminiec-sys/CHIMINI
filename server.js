@@ -1165,10 +1165,12 @@ function extractLeadData(text = "", currentLead = {}) {
     data.cidadeEstado = `${data.cidade}/${data.estado}`;
   }
 
-  return {
-    ...currentLead,
-    ...data
-  };
+ const { _id, ...safeCurrentLead } = currentLead || {};
+
+return {
+  ...safeCurrentLead,
+  ...data
+};
 }
 
 function formatCPF(value = "") {
@@ -1232,26 +1234,33 @@ function isValidPhone(value = "") {
 }
 
 function isPositiveConfirmation(text = "") {
-  const t = text.toLowerCase().trim();
+  const t = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 
-  return [
-    "sim",
-    "s",
-    "isso",
-    "correto",
-    "certo",
-    "está certo",
-    "esta certo",
-    "tá certo",
-    "ta certo",
-    "pode seguir",
-    "pode",
-    "confirmo",
-    "confirmado",
-    "perfeito",
-    "ok",
-    "exato"
-  ].some(word => t === word || t.includes(word));
+  const positivePatterns = [
+    /^sim$/,
+    /^s$/,
+    /^isso$/,
+    /^correto$/,
+    /^certo$/,
+    /^ta certo$/,
+    /^esta certo$/,
+    /^pode seguir$/,
+    /^pode$/,
+    /^confirmo$/,
+    /^confirmado$/,
+    /^perfeito$/,
+    /^ok$/,
+    /^exato$/,
+    /^tudo certo$/,
+    /^esta tudo correto$/,
+    /^pode continuar$/
+  ];
+
+  return positivePatterns.some(pattern => pattern.test(t));
 }
 
 function normalizeUF(value = "") {
@@ -1318,8 +1327,10 @@ function validateLeadData(data = {}) {
     } else if (cpfDigits.length !== 11) {
       errors.push("O CPF precisa ter exatamente 11 números.");
     } else if (isRepeatedDigits(cpfDigits)) {
-      errors.push("O CPF informado parece inválido, pois repete o mesmo número.");
-    }
+  errors.push("O CPF informado parece inválido, pois repete o mesmo número.");
+} else if (!isValidCPF(cpfDigits)) {
+  errors.push("O CPF informado parece inválido. Pode conferir e me enviar novamente?");
+}
   }
 
   if (data.telefone) {
@@ -1690,6 +1701,16 @@ status: "dados_confirmados",
 qualificadoEm: new Date()
   });
 
+   const confirmedLead = await loadLeadProfile(from);
+
+if (canSendLeadToCRM(confirmedLead)) {
+  await saveLeadProfile(from, {
+    crmEnviado: true,
+    crmEnviadoEm: new Date(),
+    faseQualificacao: "enviado_crm",
+    status: "qualificado"
+  });
+}
   await sendWhatsAppMessage(
     from,
     "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual."
