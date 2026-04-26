@@ -830,6 +830,28 @@ Exemplo:
 
 Nunca avance para coleta de dados baseado apenas em respostas neutras.
 
+REGRA CRÍTICA ANTES DE CITAR PRÉ-ANÁLISE:
+
+Você NÃO deve mencionar, sugerir ou oferecer pré-análise antes de o lead ter passado claramente por estes pontos:
+
+1. Entendeu que é uma parceria comercial autônoma, não emprego e não franquia.
+2. Entendeu os principais benefícios do programa.
+3. Entendeu as responsabilidades do parceiro.
+4. Entendeu que existe investimento de adesão e implantação.
+5. Demonstrou interesse real em avançar.
+
+Antes disso, nunca diga frases como:
+- "podemos seguir com a pré-análise"
+- "vamos iniciar sua pré-análise"
+- "posso fazer sua pré-análise"
+- "para avançar com a pré-análise"
+- "ver como você pode se tornar parceiro"
+
+Se o lead disser apenas "legal", "interessante", "entendi", "ok", "sim", "gostei" ou algo parecido, isso NÃO autoriza falar em pré-análise.
+
+Nesses casos, continue explicando o programa e faça uma pergunta leve direcionando aos temas nao debatidos.
+
+
 ---
 
 ETAPA 9 — COLETA DE DADOS
@@ -1002,7 +1024,7 @@ Lead quente:
 - Tem nome limpo ou avalista.
 
 Mensagem lead quente:
-"Seu perfil parece bem alinhado. O próximo passo é simples: fazer sua pré-análise para encaminharmos à análise interna da IQG. Podemos seguir?"
+"Seu perfil parece bem alinhado. Antes de qualquer próximo passo, quero só garantir que ficou claro para você como funciona o programa, os benefícios, as responsabilidades e o investimento. Ficou claro ou quer que eu detalhe algum ponto?"
 
 Lead morno:
 "Faz sentido avaliar com calma. Só reforço que o programa é ideal para quem quer construir uma operação comercial com suporte, produtos recorrentes e margem atrativa. Quer que eu te envie um resumo objetivo?"
@@ -2191,13 +2213,25 @@ const explicitCorrection =
     ? extractExplicitCorrection(text)
     : {};
      
+const podeTentarExtrairDados =
+  currentLead?.faseQualificacao === "coletando_dados" ||
+  currentLead?.faseQualificacao === "dados_parciais" ||
+  currentLead?.faseQualificacao === "aguardando_dados" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+  currentLead?.faseQualificacao === "corrigir_dado" ||
+  currentLead?.faseQualificacao === "corrigir_dado_final" ||
+  currentLead?.faseQualificacao === "aguardando_valor_correcao_final";
+
 const rawExtracted =
   Object.keys(explicitCorrection).length > 0
     ? {
         ...(currentLead || {}),
         ...explicitCorrection
       }
-    : extractLeadData(textForExtraction, currentLead || {});
+    : podeTentarExtrairDados
+      ? extractLeadData(textForExtraction, currentLead || {})
+      : {};
      
 // 🔥 NÃO SOBRESCREVE COM NULL
      
@@ -2225,8 +2259,52 @@ function normalizeLeadFieldValue(field, value = "") {
     .trim();
 }
 
-const pendingExtractedData = Object.fromEntries(
+let pendingExtractedData = Object.fromEntries(
   Object.entries(rawExtracted || {}).filter(([key, value]) => {
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      !REQUIRED_LEAD_FIELDS.includes(key)
+    ) {
+      return false;
+    }
+
+    const newValue = normalizeLeadFieldValue(key, value);
+    const savedValue = normalizeLeadFieldValue(key, currentLead?.[key]);
+
+    if (!newValue) {
+      return false;
+    }
+
+    // Não pergunta novamente dado que já foi salvo/confirmado
+    if (savedValue && newValue === savedValue) {
+      return false;
+    }
+
+    // Não repete pergunta sobre o mesmo campo pendente
+    if (
+      currentLead?.aguardandoConfirmacaoCampo &&
+      currentLead?.campoPendente === key &&
+      normalizeLeadFieldValue(key, currentLead?.valorPendente) === newValue
+    ) {
+      return false;
+    }
+
+    return true;
+  })
+);
+
+// 🔥 NOVO BLOQUEIO — só aceita o campo esperado
+const campoEsperado = currentLead?.campoEsperado;
+
+if (campoEsperado) {
+  pendingExtractedData = Object.fromEntries(
+    Object.entries(pendingExtractedData).filter(
+      ([key]) => key === campoEsperado
+    )
+  );
+}
     if (
       value === null ||
       value === undefined ||
@@ -2924,11 +3002,24 @@ if (
 ) {
   await saveLeadProfile(from, {
     faseQualificacao: "coletando_dados",
+    status: "coletando_dados",
+    campoEsperado: "nome" // 🔥 começa pelo nome SEMPRE
+  });
+}
+  await saveLeadProfile(from, {
+    faseQualificacao: "coletando_dados",
     status: "coletando_dados"
   });
 }
 
 let respostaFinal = resposta;
+     
+     const mencionouPreAnalise =
+  /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
+
+if (mencionouPreAnalise && !podeIniciarColeta) {
+  respostaFinal = "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+}
 
 // 🚨 BLOQUEIO DE COLETA PREMATURA
 if (startedDataCollection && !podeIniciarColeta) {
