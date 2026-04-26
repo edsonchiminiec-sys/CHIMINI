@@ -3414,7 +3414,7 @@ app.get("/conversation/:user", async (req, res) => {
         <script>
           setInterval(() => {
             window.location.reload();
-          }, 30000);
+          }, 5000);
 
           function printCRM() {
             window.print();
