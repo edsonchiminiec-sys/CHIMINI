@@ -2102,10 +2102,20 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: true,
     faseQualificacao: "aguardando_confirmacao_dados",
-status: "aguardando_confirmacao_dados"
+    status: "aguardando_confirmacao_dados"
   });
-      
+
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
+
+  await sendWhatsAppMessage(from, confirmationMsg);
+  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
 
 if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))) {
   await saveLeadProfile(from, {
