@@ -1896,12 +1896,31 @@ qualificadoEm: new Date()
    const confirmedLead = await loadLeadProfile(from);
 
 if (canSendLeadToCRM(confirmedLead)) {
-  await saveLeadProfile(from, {
-    crmEnviado: true,
-    crmEnviadoEm: new Date(),
-    faseQualificacao: "enviado_crm",
-    status: "qualificado"
-  });
+  const lockedLead = await db.collection("leads").findOneAndUpdate(
+    {
+      user: from,
+      crmEnviado: { $ne: true },
+      dadosConfirmadosPeloLead: true,
+      faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
+      status: "quente"
+    },
+    {
+      $set: {
+        crmEnviado: true,
+        crmEnviadoEm: new Date(),
+        faseQualificacao: "enviado_crm",
+        status: "enviado_crm",
+        updatedAt: new Date()
+      }
+    },
+    { returnDocument: "after" }
+  );
+
+  if (lockedLead.value) {
+    // aqui entra o envio real ao CRM
+    console.log("🚀 Lead travado para envio ao CRM");
+  }
+}
    await notifyConsultant({
   user: from,
   telefoneWhatsApp: from,
@@ -1920,6 +1939,37 @@ await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
   return res.sendStatus(200);
 }
 
+     // 🔥 DETECTA CORREÇÃO APÓS CONFIRMAÇÃO
+const hadConfirmedData = currentLead?.dadosConfirmadosPeloLead === true;
+
+const hasNewDifferentData =
+  currentLead &&
+  (
+    (extractedData.cpf && extractedData.cpf !== currentLead.cpf) ||
+    (extractedData.telefone && extractedData.telefone !== currentLead.telefone) ||
+    (extractedData.nome && extractedData.nome !== currentLead.nome) ||
+    (extractedData.cidade && extractedData.cidade !== currentLead.cidade) ||
+    (extractedData.estado && extractedData.estado !== currentLead.estado)
+  );
+
+if (hadConfirmedData && hasNewDifferentData) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: true,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "dados_corrigidos"
+  });
+
+  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+     
 if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
   await saveLeadProfile(from, {
     ...extractedData,
