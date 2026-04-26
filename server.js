@@ -1935,7 +1935,7 @@ if (currentLead?.campoAtual) {
 
     // Se ainda tem próximo campo
     if (proximoCampo) {
-      await saveLeadProfile(from, {
+     await saveLeadProfile(from, {
   ...extractedData,
   campoAtual: proximoCampo
 });
