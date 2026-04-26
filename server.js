@@ -10,19 +10,39 @@ const app = express();
 app.use(express.json());
 
 /* =========================
-   MONGODB
+   🔥 MONGODB (CORRIGIDO)
 ========================= */
 
-const mongoClient = new MongoClient(process.env.MONGODB_URI);
+const client = new MongoClient(process.env.MONGODB_URI);
 let db;
 
-try {
-  await mongoClient.connect();
-  db = mongoClient.db(process.env.MONGODB_DB || "iqg");
-  console.log("MongoDB conectado com sucesso.");
-} catch (error) {
-  console.error("Erro ao conectar no MongoDB:", error);
-  process.exit(1);
+async function connectMongo() {
+  if (!db) {
+    await client.connect();
+    db = client.db("iqg");
+    console.log("🔥 Mongo conectado");
+  }
+}
+
+/* =========================
+   MONGO HISTÓRICO
+========================= */
+
+async function loadConversation(user) {
+  await connectMongo();
+
+  const data = await db.collection("conversations").findOne({ user });
+  return data?.messages || [];
+}
+
+async function saveConversation(user, messages) {
+  await connectMongo();
+
+  await db.collection("conversations").updateOne(
+    { user },
+    { $set: { messages } },
+    { upsert: true }
+  );
 }
 
 /* =========================
