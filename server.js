@@ -677,6 +677,64 @@ function detectRequestedFile(text = "") {
   return null;
 }
 
+function extractLeadData(text = "") {
+  const data = {};
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    if (lower.startsWith("nome")) {
+      data.nome = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (lower.startsWith("cpf")) {
+      data.cpf = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (lower.startsWith("cidade") || lower.startsWith("cidade/estado")) {
+      data.cidadeEstado = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (lower.startsWith("telefone")) {
+      data.telefone = line.split(":").slice(1).join(":").trim();
+    }
+
+    if (
+      lower.includes("vendas") ||
+      lower.includes("piscina") ||
+      lower.includes("manutenção") ||
+      lower.includes("manutencao") ||
+      lower.includes("agro") ||
+      lower.includes("limpeza") ||
+      lower.includes("comércio") ||
+      lower.includes("comercio")
+    ) {
+      data.areaAtuacao = line;
+    }
+
+    if (
+      lower.includes("nome limpo") ||
+      lower.includes("sem restrição") ||
+      lower.includes("sem restricao") ||
+      lower.includes("não tenho restrição") ||
+      lower.includes("nao tenho restricao")
+    ) {
+      data.nomeLimpo = "sim";
+    }
+
+    if (
+      lower.includes("tenho restrição") ||
+      lower.includes("tenho restricao") ||
+      lower.includes("negativado") ||
+      lower.includes("protesto")
+    ) {
+      data.nomeLimpo = "nao";
+    }
+  }
+
+  return data;
+}
 function classifyLead(text = "") {
   const t = text.toLowerCase();
 
