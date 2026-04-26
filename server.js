@@ -144,36 +144,6 @@ function markMessageAsProcessed(messageId) {
   processedMessages.set(messageId, Date.now());
 }
 
-/* =========================
-   MONGO HISTÓRICO
-========================= */
-
-async function loadConversation(user) {
-  const data = await db.collection("conversations").findOne({ user });
-
-  if (!data?.messages || !Array.isArray(data.messages)) {
-    return [];
-  }
-
-  return data.messages;
-}
-
-async function saveConversation(user, messages) {
-  await db.collection("conversations").updateOne(
-    { user },
-    {
-      $set: {
-        user,
-        messages,
-        updatedAt: new Date()
-      },
-      $setOnInsert: {
-        createdAt: new Date()
-      }
-    },
-    { upsert: true }
-  );
-}
 
 /* =========================
    FILES
