@@ -2101,9 +2101,9 @@ if (message.text?.body) {
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
 
-const currentLead = await loadLeadProfile(from);
+let currentLead = await loadLeadProfile(from);
 
-     if (!currentLead) {
+if (!currentLead) {
   await saveLeadProfile(from, {
     user: from,
     telefoneWhatsApp: from,
@@ -2111,7 +2111,15 @@ const currentLead = await loadLeadProfile(from);
     faseQualificacao: "inicio",
     status: "novo"
   });
+
+  currentLead = await loadLeadProfile(from);
 } else {
+  await saveLeadProfile(from, {
+    ultimaMensagem: text,
+    telefoneWhatsApp: from
+  });
+}
+     else {
   await saveLeadProfile(from, {
     ultimaMensagem: text,
     telefoneWhatsApp: from
@@ -2322,11 +2330,23 @@ if (
 const isOnlyConfirmationText =
   isPositiveConfirmation(text) || isNegativeConfirmation(text);
 
+const podeExtrairDadosPessoais =
+  currentLead?.faseQualificacao === "coletando_dados" ||
+  currentLead?.faseQualificacao === "dados_parciais" ||
+  currentLead?.faseQualificacao === "aguardando_dados" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+  currentLead?.faseQualificacao === "corrigir_dado" ||
+  currentLead?.faseQualificacao === "corrigir_dado_final" ||
+  currentLead?.faseQualificacao === "aguardando_valor_correcao_final";
+
 if (
+  podeExtrairDadosPessoais &&
   pendingFields.length > 0 &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !isOnlyConfirmationText
 ) {
+   
   const field = pendingFields[0];
   const value = pendingExtractedData[field];
 
@@ -2650,7 +2670,7 @@ Pode me dizer assim:
 - estado está errado`;
 
   await sendWhatsAppMessage(from, msg);
- await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
+ await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -2713,7 +2733,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   await sendWhatsAppMessage(from, confirmedMsg);
    state.closed = true;
 clearTimers(from);
-   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+   await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
    
   if (messageId) {
     markMessageAsProcessed(messageId);
