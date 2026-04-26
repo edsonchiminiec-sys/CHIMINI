@@ -1627,13 +1627,13 @@ app.get("/lead/:user/status/:status", async (req, res) => {
       return `
         <tr>
           <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
-          <td>${escapeHtml(lead.nome || "-")}</td>
-          <td>${escapeHtml(phone)}</td>
-          <td>${escapeHtml(cidade)}</td>
-          <td>${escapeHtml(estado)}</td>
-          <td class="msg">${escapeHtml(lead.ultimaMensagem || "-")}</td>
-          <td>${formatDate(lead.updatedAt)}</td>
-          <td class="actions">
+<td>${escapeHtml(lead.nome || "-")}</td>
+<td>${escapeHtml(phone)}</td>
+<td>${escapeHtml(lead.cpf || "-")}</td>
+<td>${escapeHtml(lead.cidade || cidade)}</td>
+<td>${escapeHtml(lead.estado || estado)}</td>
+<td>${formatDate(lead.updatedAt)}</td>
+<td class="actions">
             <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
             <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
             <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
