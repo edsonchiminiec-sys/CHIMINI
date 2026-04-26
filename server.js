@@ -1694,7 +1694,10 @@ if (changedConfirmedData) {
     status: "aguardando_confirmacao_dados"
   });
 
-  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
+  const confirmationMsg = buildLeadConfirmationMessage(extractedData);
+
+await sendWhatsAppMessage(from, confirmationMsg);
+await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -1714,10 +1717,10 @@ status: "erro_dados",
 errosValidacao: validation.errors
   });
 
-  await sendWhatsAppMessage(
-    from,
-    `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`
-  );
+  const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
+
+await sendWhatsAppMessage(from, errorMsg);
+await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -1760,11 +1763,10 @@ if (canSendLeadToCRM(confirmedLead)) {
   status: "qualificado"
 });
 }
-  await sendWhatsAppMessage(
-    from,
-    "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual."
-  );
+  const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
 
+await sendWhatsAppMessage(from, confirmedMsg);
+await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
@@ -1785,7 +1787,10 @@ if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPel
 status: "aguardando_confirmacao_dados"
   });
 
-  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
+const confirmationMsg = buildLeadConfirmationMessage(extractedData);
+
+await sendWhatsAppMessage(from, confirmationMsg);
+await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
