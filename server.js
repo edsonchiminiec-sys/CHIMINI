@@ -782,16 +782,6 @@ REGRAS DE OURO DO FLUXO:
 - Não parecer robô
 - Não usar frases repetidas
 - Adaptar ao comportamento do lead
-
----
-
-INTERPRETAÇÃO DE RESPOSTAS CURTAS:
-
-Se o lead responder:
-"ok", "sim", "pode", "quero", "certo"
-
-→ interpretar como avanço da etapa anterior
-
 ---
 
 COMPORTAMENTO HUMANO:
@@ -1897,10 +1887,18 @@ const historyText = history
   .map(m => m.content || "")
   .join("\n");
 
-const extractedData = extractLeadData(
+const rawExtracted = extractLeadData(
   `${historyText}\n${text}`,
   currentLead || {}
 );
+
+// 🔥 NÃO SOBRESCREVE COM NULL
+const extractedData = {
+  ...currentLead,
+  ...Object.fromEntries(
+    Object.entries(rawExtracted).filter(([_, v]) => v !== null && v !== undefined)
+  )
+};
     
      const validation = validateLeadData(extractedData);
 
@@ -2021,18 +2019,7 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   return res.sendStatus(200);
 }
         
-if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    cpf: formatCPF(extractedData.cpf),
-    telefone: formatPhone(extractedData.telefone),
-    estado: normalizeUF(extractedData.estado),
-    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: true,
-    faseQualificacao: "aguardando_confirmacao_dados",
-status: "aguardando_confirmacao_dados"
-  });
+
 
 const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
@@ -2045,6 +2032,19 @@ await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id)
 
   return res.sendStatus(200);
 }
+
+   if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    cpf: formatCPF(extractedData.cpf),
+    telefone: formatPhone(extractedData.telefone),
+    estado: normalizeUF(extractedData.estado),
+    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: true,
+    faseQualificacao: "aguardando_confirmacao_dados",
+status: "aguardando_confirmacao_dados"
+  });
 
 if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))) {
   await saveLeadProfile(from, {
