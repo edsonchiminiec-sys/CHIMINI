@@ -1176,6 +1176,79 @@ function onlyDigits(value = "") {
   return String(value).replace(/\D/g, "");
 }
 
+function extractExplicitCorrection(text = "") {
+  const fullText = String(text || "").trim();
+  const lower = fullText.toLowerCase();
+
+  const correction = {};
+
+  const estadoMatch = fullText.match(/\b(?:estado|uf)\s*(?:é|e|:|-)?\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
+
+  if (estadoMatch) {
+    correction.estado = normalizeUF(estadoMatch[1]);
+    return correction;
+  }
+
+  const cidadeMatch = fullText.match(/\bcidade\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{3,})$/i);
+
+  if (cidadeMatch) {
+    correction.cidade = cidadeMatch[1].trim();
+    return correction;
+  }
+
+  const nomeMatch = fullText.match(/\bnome\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{3,})$/i);
+
+  if (nomeMatch) {
+    correction.nome = nomeMatch[1].trim();
+    return correction;
+  }
+
+  const cpfMatch = fullText.match(/\bcpf\s*(?:é|e|:|-)?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
+
+  if (cpfMatch) {
+    correction.cpf = formatCPF(cpfMatch[1]);
+    return correction;
+  }
+
+  const telefoneMatch = fullText.match(/\b(?:telefone|celular|whatsapp)\s*(?:é|e|:|-)?\s*((?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4})\b/i);
+
+  if (telefoneMatch) {
+    correction.telefone = formatPhone(telefoneMatch[1]);
+    return correction;
+  }
+
+  if (lower.includes("cidade") && lower.includes("errada")) {
+    correction.campoParaCorrigir = "cidade";
+    return correction;
+  }
+
+  if (lower.includes("estado") && lower.includes("errado")) {
+    correction.campoParaCorrigir = "estado";
+    return correction;
+  }
+
+  if (lower.includes("nome") && lower.includes("errado")) {
+    correction.campoParaCorrigir = "nome";
+    return correction;
+  }
+
+  if (lower.includes("cpf") && lower.includes("errado")) {
+    correction.campoParaCorrigir = "cpf";
+    return correction;
+  }
+
+  if (
+    (lower.includes("telefone") || lower.includes("celular") || lower.includes("whatsapp")) &&
+    lower.includes("errado")
+  ) {
+    correction.campoParaCorrigir = "telefone";
+    return correction;
+  }
+
+  return correction;
+}
+
+
 function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
@@ -2003,10 +2076,18 @@ const isConfirmationContext =
   currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
 const textForExtraction = text;
-const rawExtracted = extractLeadData(
-  textForExtraction,
-  currentLead || {}
-);
+const explicitCorrection =
+  currentLead?.faseQualificacao === "corrigir_dado_final"
+    ? extractExplicitCorrection(text)
+    : {};
+     
+const rawExtracted =
+  Object.keys(explicitCorrection).length > 0
+    ? {
+        ...(currentLead || {}),
+        ...explicitCorrection
+      }
+    : extractLeadData(textForExtraction, currentLead || {});
      
 // 🔥 NÃO SOBRESCREVE COM NULL
      
@@ -2092,7 +2173,37 @@ const pendingExtractedData = Object.fromEntries(
 }
 
      const pendingFields = Object.keys(pendingExtractedData);
+if (
+  currentLead?.faseQualificacao === "corrigir_dado_final" &&
+  explicitCorrection?.campoParaCorrigir
+) {
+  await saveLeadProfile(from, {
+    campoPendente: explicitCorrection.campoParaCorrigir,
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "aguardando_valor_correcao_final",
+    status: "aguardando_valor_correcao_final"
+  });
 
+  const labels = {
+    nome: "nome completo",
+    cpf: "CPF",
+    telefone: "telefone com DDD",
+    cidade: "cidade",
+    estado: "estado"
+  };
+
+  const msg = `Sem problema 😊 Qual é o ${labels[explicitCorrection.campoParaCorrigir]} correto?`;
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
 const isOnlyConfirmationText =
   isPositiveConfirmation(text) || isNegativeConfirmation(text);
 
@@ -2404,6 +2515,34 @@ if (changedConfirmedData) {
 
 const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
+
+     if (awaitingConfirmation && isNegativeConfirmation(text)) {
+  await saveLeadProfile(from, {
+    faseQualificacao: "corrigir_dado_final",
+    status: "corrigir_dado_final",
+    aguardandoConfirmacao: false,
+    dadosConfirmadosPeloLead: false
+  });
+
+  const msg = `Sem problema 😊 Qual dado está incorreto?
+
+Pode me dizer assim:
+- nome está errado
+- CPF está errado
+- telefone está errado
+- cidade está errada
+- estado está errado`;
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+     
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
 if (awaitingConfirmation && isPositiveConfirmation(text)) {
@@ -2738,6 +2877,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "erro_envio_crm",
        "aguardando_confirmacao_campo",
 "corrigir_dado",
+       "corrigir_dado_final",
 ];
 
     const { user, status } = req.params;
