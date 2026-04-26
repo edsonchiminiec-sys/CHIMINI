@@ -13,14 +13,11 @@ app.use(express.json());
    🔥 MONGODB (CORRIGIDO)
 ========================= */
 
-const client = new MongoClient(process.env.MONGODB_URI);
-let db;
-
 async function connectMongo() {
-  if (!db) {
+  if (!client.topology || !client.topology.isConnected()) {
     await client.connect();
     db = client.db("iqg");
-    console.log("🔥 Mongo conectado");
+    console.log("🔥 Mongo reconectado");
   }
 }
 
