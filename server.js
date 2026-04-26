@@ -992,53 +992,105 @@ function validateLeadData(data = {}) {
   };
 }
 
-function classifyLead(text = "") {
+function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
 
-  // 🔥 LEAD QUENTE
-  if (
-    t.includes("quero") ||
+  const hasInterest =
+    t.includes("quero começar") ||
+    t.includes("quero entrar") ||
     t.includes("tenho interesse") ||
     t.includes("vamos") ||
-    t.includes("como começar") ||
-    t.includes("como faço") ||
-    t.includes("quero entrar") ||
     t.includes("pode iniciar") ||
-    t.includes("bora") ||
-    t.includes("ok pode")
-  ) {
-    return "quente";
-  }
+    t.includes("seguir") ||
+    t.includes("pré-análise") ||
+    t.includes("pre-analise") ||
+    t.includes("pre análise");
 
-  // 🟡 LEAD MORNO
-  if (
-    t.includes("quanto ganha") ||
-    t.includes("como funciona") ||
-    t.includes("me explica") ||
-    t.includes("valor") ||
-    t.includes("preço") ||
-    t.includes("investimento") ||
-    t.includes("interessante") ||
-    t.includes("vou pensar")
-  ) {
-    return "morno";
-  }
-
-  // 🔵 LEAD FRIO
-  if (
+  const isRejecting =
     t.includes("não tenho interesse") ||
     t.includes("nao tenho interesse") ||
     t.includes("talvez depois") ||
     t.includes("não é pra mim") ||
     t.includes("nao é pra mim") ||
-    t.includes("sem interesse")
-  ) {
+    t.includes("sem interesse");
+
+  if (isRejecting) {
     return "frio";
+  }
+
+  const hasMinimumData =
+    Boolean(data.nome) &&
+    Boolean(data.cpf) &&
+    Boolean(data.cidadeEstado) &&
+    Boolean(data.telefone) &&
+    Boolean(data.areaAtuacao) &&
+    Boolean(data.nomeLimpo);
+
+  const historyText = history
+    .map(m => m.content || "")
+    .join(" ")
+    .toLowerCase();
+
+  const discussedProgram =
+    historyText.includes("programa") ||
+    historyText.includes("parceria") ||
+    historyText.includes("parceiro homologado");
+
+  const discussedBenefits =
+    historyText.includes("benefício") ||
+    historyText.includes("beneficios") ||
+    historyText.includes("comissão") ||
+    historyText.includes("comissao") ||
+    historyText.includes("comodato");
+
+  const discussedFee =
+    historyText.includes("1.990") ||
+    historyText.includes("1990") ||
+    historyText.includes("taxa") ||
+    historyText.includes("adesão") ||
+    historyText.includes("adesao") ||
+    historyText.includes("investimento");
+
+  const discussedRules =
+    historyText.includes("nome limpo") ||
+    historyText.includes("contrato") ||
+    historyText.includes("análise interna") ||
+    historyText.includes("analise interna") ||
+    historyText.includes("comodato");
+
+  if (
+    hasInterest &&
+    hasMinimumData &&
+    discussedProgram &&
+    discussedBenefits &&
+    discussedFee &&
+    discussedRules
+  ) {
+    return "quente";
+  }
+
+  if (hasMinimumData) {
+    return "pre_analise";
+  }
+
+  if (hasInterest) {
+    return "qualificando";
+  }
+
+  if (
+    t.includes("como funciona") ||
+    t.includes("me explica") ||
+    t.includes("valor") ||
+    t.includes("preço") ||
+    t.includes("preco") ||
+    t.includes("investimento") ||
+    t.includes("interessante")
+  ) {
+    return "morno";
   }
 
   return null;
 }
-
 async function sendFileOnce(from, key) {
   const state = getState(from);
 
@@ -1175,10 +1227,14 @@ clearTimers(from);
   return res.sendStatus(200);
 }
 
-    const text = message.text.body.trim();
+   const text = message.text.body.trim();
+
+// 🔥 carrega histórico antes de classificar
+let history = await loadConversation(from);
+
 const extractedData = extractLeadData(text);
 const validation = validateLeadData(extractedData);
-const leadStatus = classifyLead(text);
+const leadStatus = classifyLead(text, extractedData, history);
 
 if (!validation.isValid) {
   await sendWhatsAppMessage(
@@ -1210,8 +1266,7 @@ await saveLeadProfile(from, {
 });
 
     // 🔥 MONGO HISTÓRICO
-    let history = await loadConversation(from);
-
+   
     history.push({ role: "user", content: text });
     history = history.slice(-20);
 
