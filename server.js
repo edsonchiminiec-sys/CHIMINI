@@ -2116,29 +2116,35 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   return res.sendStatus(200);
 }
 
-if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))) {
+const shouldAskMissingFields =
+  currentLead?.faseQualificacao === "coletando_dados" ||
+  currentLead?.faseQualificacao === "dados_parciais" ||
+  currentLead?.faseQualificacao === "aguardando_dados";
+
+if (
+  shouldAskMissingFields &&
+  missingFields.length > 0 &&
+  Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key))
+) {
   await saveLeadProfile(from, {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: false,
     faseQualificacao: "dados_parciais",
-status: "dados_parciais"
+    status: "dados_parciais"
   });
 
   const missingMsg = buildPartialLeadDataMessage(extractedData, missingFields);
 
-await sendWhatsAppMessage(from, missingMsg);
-await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
+  await sendWhatsAppMessage(from, missingMsg);
+  await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
   return res.sendStatus(200);
-}
-
-    
-     
+}     
     // 🔥 MONGO HISTÓRICO
    
     history.push({
