@@ -1151,6 +1151,7 @@ function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
   const lower = fullText.toLowerCase();
+   const { _id, ...safeCurrentLead } = currentLead || {};
 
   // CPF com ou sem pontuação
 const cpfMatch = fullText.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
@@ -1235,7 +1236,17 @@ if (phoneCandidates?.length) {
       data.cidadeEstado = value;
     }
   }
+// Cidade/UF escrita com espaço: "Duartina sp", "São Paulo SP"
+const cidadeUfSpaceMatch = fullText.match(
+  /^\s*([A-Za-zÀ-ÿ\s]{3,})\s+(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\s*$/i
+);
 
+if (cidadeUfSpaceMatch) {
+  data.cidade = cidadeUfSpaceMatch[1].trim();
+  data.estado = normalizeUF(cidadeUfSpaceMatch[2]);
+  data.cidadeEstado = `${data.cidade}/${data.estado}`;
+}
+   
   // Cidade/UF no meio do texto: "Curitiba PR", "São Paulo/SP"
   const cidadeUfMatch = fullText.match(
   /(?:moro em|sou de|resido em|cidade\s*[:\-]?\s*)?\s*([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i
@@ -1278,7 +1289,16 @@ if (cidadeUfMatch) {
       }
     }
   }
+// Se o texto parece cidade + UF, não deixa cair como nome solto
+const looksLikeCidadeUf =
+  /^\s*[A-Za-zÀ-ÿ\s]{3,}\s+(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\s*$/i.test(fullText);
 
+if (looksLikeCidadeUf && data.cidade && data.estado) {
+  return {
+    ...safeCurrentLead,
+    ...data
+  };
+}
    // Nome solto (liberado durante coleta de dados)
 if (!data.nome) {
   const isDataContext =
@@ -1352,8 +1372,6 @@ if (!data.nome) {
   if (data.cidade && data.estado) {
     data.cidadeEstado = `${data.cidade}/${data.estado}`;
   }
-
- const { _id, ...safeCurrentLead } = currentLead || {};
 
 return {
   ...safeCurrentLead,
@@ -1606,15 +1624,15 @@ function getMissingFieldQuestion(field) {
       "Me passa seu número com DDD, por favor."
     ],
     cidade: [
-      "Qual cidade você mora?",
-      "Pode me informar sua cidade?",
-      "Só falta sua cidade para continuar."
-    ],
-    estado: [
-      "E o seu estado? Pode ser a sigla (SP, RS, etc).",
-      "Qual é o seu estado (UF)?",
-      "Me passa seu estado, por favor."
-    ]
+  "Qual sua cidade e estado? Pode mandar assim: Duartina SP.",
+  "Pode me informar sua cidade e estado? Exemplo: Bauru SP.",
+  "Só falta sua cidade e estado para continuar."
+],
+estado: [
+  "Qual sua cidade e estado? Pode mandar assim: Duartina SP.",
+  "Pode me informar sua cidade e estado? Exemplo: Bauru SP.",
+  "Só falta sua cidade e estado para continuar."
+]
   };
 
   const options = variations[field] || ["Preciso de uma informação para continuar."];
@@ -1637,8 +1655,8 @@ function buildPartialLeadDataMessage(data = {}, missingFields = []) {
     nome: "Só ficou faltando seu nome completo.",
     cpf: "Só ficou faltando seu CPF.",
     telefone: "Só ficou faltando seu telefone com DDD.",
-    cidade: "Só ficou faltando sua cidade.",
-    estado: "Só ficou faltando seu estado (UF)."
+    cidade: "Só ficou faltando sua cidade e estado. Pode mandar assim: Duartina SP.",
+estado: "Só ficou faltando sua cidade e estado. Pode mandar assim: Duartina SP."
   };
 
   const question = questionMap[nextField] || "Só ficou faltando uma informação.";
@@ -1947,12 +1965,18 @@ const isDataCollectionContext =
   currentLead?.dadosConfirmadosPeloLead === true ||
   /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(text);
 
+const isConfirmationContext =
+  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
 const textForExtraction =
   currentLead?.faseQualificacao === "corrigir_dado"
     ? text
-    : isDataCollectionContext
-      ? `${historyText}\n${text}`
-      : text;
+    : isConfirmationContext
+      ? text
+      : isDataCollectionContext
+        ? `${historyText}\n${text}`
+        : text;
 
 const rawExtracted = extractLeadData(
   textForExtraction,
@@ -2043,9 +2067,13 @@ const pendingExtractedData = Object.fromEntries(
 
      const pendingFields = Object.keys(pendingExtractedData);
 
+const isOnlyConfirmationText =
+  isPositiveConfirmation(text) || isNegativeConfirmation(text);
+
 if (
   pendingFields.length > 0 &&
-  !currentLead?.aguardandoConfirmacaoCampo
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !isOnlyConfirmationText
 ) {
   const field = pendingFields[0];
   const value = pendingExtractedData[field];
@@ -2144,6 +2172,7 @@ const remainingPendingData = Object.fromEntries(
 
 const nextPendingField = Object.keys(remainingPendingData)[0];
 
+     let msg = "";
 if (nextPendingField) {
   await saveLeadProfile(from, {
     [campo]: valor,
@@ -2162,7 +2191,7 @@ if (nextPendingField) {
     estado: "estado"
   };
 
-  const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅
+  msg = `Perfeito, ${labels[campo] || campo} confirmado ✅
 
 Também identifiquei seu ${labels[nextPendingField] || nextPendingField} como: ${remainingPendingData[nextPendingField]}
 
@@ -2194,7 +2223,7 @@ Está correto?`;
     estado: "estado"
   };
 
-  let msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+ msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
 
   if (missingFields.length > 0) {
     const nextField = missingFields[0];
@@ -2241,7 +2270,17 @@ Está correto?`;
     return res.sendStatus(200);
   }
 
-  const msg = "Só para confirmar: esse dado está correto? Pode responder sim ou não.";
+  const labels = {
+  nome: "nome",
+  cpf: "CPF",
+  telefone: "telefone",
+  cidade: "cidade",
+  estado: "estado"
+};
+
+const msg = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?
+
+Pode responder sim ou não.`;
 
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
