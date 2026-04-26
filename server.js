@@ -1020,16 +1020,27 @@ const respostaLower = resposta.toLowerCase();
 const textLower = text.toLowerCase();
 
 const leadAutorizouEnvio =
+  textLower === "ok" ||
+  textLower === "ok." ||
   textLower === "sim" ||
   textLower === "sim." ||
+  textLower === "certo" ||
+  textLower === "certo." ||
+  textLower === "pode" ||
+  textLower === "pode." ||
   textLower.includes("pode") ||
   textLower.includes("quero") ||
   textLower.includes("manda") ||
-  textLower.includes("envia");
+  textLower.includes("mande") ||
+  textLower.includes("envia") ||
+  textLower.includes("enviar");
 
 const iaFalouDeFolder =
   respostaLower.includes("folder") ||
-  respostaLower.includes("material explicativo");
+  respostaLower.includes("material explicativo") ||
+  respostaLower.includes("vou te enviar") ||
+  respostaLower.includes("vou enviar") ||
+  respostaLower.includes("te envio");
 
 if (!fileKey && leadAutorizouEnvio && iaFalouDeFolder) {
   fileKey = "folder";
