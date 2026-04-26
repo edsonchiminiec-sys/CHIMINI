@@ -2204,6 +2204,59 @@ if (
 
   return res.sendStatus(200);
 }
+
+     if (
+  currentLead?.faseQualificacao === "aguardando_valor_correcao_final" &&
+  currentLead?.campoPendente
+) {
+  const campo = currentLead.campoPendente;
+
+  let valorCorrigido = text.trim();
+
+  if (campo === "cpf") {
+    valorCorrigido = formatCPF(valorCorrigido);
+  }
+
+  if (campo === "telefone") {
+    valorCorrigido = formatPhone(valorCorrigido);
+  }
+
+  if (campo === "estado") {
+    valorCorrigido = normalizeUF(valorCorrigido);
+  }
+
+  const dadosAtualizados = {
+    ...(currentLead || {}),
+    [campo]: valorCorrigido
+  };
+
+  if (dadosAtualizados.cidade && dadosAtualizados.estado) {
+    dadosAtualizados.cidadeEstado = `${dadosAtualizados.cidade}/${normalizeUF(dadosAtualizados.estado)}`;
+  }
+
+  await saveLeadProfile(from, {
+    ...dadosAtualizados,
+    campoPendente: null,
+    valorPendente: null,
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: true,
+    dadosConfirmadosPeloLead: false,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "aguardando_confirmacao_dados"
+  });
+
+  const msg = buildLeadConfirmationMessage(dadosAtualizados);
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+     
 const isOnlyConfirmationText =
   isPositiveConfirmation(text) || isNegativeConfirmation(text);
 
@@ -2878,6 +2931,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
        "aguardando_confirmacao_campo",
 "corrigir_dado",
        "corrigir_dado_final",
+       "aguardando_valor_correcao_final",
 ];
 
     const { user, status } = req.params;
