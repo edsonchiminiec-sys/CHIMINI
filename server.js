@@ -974,12 +974,6 @@ await saveLeadProfile(from, {
   ...extractedData
 });
 
-await saveLeadProfile(from, {
-  telefoneWhatsApp: from,
-  ultimaMensagem: text,
-  ...extractedData
-});
-
     // 🔥 MONGO HISTÓRICO
     let history = await loadConversation(from);
 
