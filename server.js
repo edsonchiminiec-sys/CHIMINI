@@ -1691,6 +1691,19 @@ let history = await loadConversation(from);
 
 const currentLead = await loadLeadProfile(from);
 const extractedData = extractLeadData(text, currentLead || {});
+    
+     const validation = validateLeadData(extractedData);
+
+if (!validation.isValid) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: false,
+faseQualificacao: "erro_dados",
+status: "erro_dados",
+errosValidacao: validation.errors
+  });
+       
      const changedConfirmedData =
   currentLead?.dadosConfirmadosPeloLead === true &&
   REQUIRED_LEAD_FIELDS.some(field =>
@@ -1720,17 +1733,6 @@ await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id)
 
   return res.sendStatus(200);
 }
-const validation = validateLeadData(extractedData);
-
-if (!validation.isValid) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: false,
-faseQualificacao: "erro_dados",
-status: "erro_dados",
-errosValidacao: validation.errors
-  });
 
   const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
 
