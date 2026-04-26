@@ -1374,6 +1374,20 @@ function getMissingFieldQuestion(field) {
   return questions[field] || "Perfeito. Pode me enviar o dado que ficou faltando?";
 }
 
+function canSendLeadToCRM(lead = {}) {
+  return (
+    lead.dadosConfirmadosPeloLead === true &&
+    lead.faseQualificacao === "dados_confirmados" &&
+    lead.status === "dados_confirmados" &&
+    lead.crmEnviado !== true &&
+    lead.nome &&
+    lead.cpf &&
+    lead.telefone &&
+    lead.cidade &&
+    lead.estado
+  );
+}
+
 function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
 
@@ -1671,8 +1685,9 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
     dadosConfirmadosPeloLead: true,
     aguardandoConfirmacao: false,
-    faseQualificacao: "dados_confirmados",
-status: "dados_confirmados"
+    faseQualificacao: "qualificado",
+status: "dados_confirmados",
+qualificadoEm: new Date()
   });
 
   await sendWhatsAppMessage(
