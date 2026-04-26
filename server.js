@@ -2103,6 +2103,21 @@ let history = await loadConversation(from);
 
 const currentLead = await loadLeadProfile(from);
 
+     if (!currentLead) {
+  await saveLeadProfile(from, {
+    user: from,
+    telefoneWhatsApp: from,
+    ultimaMensagem: text,
+    faseQualificacao: "inicio",
+    status: "novo"
+  });
+} else {
+  await saveLeadProfile(from, {
+    ultimaMensagem: text,
+    telefoneWhatsApp: from
+  });
+}
+     
 const historyText = history
   .filter(m => m.role === "user")
   .map(m => m.content || "")
@@ -2962,6 +2977,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
     if (!requireDashboardAuth(req, res)) return;
 
     const allowedStatus = [
+       "inicio",
   "novo",
   "morno",
   "qualificando",
@@ -3208,6 +3224,7 @@ app.get("/conversation/:user", async (req, res) => {
     const countByStatus = status => allLeads.filter(l => l.status === status).length;
 
     const total = allLeads.length;
+     const inicio = countByStatus("inicio");
     const novo = countByStatus("novo");
     const morno = countByStatus("morno");
     const qualificando = countByStatus("qualificando");
@@ -3484,6 +3501,7 @@ app.get("/conversation/:user", async (req, res) => {
         <div class="container">
 
           <div class="cards">
+          <div class="card"><small>Início</small><strong>${inicio}</strong></div>
             <div class="card"><small>Total</small><strong>${total}</strong></div>
             <div class="card"><small>Novo</small><strong>${novo}</strong></div>
             <div class="card"><small>Morno</small><strong>${morno}</strong></div>
