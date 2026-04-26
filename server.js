@@ -1936,9 +1936,9 @@ if (currentLead?.campoAtual) {
     // Se ainda tem próximo campo
     if (proximoCampo) {
       await saveLeadProfile(from, {
-        campoAtual: proximoCampo,
-        ...extractedData
-      });
+  ...extractedData,
+  campoAtual: proximoCampo
+});
 
       const perguntas = {
         nome: `Perfeito, ${extractedData.nome} anotado 👍`,
