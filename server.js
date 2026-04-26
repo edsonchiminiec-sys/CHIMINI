@@ -1377,7 +1377,7 @@ function getMissingFieldQuestion(field) {
 function canSendLeadToCRM(lead = {}) {
   return (
     lead.dadosConfirmadosPeloLead === true &&
-    lead.faseQualificacao === "dados_confirmados" &&
+    lead.faseQualificacao === "qualificado" &&
     lead.status === "dados_confirmados" &&
     lead.crmEnviado !== true &&
     lead.nome &&
@@ -1756,6 +1756,29 @@ await saveLeadProfile(from, {
   ...extractedData,
   ...(leadStatus && !extractedData.faseQualificacao && { status: leadStatus })
 });
+     const updatedLead = await loadLeadProfile(from);
+
+if (canSendLeadToCRM(updatedLead)) {
+  try {
+    // 🔥 AQUI você vai integrar com seu CRM real depois
+    console.log("🚀 Enviando lead para CRM:", updatedLead);
+
+    await saveLeadProfile(from, {
+      crmEnviado: true,
+      crmEnviadoEm: new Date(),
+      faseQualificacao: "enviado_crm",
+      status: "qualificado"
+    });
+
+  } catch (error) {
+    console.error("❌ Erro ao enviar para CRM:", error);
+
+    await saveLeadProfile(from, {
+      faseQualificacao: "erro_envio_crm",
+      status: "erro_envio_crm"
+    });
+  }
+}
 
     // 🔥 MONGO HISTÓRICO
    
@@ -1891,6 +1914,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "dados_parciais",
   "aguardando_confirmacao_dados",
   "dados_confirmados",
+       "qualificado",
   "pre_analise",
   "quente",
   "em_atendimento",
@@ -2155,6 +2179,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
 .dados_confirmados { background: #dcfce7; color: #166534; }
 .erro_dados { background: #fee2e2; color: #991b1b; }
 .erro_envio_crm { background: #fee2e2; color: #991b1b; }
+.qualificado { background: #dcfce7; color: #166534; }
 
           .actions {
             display: flex;
@@ -2273,6 +2298,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
 <option value="dados_confirmados" ${statusFilter === "dados_confirmados" ? "selected" : ""}>Dados confirmados</option>
 <option value="erro_dados" ${statusFilter === "erro_dados" ? "selected" : ""}>Erro nos dados</option>
 <option value="erro_envio_crm" ${statusFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
+<option value="qualificado" ${statusFilter === "qualificado" ? "selected" : ""}>Qualificado</option>
             </select>
 
             <button type="submit">Filtrar</button>
