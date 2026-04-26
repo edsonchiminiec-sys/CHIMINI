@@ -1279,14 +1279,38 @@ if (cidadeUfMatch) {
     }
   }
 
-   // Nome solto, exemplo: "Edson Chimini"
+   // Nome solto (liberado durante coleta de dados)
 if (!data.nome) {
+  const isDataContext =
+    currentLead?.faseQualificacao === "coletando_dados" ||
+    currentLead?.faseQualificacao === "dados_parciais" ||
+    currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+    currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
   const hasNameContext =
     /\bnome\b/i.test(fullText) ||
     /\bmeu nome é\b/i.test(fullText) ||
     /\bme chamo\b/i.test(fullText) ||
     /\bsou o\b/i.test(fullText) ||
     /\bsou a\b/i.test(fullText);
+
+  if (hasNameContext || isDataContext) {
+    let textWithoutNoise = fullText
+      .replace(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, " ")
+      .replace(/\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?\d[\d\s.-]{7,}\b/g, " ")
+      .replace(/\b(oi|olá|ola|bom dia|boa tarde|boa noite|cpf|telefone|celular|whatsapp|cidade|estado|uf|sim|ok|pode|certo|entendi|legal)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const possibleName = textWithoutNoise.match(
+      /\b[A-Za-zÀ-ÿ]{2,}\s+[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,})?\b/
+    );
+
+    if (possibleName) {
+      data.nome = possibleName[0].trim();
+    }
+  }
+}
 
   if (hasNameContext) {
     let textWithoutNumbers = fullText
@@ -2414,6 +2438,23 @@ if (
 
 const { cleanReply, actions } = extractActions(rawResposta);
 const resposta = cleanReply || "Olá 😊";
+     const respostaLower = resposta.toLowerCase();
+
+const startedDataCollection =
+  respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
+  respostaLower.includes("pode me enviar seu nome completo") ||
+  respostaLower.includes("vamos seguir com a pré-análise") ||
+  respostaLower.includes("seguir com a pré-análise aos poucos");
+
+if (
+  startedDataCollection &&
+  currentLead?.faseQualificacao !== "coletando_dados"
+) {
+  await saveLeadProfile(from, {
+    faseQualificacao: "coletando_dados",
+    status: "coletando_dados"
+  });
+}
 
 await delay(humanDelay(resposta));
 await sendWhatsAppMessage(from, resposta);
