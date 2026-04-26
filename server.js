@@ -2137,32 +2137,7 @@ await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
   return res.sendStatus(200);
 }
 
-      // 🔥 FLUXO UM DADO POR VEZ
-if (!currentLead?.campoAtual) {
-  await saveLeadProfile(from, {
-    campoAtual: "nome",
-    faseQualificacao: "coletando_dados",
-    status: "coletando_dados"
-  });
-
-  const msg = "Perfeito, vamos começar. Pode me informar seu nome completo?";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
-
-await saveLeadProfile(from, {
-  telefoneWhatsApp: from,
-  ultimaMensagem: text,
-  ...extractedData,
-  ...(leadStatus && !extractedData.faseQualificacao && { status: leadStatus })
-});
+    
      
     // 🔥 MONGO HISTÓRICO
    
