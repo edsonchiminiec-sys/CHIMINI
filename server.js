@@ -1011,9 +1011,30 @@ await saveLeadProfile(from, {
 
     await saveConversation(from, history);
 
-// 🔥 REMOVIDO envio automático de folder
+// 🔥 Envio inteligente de arquivos
+let fileKey = detectRequestedFile(text);
 
-const fileKey = detectRequestedFile(text);
+// Se o lead respondeu "sim/pode/quero" e a IA acabou de falar em folder/material,
+// o sistema envia o folder automaticamente.
+const respostaLower = resposta.toLowerCase();
+const textLower = text.toLowerCase();
+
+const leadAutorizouEnvio =
+  textLower === "sim" ||
+  textLower === "sim." ||
+  textLower.includes("pode") ||
+  textLower.includes("quero") ||
+  textLower.includes("manda") ||
+  textLower.includes("envia");
+
+const iaFalouDeFolder =
+  respostaLower.includes("folder") ||
+  respostaLower.includes("material explicativo");
+
+if (!fileKey && leadAutorizouEnvio && iaFalouDeFolder) {
+  fileKey = "folder";
+}
+
 if (fileKey) {
   await sendFileOnce(from, fileKey);
 }
