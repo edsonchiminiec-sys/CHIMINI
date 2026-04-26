@@ -1440,29 +1440,167 @@ app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
 });
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function splitCidadeEstado(cidadeEstado = "") {
+  const parts = String(cidadeEstado).split("/");
+  return {
+    cidade: parts[0]?.trim() || "-",
+    estado: parts[1]?.trim() || "-"
+  };
+}
+
+function formatDate(date) {
+  if (!date) return "-";
+  return new Date(date).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo"
+  });
+}
+
+function requireDashboardAuth(req, res) {
+  const password = process.env.DASHBOARD_PASSWORD;
+
+  if (!password) return true;
+
+  if (req.query.senha === password) return true;
+
+  res.status(401).send(`
+    <h2>Acesso restrito</h2>
+    <p>Use: /dashboard?senha=SUA_SENHA</p>
+  `);
+
+  return false;
+}
+
+app.get("/lead/:user/status/:status", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    const allowedStatus = [
+      "novo",
+      "morno",
+      "qualificando",
+      "pre_analise",
+      "quente",
+      "em_atendimento",
+      "fechado",
+      "perdido"
+    ];
+
+    const { user, status } = req.params;
+
+    if (!allowedStatus.includes(status)) {
+      return res.status(400).send("Status inválido");
+    }
+
+    await updateLeadStatus(user, status);
+
+    const senha = req.query.senha ? `?senha=${req.query.senha}` : "";
+    return res.redirect(`/dashboard${senha}`);
+  } catch (error) {
+    console.error("Erro ao atualizar status:", error);
+    return res.status(500).send("Erro ao atualizar status.");
+  }
+});
+
    app.get("/dashboard", async (req, res) => {
   try {
+    if (!requireDashboardAuth(req, res)) return;
+
     await connectMongo();
+
+    const statusFilter = req.query.status || "";
+    const search = req.query.q || "";
+    const sort = req.query.sort || "updatedAt";
+    const dir = req.query.dir === "asc" ? 1 : -1;
+
+    const query = {};
+
+    if (statusFilter) {
+      query.status = statusFilter;
+    }
+
+    if (search) {
+      query.$or = [
+        { user: { $regex: search, $options: "i" } },
+        { telefoneWhatsApp: { $regex: search, $options: "i" } },
+        { nome: { $regex: search, $options: "i" } },
+        { cidadeEstado: { $regex: search, $options: "i" } },
+        { ultimaMensagem: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    const sortMap = {
+      status: "status",
+      nome: "nome",
+      telefone: "telefoneWhatsApp",
+      cidade: "cidadeEstado",
+      updatedAt: "updatedAt"
+    };
+
+    const sortField = sortMap[sort] || "updatedAt";
 
     const leads = await db
       .collection("leads")
-      .find({})
-      .sort({ updatedAt: -1 })
-      .limit(100)
+      .find(query)
+      .sort({ [sortField]: dir })
+      .limit(300)
       .toArray();
+
+    const allLeads = await db.collection("leads").find({}).toArray();
+
+    const countByStatus = status => allLeads.filter(l => l.status === status).length;
+
+    const total = allLeads.length;
+    const novo = countByStatus("novo");
+    const morno = countByStatus("morno");
+    const qualificando = countByStatus("qualificando");
+    const preAnalise = countByStatus("pre_analise");
+    const quente = countByStatus("quente");
+    const atendimento = countByStatus("em_atendimento");
+    const fechado = countByStatus("fechado");
+    const perdido = countByStatus("perdido");
+
+    const senhaParam = req.query.senha ? `&senha=${encodeURIComponent(req.query.senha)}` : "";
+    const senhaQuery = req.query.senha ? `?senha=${encodeURIComponent(req.query.senha)}` : "";
+
+    const makeSortLink = (field, label) => {
+      const nextDir = sort === field && req.query.dir !== "asc" ? "asc" : "desc";
+      return `/dashboard?sort=${field}&dir=${nextDir}${statusFilter ? `&status=${statusFilter}` : ""}${search ? `&q=${encodeURIComponent(search)}` : ""}${senhaParam}`;
+    };
 
     const rows = leads.map(lead => {
       const phone = lead.telefoneWhatsApp || lead.user || "";
-      const link = phone ? `https://wa.me/${phone}` : "#";
+      const waLink = phone ? `https://wa.me/${phone}` : "#";
+      const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
+
+      const status = lead.status || "novo";
+      const user = encodeURIComponent(lead.user || phone);
+
+      const baseStatusLink = `/lead/${user}/status`;
 
       return `
         <tr>
-          <td>${lead.status || "-"}</td>
-          <td>${phone}</td>
-          <td>${lead.nome || "-"}</td>
-          <td>${lead.cidadeEstado || "-"}</td>
-          <td>${lead.ultimaMensagem || "-"}</td>
-          <td><a href="${link}" target="_blank">Abrir WhatsApp</a></td>
+          <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
+          <td>${escapeHtml(lead.nome || "-")}</td>
+          <td>${escapeHtml(phone)}</td>
+          <td>${escapeHtml(cidade)}</td>
+          <td>${escapeHtml(estado)}</td>
+          <td class="msg">${escapeHtml(lead.ultimaMensagem || "-")}</td>
+          <td>${formatDate(lead.updatedAt)}</td>
+          <td class="actions">
+            <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
+            <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
+            <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
+            <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
+          </td>
         </tr>
       `;
     }).join("");
@@ -1472,58 +1610,281 @@ app.get("/", (req, res) => {
       <html lang="pt-BR">
       <head>
         <meta charset="UTF-8" />
-        <title>Dashboard IQG</title>
+        <title>CRM IQG</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
         <style>
+          * { box-sizing: border-box; }
+
           body {
+            margin: 0;
             font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            padding: 30px;
+            background: #f3f4f6;
+            color: #111827;
           }
-          h1 {
-            color: #222;
+
+          header {
+            background: #111827;
+            color: white;
+            padding: 22px 30px;
           }
+
+          header h1 {
+            margin: 0;
+            font-size: 26px;
+          }
+
+          header p {
+            margin: 6px 0 0;
+            color: #d1d5db;
+          }
+
+          .container {
+            padding: 24px;
+          }
+
+          .cards {
+            display: grid;
+            grid-template-columns: repeat(8, minmax(120px, 1fr));
+            gap: 12px;
+            margin-bottom: 22px;
+          }
+
+          .card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+          }
+
+          .card small {
+            color: #6b7280;
+            display: block;
+            margin-bottom: 8px;
+          }
+
+          .card strong {
+            font-size: 24px;
+          }
+
+          .toolbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+            background: white;
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+          }
+
+          input, select, button {
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+          }
+
+          button {
+            background: #111827;
+            color: white;
+            cursor: pointer;
+          }
+
           table {
             width: 100%;
             border-collapse: collapse;
             background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
           }
+
           th, td {
-            padding: 12px;
-            border-bottom: 1px solid #ddd;
+            padding: 13px;
+            border-bottom: 1px solid #e5e7eb;
             text-align: left;
             vertical-align: top;
+            font-size: 14px;
           }
+
           th {
-            background: #111;
+            background: #111827;
             color: white;
+            white-space: nowrap;
           }
+
+          th a {
+            color: white;
+            text-decoration: none;
+          }
+
           tr:hover {
-            background: #f0f0f0;
+            background: #f9fafb;
           }
-          a {
-            color: #0a7cff;
+
+          .msg {
+            max-width: 320px;
+          }
+
+          .badge {
+            padding: 6px 10px;
+            border-radius: 999px;
             font-weight: bold;
+            font-size: 12px;
+            display: inline-block;
+            white-space: nowrap;
+          }
+
+          .novo { background: #e5e7eb; color: #374151; }
+          .morno { background: #fef3c7; color: #92400e; }
+          .qualificando { background: #dbeafe; color: #1d4ed8; }
+          .pre_analise { background: #ede9fe; color: #6d28d9; }
+          .quente { background: #dcfce7; color: #166534; }
+          .em_atendimento { background: #ffedd5; color: #c2410c; }
+          .fechado { background: #bbf7d0; color: #14532d; }
+          .perdido { background: #fee2e2; color: #991b1b; }
+
+          .actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+          }
+
+          .btn {
+            display: inline-block;
+            padding: 7px 9px;
+            border-radius: 7px;
+            background: #374151;
+            color: white;
+            text-decoration: none;
+            font-size: 12px;
+          }
+
+          .btn.whatsapp { background: #16a34a; }
+          .btn.success { background: #15803d; }
+          .btn.danger { background: #dc2626; }
+
+          .print-info {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 12px;
+          }
+
+          @media print {
+            .toolbar, .actions, button {
+              display: none !important;
+            }
+
+            body {
+              background: white;
+            }
+
+            header {
+              background: white;
+              color: black;
+              padding: 0 0 20px;
+            }
+
+            table {
+              box-shadow: none;
+            }
+          }
+
+          @media (max-width: 900px) {
+            .cards {
+              grid-template-columns: repeat(2, 1fr);
+            }
+
+            table {
+              font-size: 12px;
+            }
+
+            th, td {
+              padding: 8px;
+            }
           }
         </style>
-      </head>
-      <body>
-        <h1>Dashboard de Leads IQG</h1>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Telefone</th>
-              <th>Nome</th>
-              <th>Cidade/Estado</th>
-              <th>Última mensagem</th>
-              <th>Ação</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="6">Nenhum lead encontrado.</td></tr>`}
-          </tbody>
-        </table>
+        <script>
+          setInterval(() => {
+            window.location.reload();
+          }, 30000);
+
+          function printCRM() {
+            window.print();
+          }
+        </script>
+      </head>
+
+      <body>
+        <header>
+          <h1>CRM IQG — Leads</h1>
+          <p>Atualização automática a cada 30 segundos</p>
+        </header>
+
+        <div class="container">
+
+          <div class="cards">
+            <div class="card"><small>Total</small><strong>${total}</strong></div>
+            <div class="card"><small>Novo</small><strong>${novo}</strong></div>
+            <div class="card"><small>Morno</small><strong>${morno}</strong></div>
+            <div class="card"><small>Qualificando</small><strong>${qualificando}</strong></div>
+            <div class="card"><small>Pré-análise</small><strong>${preAnalise}</strong></div>
+            <div class="card"><small>Quente</small><strong>${quente}</strong></div>
+            <div class="card"><small>Atendimento</small><strong>${atendimento}</strong></div>
+            <div class="card"><small>Fechado</small><strong>${fechado}</strong></div>
+          </div>
+
+          <form class="toolbar" method="GET" action="/dashboard">
+            ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}" />` : ""}
+
+            <input
+              type="text"
+              name="q"
+              placeholder="Buscar por nome, telefone, cidade ou mensagem"
+              value="${escapeHtml(search)}"
+              style="min-width: 320px;"
+            />
+
+            <select name="status">
+              <option value="">Todos os status</option>
+              <option value="novo" ${statusFilter === "novo" ? "selected" : ""}>Novo</option>
+              <option value="morno" ${statusFilter === "morno" ? "selected" : ""}>Morno</option>
+              <option value="qualificando" ${statusFilter === "qualificando" ? "selected" : ""}>Qualificando</option>
+              <option value="pre_analise" ${statusFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
+              <option value="quente" ${statusFilter === "quente" ? "selected" : ""}>Quente</option>
+              <option value="em_atendimento" ${statusFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
+              <option value="fechado" ${statusFilter === "fechado" ? "selected" : ""}>Fechado</option>
+              <option value="perdido" ${statusFilter === "perdido" ? "selected" : ""}>Perdido</option>
+            </select>
+
+            <button type="submit">Filtrar</button>
+            <button type="button" onclick="printCRM()">Imprimir</button>
+          </form>
+
+          <div class="print-info">
+            Exibindo ${leads.length} lead(s). Clique nos títulos das colunas para ordenar.
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th><a href="${makeSortLink("status", "Status")}">Status</a></th>
+                <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
+                <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
+                <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
+                <th>Estado</th>
+                <th>Última mensagem</th>
+                <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
+                <th>Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
       </body>
       </html>
     `);
