@@ -2165,12 +2165,6 @@ if (!currentLead) {
     telefoneWhatsApp: from
   });
 }
-     else {
-  await saveLeadProfile(from, {
-    ultimaMensagem: text,
-    telefoneWhatsApp: from
-  });
-}
      
 const historyText = history
   .filter(m => m.role === "user")
