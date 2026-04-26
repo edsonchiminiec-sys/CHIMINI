@@ -2976,16 +2976,30 @@ if (
 
 let respostaFinal = resposta;
      
+     // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
+if (
+  state.sentFiles.folder &&
+  /material|folder|te mandar|mandar o material|enviar o material|te enviar/i.test(respostaFinal)
+) {
+  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Fez sentido pra você ou quer que eu te explique os pontos principais?";
+}
+     
      const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  respostaFinal = "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+  respostaFinal = state.sentFiles.folder
+    ? "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nComo o material já está logo acima, posso te explicar os principais pontos por aqui. Quer que eu resuma?"
+    : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
 }
 
 // 🚨 BLOQUEIO DE COLETA PREMATURA
 if (startedDataCollection && !podeIniciarColeta) {
-  respostaFinal = "Antes de seguirmos, só quero te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+  const jaEnviouFolder = state.sentFiles?.folder === true;
+
+  respostaFinal = jaEnviouFolder
+    ? "Antes de seguirmos, só quero alinhar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nComo o material já está logo acima na conversa, posso te explicar os principais pontos por aqui. Quer que eu resuma de forma bem objetiva?"
+    : "Antes de seguirmos, só quero te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te enviar um material explicando melhor. Quer dar uma olhada?";
 }
      
 
