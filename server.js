@@ -2473,8 +2473,8 @@ if (multiDataRequestPattern.test(respostaFinal)) {
 await delay(humanDelay(respostaFinal));
 await sendWhatsAppMessage(from, respostaFinal);
 
-history.push({ role: "assistant", content: resposta });
-
+history.push({ role: "assistant", content: respostaFinal });
+     
 await saveConversation(from, history);
 
 // 🔥 Envio de arquivos por decisão da IA
