@@ -1282,10 +1282,11 @@ if (cidadeUfMatch) {
    // Nome solto (liberado durante coleta de dados)
 if (!data.nome) {
   const isDataContext =
-    currentLead?.faseQualificacao === "coletando_dados" ||
-    currentLead?.faseQualificacao === "dados_parciais" ||
-    currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
-    currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+  currentLead?.faseQualificacao === "coletando_dados" ||
+  currentLead?.faseQualificacao === "dados_parciais" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+  currentLead?.faseQualificacao === "corrigir_dado";
 
   const hasNameContext =
     /\bnome\b/i.test(fullText) ||
@@ -2170,8 +2171,15 @@ Está correto?`;
 
   await sendWhatsAppMessage(from, msg);
 } else {
+  const updatedLead = {
+    ...(currentLead || {}),
+    [campo]: valor
+  };
+
+  const missingFields = getMissingLeadFields(updatedLead);
+
   await saveLeadProfile(from, {
-    [campo]: valor,
+    ...updatedLead,
     campoPendente: null,
     valorPendente: null,
     aguardandoConfirmacaoCampo: false,
@@ -2187,7 +2195,12 @@ Está correto?`;
     estado: "estado"
   };
 
-  const msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+  let msg = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+
+  if (missingFields.length > 0) {
+    const nextField = missingFields[0];
+    msg += `\n\n${getMissingFieldQuestion(nextField)}`;
+  }
 
   await sendWhatsAppMessage(from, msg);
 }
