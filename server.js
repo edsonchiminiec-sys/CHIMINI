@@ -1823,16 +1823,17 @@ ${question}`;
 
 function canSendLeadToCRM(lead = {}) {
   return (
-    lead.dadosConfirmadosPeloLead === true &&
-    ["dados_confirmados", "qualificado"].includes(lead.faseQualificacao) &&
-lead.status === "quente" &&
-    lead.crmEnviado !== true &&
-    lead.nome &&
-    lead.cpf &&
-    lead.telefone &&
-    lead.cidade &&
-    lead.estado
-  );
+  lead.dadosConfirmadosPeloLead === true &&
+  ["dados_confirmados", "qualificado"].includes(lead.faseQualificacao) &&
+  lead.status === "quente" &&
+  lead.crmEnviado !== true &&
+  lead.nome &&
+  lead.cpf &&
+  lead.telefone &&
+  lead.cidade &&
+  lead.estado &&
+  lead.nomeLimpo
+);
 }
 
 function classifyLead(text = "", data = {}, history = []) {
