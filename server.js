@@ -76,11 +76,20 @@ async function saveConversation(user, messages) {
 async function saveLeadProfile(user, data = {}) {
   await connectMongo();
 
+  // 🔥 REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS
+  const {
+    _id,
+    createdAt,
+    ...safeData
+  } = data || {};
+
+  // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
   const insertData = {
     createdAt: new Date()
   };
 
-  if (!data.status) {
+  // 🔥 DEFINE STATUS INICIAL SE NÃO EXISTIR
+  if (!safeData.status) {
     insertData.status = "novo";
   }
 
@@ -89,7 +98,7 @@ async function saveLeadProfile(user, data = {}) {
     {
       $set: {
         user,
-        ...data,
+        ...safeData,
         updatedAt: new Date()
       },
       $setOnInsert: insertData
