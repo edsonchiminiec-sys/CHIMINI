@@ -1447,7 +1447,35 @@ if (!data.nome) {
     if (possibleName) {
   const nomeEncontrado = possibleName[0].trim();
 
-  if (nomeEncontrado.split(/\s+/).length >= 2) {
+  const blacklist = [
+    "nome limpo",
+    "tenho nome limpo",
+    "nao tenho nome limpo",
+    "não tenho nome limpo",
+    "tenho restricao",
+    "tenho restrição",
+    "nao tenho restricao",
+    "não tenho restrição"
+  ];
+
+  const nomeNormalizado = nomeEncontrado
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const isInvalidName = blacklist.some(term =>
+    nomeNormalizado.includes(
+      term
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+    )
+  );
+
+  if (
+    nomeEncontrado.split(/\s+/).length >= 2 &&
+    !isInvalidName
+  ) {
     data.nome = nomeEncontrado;
   }
 }
@@ -2025,7 +2053,10 @@ app.post("/webhook", async (req, res) => {
 
     const from = message.from;
 const state = getState(from);
-
+if (state.closed) {
+  return res.sendStatus(200);
+}
+     
 if (from === process.env.CONSULTANT_PHONE) {
   const toLead = message.to;
 
@@ -2664,6 +2695,8 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
 
   await sendWhatsAppMessage(from, confirmedMsg);
+   state.closed = true;
+clearTimers(from);
    await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
    
   if (messageId) {
