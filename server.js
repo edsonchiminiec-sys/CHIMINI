@@ -2261,40 +2261,7 @@ function normalizeLeadFieldValue(field, value = "") {
 
 let pendingExtractedData = Object.fromEntries(
   Object.entries(rawExtracted || {}).filter(([key, value]) => {
-    if (
-      value === null ||
-      value === undefined ||
-      value === "" ||
-      !REQUIRED_LEAD_FIELDS.includes(key)
-    ) {
-      return false;
-    }
-
-    const newValue = normalizeLeadFieldValue(key, value);
-    const savedValue = normalizeLeadFieldValue(key, currentLead?.[key]);
-
-    if (!newValue) {
-      return false;
-    }
-
-    // Não pergunta novamente dado que já foi salvo/confirmado
-    if (savedValue && newValue === savedValue) {
-      return false;
-    }
-
-    // Não repete pergunta sobre o mesmo campo pendente
-    if (
-      currentLead?.aguardandoConfirmacaoCampo &&
-      currentLead?.campoPendente === key &&
-      normalizeLeadFieldValue(key, currentLead?.valorPendente) === newValue
-    ) {
-      return false;
-    }
-
-    return true;
-  })
-);
-
+    
 // 🔥 NOVO BLOQUEIO — só aceita o campo esperado
 const campoEsperado = currentLead?.campoEsperado;
 
