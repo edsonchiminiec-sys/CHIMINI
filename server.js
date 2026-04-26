@@ -1280,6 +1280,12 @@ function isPositiveConfirmation(text = "") {
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+const VALID_UFS = [
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
+  "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
+  "RS", "RO", "RR", "SC", "SP", "SE", "TO"
+];
+
 function normalizeUF(value = "") {
   const text = String(value).trim().toUpperCase();
 
@@ -1324,8 +1330,10 @@ function normalizeUF(value = "") {
     "TOCANTINS": "TO"
   };
 
-  if (/^[A-Z]{2}$/.test(text)) return text;
-
+  if (/^[A-Z]{2}$/.test(text)) {
+  return VALID_UFS.includes(text) ? text : "";
+}
+   
   return estados[text] || text;
 }
 
@@ -1376,6 +1384,10 @@ function validateLeadData(data = {}) {
       errors.push("O telefone informado parece inválido, pois repete o mesmo número.");
     }
   }
+
+   if (data.estado && !VALID_UFS.includes(normalizeUF(data.estado))) {
+  errors.push("O estado informado parece inválido. Pode enviar a sigla correta, como SP, RJ ou MG?");
+}
 
   return {
     isValid: errors.length === 0,
