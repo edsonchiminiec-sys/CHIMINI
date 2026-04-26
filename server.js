@@ -1324,12 +1324,16 @@ if (!data.nome) {
       .trim();
 
     const possibleName = textWithoutNoise.match(
-      /\b[A-Za-zÀ-ÿ]{2,}\s+[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,})?\b/
-    );
+  /\b[A-Za-zÀ-ÿ]{2,}(?:\s+[A-Za-zÀ-ÿ]{2,})+\b/
+);
 
     if (possibleName) {
-      data.nome = possibleName[0].trim();
-    }
+  const nomeEncontrado = possibleName[0].trim();
+
+  if (nomeEncontrado.split(/\s+/).length >= 2) {
+    data.nome = nomeEncontrado;
+  }
+}
   }
 }
 
@@ -1969,15 +1973,7 @@ const isConfirmationContext =
   currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
   currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
-const textForExtraction =
-  currentLead?.faseQualificacao === "corrigir_dado"
-    ? text
-    : isConfirmationContext
-      ? text
-      : isDataCollectionContext
-        ? `${historyText}\n${text}`
-        : text;
-
+const textForExtraction = text;
 const rawExtracted = extractLeadData(
   textForExtraction,
   currentLead || {}
@@ -1986,9 +1982,10 @@ const rawExtracted = extractLeadData(
 // 🔥 NÃO SOBRESCREVE COM NULL
      
 const extractedData = {
-  ...(currentLead || {})
+  ...(currentLead || {}),
+  ...(rawExtracted || {})
 };
-
+     
 function normalizeLeadFieldValue(field, value = "") {
   if (value === null || value === undefined) return "";
 
@@ -2078,13 +2075,23 @@ if (
   const field = pendingFields[0];
   const value = pendingExtractedData[field];
 
-  await saveLeadProfile(from, {
-    campoPendente: field,
-    valorPendente: value,
-    aguardandoConfirmacaoCampo: true,
-    faseQualificacao: "aguardando_confirmacao_campo",
-    status: "aguardando_confirmacao_campo"
-  });
+  const dadosPendentesParaSalvar = {
+  campoPendente: field,
+  valorPendente: value,
+  aguardandoConfirmacaoCampo: true,
+  faseQualificacao: "aguardando_confirmacao_campo",
+  status: "aguardando_confirmacao_campo"
+};
+
+if (field === "cidade" && rawExtracted?.estado) {
+  dadosPendentesParaSalvar.estadoPendente = rawExtracted.estado;
+}
+
+if (field === "estado" && rawExtracted?.cidade) {
+  dadosPendentesParaSalvar.cidadePendente = rawExtracted.cidade;
+}
+
+await saveLeadProfile(from, dadosPendentesParaSalvar);
 
   const labels = {
     nome: "nome",
@@ -2094,10 +2101,23 @@ if (
     estado: "estado"
   };
 
-  const msg = `Identifiquei seu ${labels[field] || field} como: ${value}
+  let valorParaMostrar = value;
+let labelParaMostrar = labels[field] || field;
+
+if (field === "cidade" && rawExtracted?.estado) {
+  valorParaMostrar = `${value}/${rawExtracted.estado}`;
+  labelParaMostrar = "cidade/estado";
+}
+
+if (field === "estado" && rawExtracted?.cidade) {
+  valorParaMostrar = `${rawExtracted.cidade}/${value}`;
+  labelParaMostrar = "cidade/estado";
+}
+
+const msg = `Identifiquei seu ${labelParaMostrar} como: ${valorParaMostrar}
 
 Está correto?`;
-
+   
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
@@ -2144,9 +2164,21 @@ Pode me enviar novamente?`;
       return res.sendStatus(200);
     }
 
-    const updatedLeadAfterField = {
-  ...(currentLead || {}),
+    const dadosConfirmadosDoCampo = {
   [campo]: valor
+};
+
+if (campo === "cidade" && currentLead?.estadoPendente) {
+  dadosConfirmadosDoCampo.estado = currentLead.estadoPendente;
+}
+
+if (campo === "estado" && currentLead?.cidadePendente) {
+  dadosConfirmadosDoCampo.cidade = currentLead.cidadePendente;
+}
+
+const updatedLeadAfterField = {
+  ...(currentLead || {}),
+  ...dadosConfirmadosDoCampo
 };
 
 const remainingPendingData = Object.fromEntries(
@@ -2175,14 +2207,16 @@ const nextPendingField = Object.keys(remainingPendingData)[0];
 
 if (nextPendingField) {
   await saveLeadProfile(from, {
-    [campo]: valor,
-    campoPendente: nextPendingField,
-    valorPendente: remainingPendingData[nextPendingField],
-    aguardandoConfirmacaoCampo: true,
-    faseQualificacao: "aguardando_confirmacao_campo",
-    status: "aguardando_confirmacao_campo"
-  });
-
+  ...dadosConfirmadosDoCampo,
+  campoPendente: nextPendingField,
+  valorPendente: remainingPendingData[nextPendingField],
+  cidadePendente: null,
+  estadoPendente: null,
+  aguardandoConfirmacaoCampo: true,
+  faseQualificacao: "aguardando_confirmacao_campo",
+  status: "aguardando_confirmacao_campo"
+});
+   
   const labels = {
     nome: "nome",
     cpf: "CPF",
@@ -2207,14 +2241,16 @@ Está correto?`;
   const missingFields = getMissingLeadFields(updatedLead);
 
   await saveLeadProfile(from, {
-    ...updatedLead,
-    campoPendente: null,
-    valorPendente: null,
-    aguardandoConfirmacaoCampo: false,
-    faseQualificacao: "dados_parciais",
-    status: "dados_parciais"
-  });
-
+  ...updatedLead,
+  cidadePendente: null,
+  estadoPendente: null,
+  campoPendente: null,
+  valorPendente: null,
+  aguardandoConfirmacaoCampo: false,
+  faseQualificacao: "dados_parciais",
+  status: "dados_parciais"
+});
+   
   const labels = {
     nome: "nome",
     cpf: "CPF",
@@ -2225,10 +2261,26 @@ Está correto?`;
 
  respostaConfirmacaoCampo = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
 
-  if (missingFields.length > 0) {
-    const nextField = missingFields[0];
-    respostaConfirmacaoCampo += `\n\n${getMissingFieldQuestion(nextField)}`;
-  }
+ if (missingFields.length > 0) {
+  const nextField = missingFields[0];
+  respostaConfirmacaoCampo += `\n\n${getMissingFieldQuestion(nextField)}`;
+} else {
+  await saveLeadProfile(from, {
+    ...updatedLead,
+    cidadePendente: null,
+    estadoPendente: null,
+    campoPendente: null,
+    valorPendente: null,
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: true,
+    dadosConfirmadosPeloLead: false,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "aguardando_confirmacao_dados"
+  });
+
+  respostaConfirmacaoCampo += `\n\n${buildLeadConfirmationMessage(updatedLead)}`;
+}
+   
 
   await sendWhatsAppMessage(from, respostaConfirmacaoCampo);
 }
