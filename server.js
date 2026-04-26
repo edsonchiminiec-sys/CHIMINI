@@ -1062,8 +1062,136 @@ function extractLeadData(text = "") {
   return data;
 }
 
-function onlyDigits(value = "") {
-  return String(value).replace(/\D/g, "");
+function formatCPF(value = "") {
+  const digits = onlyDigits(value);
+
+  if (digits.length !== 11) return value;
+
+  return digits.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+}
+
+function isValidCPF(value = "") {
+  const cpf = onlyDigits(value);
+
+  if (cpf.length !== 11) return false;
+  if (isRepeatedDigits(cpf)) return false;
+
+  let sum = 0;
+
+  for (let i = 0; i < 9; i++) {
+    sum += Number(cpf[i]) * (10 - i);
+  }
+
+  let digit1 = 11 - (sum % 11);
+  if (digit1 >= 10) digit1 = 0;
+
+  if (digit1 !== Number(cpf[9])) return false;
+
+  sum = 0;
+
+  for (let i = 0; i < 10; i++) {
+    sum += Number(cpf[i]) * (11 - i);
+  }
+
+  let digit2 = 11 - (sum % 11);
+  if (digit2 >= 10) digit2 = 0;
+
+  return digit2 === Number(cpf[10]);
+}
+
+function formatPhone(value = "") {
+  const digits = onlyDigits(value);
+
+  if (digits.length === 11) {
+    return digits.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
+  }
+
+  if (digits.length === 10) {
+    return digits.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
+  }
+
+  return value;
+}
+
+function isValidPhone(value = "") {
+  const digits = onlyDigits(value);
+
+  if (digits.length < 10 || digits.length > 11) return false;
+  if (isRepeatedDigits(digits)) return false;
+
+  return true;
+}
+
+function isPositiveConfirmation(text = "") {
+  const t = text.toLowerCase().trim();
+
+  return [
+    "sim",
+    "s",
+    "isso",
+    "correto",
+    "certo",
+    "está certo",
+    "esta certo",
+    "tá certo",
+    "ta certo",
+    "pode seguir",
+    "pode",
+    "confirmo",
+    "confirmado",
+    "perfeito",
+    "ok",
+    "exato"
+  ].some(word => t === word || t.includes(word));
+}
+
+function normalizeUF(value = "") {
+  const text = String(value).trim().toUpperCase();
+
+  const estados = {
+    "ACRE": "AC",
+    "ALAGOAS": "AL",
+    "AMAPA": "AP",
+    "AMAPÁ": "AP",
+    "AMAZONAS": "AM",
+    "BAHIA": "BA",
+    "CEARA": "CE",
+    "CEARÁ": "CE",
+    "DISTRITO FEDERAL": "DF",
+    "ESPIRITO SANTO": "ES",
+    "ESPÍRITO SANTO": "ES",
+    "GOIAS": "GO",
+    "GOIÁS": "GO",
+    "MARANHAO": "MA",
+    "MARANHÃO": "MA",
+    "MATO GROSSO": "MT",
+    "MATO GROSSO DO SUL": "MS",
+    "MINAS GERAIS": "MG",
+    "PARA": "PA",
+    "PARÁ": "PA",
+    "PARAIBA": "PB",
+    "PARAÍBA": "PB",
+    "PARANA": "PR",
+    "PARANÁ": "PR",
+    "PERNAMBUCO": "PE",
+    "PIAUI": "PI",
+    "PIAUÍ": "PI",
+    "RIO DE JANEIRO": "RJ",
+    "RIO GRANDE DO NORTE": "RN",
+    "RIO GRANDE DO SUL": "RS",
+    "RONDONIA": "RO",
+    "RONDÔNIA": "RO",
+    "RORAIMA": "RR",
+    "SANTA CATARINA": "SC",
+    "SAO PAULO": "SP",
+    "SÃO PAULO": "SP",
+    "SERGIPE": "SE",
+    "TOCANTINS": "TO"
+  };
+
+  if (/^[A-Z]{2}$/.test(text)) return text;
+
+  return estados[text] || text;
 }
 
 function isRepeatedDigits(value = "") {
