@@ -1924,7 +1924,56 @@ const extractedData = {
     Object.entries(rawExtracted).filter(([_, v]) => v !== null && v !== undefined)
   )
 };
-    
+
+     // 🔥 AVANÇO AUTOMÁTICO DE ETAPAS
+const fluxoCampos = ["nome", "telefone", "cpf", "cidade", "estado"];
+
+if (currentLead?.campoAtual) {
+  const campoAtual = currentLead.campoAtual;
+
+  // Se o campo atual foi preenchido
+  if (extractedData[campoAtual]) {
+    const indexAtual = fluxoCampos.indexOf(campoAtual);
+    const proximoCampo = fluxoCampos[indexAtual + 1];
+
+    // Se ainda tem próximo campo
+    if (proximoCampo) {
+      await saveLeadProfile(from, {
+        campoAtual: proximoCampo,
+        ...extractedData
+      });
+
+      const perguntas = {
+        nome: `Perfeito, ${extractedData.nome} anotado 👍`,
+        telefone: `Ótimo, telefone anotado 👍`,
+        cpf: `CPF recebido 👍`,
+        cidade: `Cidade anotada 👍`,
+        estado: `Estado anotado 👍`
+      };
+
+      const perguntasProximo = {
+        telefone: "Agora me informe seu telefone com DDD.",
+        cpf: "Agora preciso do seu CPF.",
+        cidade: "Qual a sua cidade?",
+        estado: "E o seu estado (UF)?"
+      };
+
+      const resposta = `${perguntas[campoAtual] || ""}\n\n${perguntasProximo[proximoCampo]}`;
+
+      await sendWhatsAppMessage(from, resposta);
+      await saveHistoryStep(from, history, text, resposta, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+
+      return res.sendStatus(200);
+    }
+
+    // Se não tem próximo campo → vai cair na confirmação automática (correção 6)
+  }
+}
+     
      const validation = validateLeadData(extractedData);
 
 if (!validation.isValid) {
@@ -2058,6 +2107,26 @@ await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id)
   return res.sendStatus(200);
 }
 
+// 🔥 FLUXO UM DADO POR VEZ
+if (!currentLead?.campoAtual) {
+  await saveLeadProfile(from, {
+    campoAtual: "nome",
+    faseQualificacao: "coletando_dados",
+    status: "coletando_dados"
+  });
+
+  const msg = "Perfeito, vamos começar. Pode me informar seu nome completo?";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
+   
    if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
   await saveLeadProfile(from, {
     ...extractedData,
