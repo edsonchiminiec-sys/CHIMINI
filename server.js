@@ -610,7 +610,15 @@ async function sendWhatsAppMessage(to, body) {
     })
   });
 
-  async function notifyConsultant(lead) {
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao enviar mensagem WhatsApp:", data);
+    throw new Error("Falha ao enviar mensagem WhatsApp");
+  }
+}
+
+async function notifyConsultant(lead) {
   if (!process.env.CONSULTANT_PHONE) return;
 
   const leadPhone = lead.telefoneWhatsApp || lead.user;
@@ -629,7 +637,6 @@ ${whatsappLink}
 
   await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
 }
-
 async function sendWhatsAppDocument(to, file) {
   const fileResponse = await fetch(file.link);
 
