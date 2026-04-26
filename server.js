@@ -3196,7 +3196,8 @@ app.get("/conversation/:user", async (req, res) => {
 <td>${formatDate(lead.updatedAt)}</td>
 <td class="actions">
             <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
-            <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
+<a class="btn" href="/conversation/${user}${senhaQuery}">Mensagens</a>
+<a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
             <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
             <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
           </td>
