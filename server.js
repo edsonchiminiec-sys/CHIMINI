@@ -1756,6 +1756,7 @@ await saveLeadProfile(from, {
   ...extractedData,
   ...(leadStatus && !extractedData.faseQualificacao && { status: leadStatus })
 });
+     
      const updatedLead = await loadLeadProfile(from);
 
 if (canSendLeadToCRM(updatedLead)) {
