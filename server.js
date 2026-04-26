@@ -14,13 +14,29 @@ app.use(express.json());
 ========================= */
 
 async function connectMongo() {
-  if (!client.topology || !client.topology.isConnected()) {
-    await client.connect();
-    db = client.db("iqg");
-    console.log("🔥 Mongo reconectado");
+  try {
+    if (!db) {
+      await client.connect();
+      db = client.db("iqg");
+      console.log("🔥 Mongo conectado");
+      return;
+    }
+
+    await db.command({ ping: 1 });
+  } catch (error) {
+    console.error("⚠️ Mongo desconectado. Tentando reconectar...", error.message);
+
+    try {
+      await client.close().catch(() => {});
+      await client.connect();
+      db = client.db("iqg");
+      console.log("🔥 Mongo reconectado");
+    } catch (reconnectError) {
+      console.error("❌ Falha ao reconectar Mongo:", reconnectError);
+      throw reconnectError;
+    }
   }
 }
-
 async function updateLeadStatus(user, status) {
   await connectMongo();
 
