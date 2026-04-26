@@ -62,6 +62,14 @@ async function saveConversation(user, messages) {
 async function saveLeadProfile(user, data = {}) {
   await connectMongo();
 
+  const insertData = {
+    createdAt: new Date()
+  };
+
+  if (!data.status) {
+    insertData.status = "novo";
+  }
+
   await db.collection("leads").updateOne(
     { user },
     {
@@ -70,10 +78,7 @@ async function saveLeadProfile(user, data = {}) {
         ...data,
         updatedAt: new Date()
       },
-      $setOnInsert: {
-        createdAt: new Date(),
-        status: "novo"
-      }
+      $setOnInsert: insertData
     },
     { upsert: true }
   );
