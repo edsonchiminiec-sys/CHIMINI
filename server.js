@@ -2012,9 +2012,9 @@ if (changedConfirmedData) {
     faseQualificacao: "aguardando_confirmacao_dados",
     status: "aguardando_confirmacao_dados"
   });
-} 
+}
 
-  const confirmationMsg = buildLeadConfirmationMessage(extractedData);
+const leadStatus = classifyLead(text, extractedData, history);
 
   await sendWhatsAppMessage(from, confirmationMsg);
   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
