@@ -1964,7 +1964,15 @@ const isDataCollectionContext =
   /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(text);
 
 const rawExtracted = extractLeadData(
-  isDataCollectionContext ? `${historyText}\n${text}` : text,
+  const textForExtraction =
+  currentLead?.faseQualificacao === "corrigir_dado"
+    ? text
+    : isDataCollectionContext
+      ? `${historyText}\n${text}`
+      : text;
+
+const rawExtracted = extractLeadData(
+  textForExtraction,
   currentLead || {}
 );
 
