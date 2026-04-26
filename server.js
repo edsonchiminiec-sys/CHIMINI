@@ -59,6 +59,31 @@ async function saveConversation(user, messages) {
   );
 }
 
+async function saveLeadProfile(user, data = {}) {
+  await connectMongo();
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        user,
+        ...data,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date(),
+        status: "novo"
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function loadLeadProfile(user) {
+  await connectMongo();
+
+  return await db.collection("leads").findOne({ user });
+}
 /* =========================
    CONFIG
 ========================= */
@@ -652,6 +677,53 @@ function detectRequestedFile(text = "") {
   return null;
 }
 
+function classifyLead(text = "") {
+  const t = text.toLowerCase();
+
+  // 🔥 LEAD QUENTE
+  if (
+    t.includes("quero") ||
+    t.includes("tenho interesse") ||
+    t.includes("vamos") ||
+    t.includes("como começar") ||
+    t.includes("como faço") ||
+    t.includes("quero entrar") ||
+    t.includes("pode iniciar") ||
+    t.includes("bora") ||
+    t.includes("ok pode")
+  ) {
+    return "quente";
+  }
+
+  // 🟡 LEAD MORNO
+  if (
+    t.includes("quanto ganha") ||
+    t.includes("como funciona") ||
+    t.includes("me explica") ||
+    t.includes("valor") ||
+    t.includes("preço") ||
+    t.includes("investimento") ||
+    t.includes("interessante") ||
+    t.includes("vou pensar")
+  ) {
+    return "morno";
+  }
+
+  // 🔵 LEAD FRIO
+  if (
+    t.includes("não tenho interesse") ||
+    t.includes("nao tenho interesse") ||
+    t.includes("talvez depois") ||
+    t.includes("não é pra mim") ||
+    t.includes("nao é pra mim") ||
+    t.includes("sem interesse")
+  ) {
+    return "frio";
+  }
+
+  return null;
+}
+
 async function sendFileOnce(from, key) {
   const state = getState(from);
 
@@ -781,6 +853,21 @@ app.post("/webhook", async (req, res) => {
     }
 
     const text = message.text.body.trim();
+    const extractedData = extractLeadData(text);
+const leadStatus = classifyLead(text);
+
+await saveLeadProfile(from, {
+  telefoneWhatsApp: from,
+  ultimaMensagem: text,
+  ...(leadStatus && { status: leadStatus }),
+  ...extractedData
+});
+
+await saveLeadProfile(from, {
+  telefoneWhatsApp: from,
+  ultimaMensagem: text,
+  ...extractedData
+});
 
     // 🔥 MONGO HISTÓRICO
     let history = await loadConversation(from);
