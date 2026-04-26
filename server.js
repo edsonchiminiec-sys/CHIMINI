@@ -1545,8 +1545,8 @@ function getMissingFieldQuestion(field) {
 function canSendLeadToCRM(lead = {}) {
   return (
     lead.dadosConfirmadosPeloLead === true &&
-    lead.faseQualificacao === "qualificado" &&
-    lead.status === "dados_confirmados" &&
+    ["dados_confirmados", "qualificado"].includes(lead.faseQualificacao) &&
+lead.status === "quente" &&
     lead.crmEnviado !== true &&
     lead.nome &&
     lead.cpf &&
@@ -1634,7 +1634,7 @@ if (
   discussedRules &&
   hasCleanNameInfo
 ) {
-  return "quente";
+  return "pre_analise";
 }
 
   if (hasMinimumData) {
@@ -1888,8 +1888,8 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
     dadosConfirmadosPeloLead: true,
     aguardandoConfirmacao: false,
-    faseQualificacao: "qualificado",
-status: "dados_confirmados",
+    faseQualificacao: "dados_confirmados",
+status: "quente",
 qualificadoEm: new Date()
   });
 
