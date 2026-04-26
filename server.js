@@ -596,6 +596,20 @@ async function sendWhatsAppMessage(to, body) {
     })
   });
 
+   async function notifyConsultant(lead) {
+  if (!process.env.CONSULTANT_PHONE) return;
+
+  const message = `
+🔥 Lead quente!
+
+Telefone: ${lead.telefoneWhatsApp || lead.user}
+Mensagem: ${lead.ultimaMensagem || "-"}
+Status: ${lead.status}
+`;
+
+  await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
+}
+
   const data = await response.json();
 
   if (!response.ok) {
