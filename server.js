@@ -1889,10 +1889,56 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     dadosConfirmadosPeloLead: true,
     aguardandoConfirmacao: false,
     faseQualificacao: "dados_confirmados",
-status: "quente",
-qualificadoEm: new Date()
+    status: "quente",
+    qualificadoEm: new Date()
   });
 
+  const confirmedLead = await loadLeadProfile(from);
+
+  if (canSendLeadToCRM(confirmedLead)) {
+    const lockedLead = await db.collection("leads").findOneAndUpdate(
+      {
+        user: from,
+        crmEnviado: { $ne: true },
+        dadosConfirmadosPeloLead: true,
+        faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
+        status: "quente"
+      },
+      {
+        $set: {
+          crmEnviado: true,
+          crmEnviadoEm: new Date(),
+          faseQualificacao: "enviado_crm",
+          status: "enviado_crm",
+          updatedAt: new Date()
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (lockedLead.value) {
+      console.log("🚀 Lead travado para envio ao CRM");
+    }
+  }
+
+  await notifyConsultant({
+    user: from,
+    telefoneWhatsApp: from,
+    ultimaMensagem: text,
+    status: "quente"
+  });
+
+  const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
+
+  await sendWhatsAppMessage(from, confirmedMsg);
+  await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
    const confirmedLead = await loadLeadProfile(from);
 
 if (canSendLeadToCRM(confirmedLead)) {
@@ -1939,36 +1985,7 @@ await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
   return res.sendStatus(200);
 }
 
-     // 🔥 DETECTA CORREÇÃO APÓS CONFIRMAÇÃO
-const hadConfirmedData = currentLead?.dadosConfirmadosPeloLead === true;
-
-const hasNewDifferentData =
-  currentLead &&
-  (
-    (extractedData.cpf && extractedData.cpf !== currentLead.cpf) ||
-    (extractedData.telefone && extractedData.telefone !== currentLead.telefone) ||
-    (extractedData.nome && extractedData.nome !== currentLead.nome) ||
-    (extractedData.cidade && extractedData.cidade !== currentLead.cidade) ||
-    (extractedData.estado && extractedData.estado !== currentLead.estado)
-  );
-
-if (hadConfirmedData && hasNewDifferentData) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: true,
-    faseQualificacao: "aguardando_confirmacao_dados",
-    status: "dados_corrigidos"
-  });
-
-  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return res.sendStatus(200);
-}
+    
      
 if (hasAllRequiredLeadFields(extractedData) && !currentLead?.dadosConfirmadosPeloLead) {
   await saveLeadProfile(from, {
@@ -2031,30 +2048,6 @@ await saveLeadProfile(from, {
   ...(leadStatus && !extractedData.faseQualificacao && { status: leadStatus })
 });
      
-     const updatedLead = await loadLeadProfile(from);
-
-if (canSendLeadToCRM(updatedLead)) {
-  try {
-    // 🔥 AQUI você vai integrar com seu CRM real depois
-    console.log("🚀 Enviando lead para CRM:", updatedLead);
-
-    await saveLeadProfile(from, {
-      crmEnviado: true,
-      crmEnviadoEm: new Date(),
-      faseQualificacao: "enviado_crm",
-      status: "qualificado"
-    });
-
-  } catch (error) {
-    console.error("❌ Erro ao enviar para CRM:", error);
-
-    await saveLeadProfile(from, {
-      faseQualificacao: "erro_envio_crm",
-      status: "erro_envio_crm"
-    });
-  }
-}
-
     // 🔥 MONGO HISTÓRICO
    
     history.push({
