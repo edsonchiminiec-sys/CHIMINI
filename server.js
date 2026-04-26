@@ -1711,17 +1711,15 @@ if (!validation.isValid) {
     ...extractedData,
     dadosConfirmadosPeloLead: false,
     aguardandoConfirmacao: false,
-faseQualificacao: "erro_dados",
-status: "erro_dados",
-errosValidacao: validation.errors
+    faseQualificacao: "erro_dados",
+    status: "erro_dados",
+    errosValidacao: validation.errors
   });
-       
-     const changedConfirmedData =
-  
+
   const errorMsg = `Só preciso corrigir uma informação antes de seguir 😊\n\n${validation.errors.join("\n")}`;
 
-await sendWhatsAppMessage(from, errorMsg);
-await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
+  await sendWhatsAppMessage(from, errorMsg);
+  await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -1730,7 +1728,8 @@ await saveHistoryStep(from, history, text, errorMsg, !!message.audio?.id);
   return res.sendStatus(200);
 }
 
-     currentLead?.dadosConfirmadosPeloLead === true &&
+const changedConfirmedData =
+  currentLead?.dadosConfirmadosPeloLead === true &&
   REQUIRED_LEAD_FIELDS.some(field =>
     extractedData[field] &&
     currentLead[field] &&
@@ -1749,8 +1748,8 @@ if (changedConfirmedData) {
 
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
-await sendWhatsAppMessage(from, confirmationMsg);
-await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+  await sendWhatsAppMessage(from, confirmationMsg);
+  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
@@ -1758,7 +1757,7 @@ await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id)
 
   return res.sendStatus(200);
 }
-
+   
 const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
