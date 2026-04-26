@@ -1955,11 +1955,18 @@ const rawExtracted = extractLeadData(
       ? `${historyText}\n${text}`
       : text;
 
+const textForExtraction =
+  currentLead?.faseQualificacao === "corrigir_dado"
+    ? text
+    : isDataCollectionContext
+      ? `${historyText}\n${text}`
+      : text;
+
 const rawExtracted = extractLeadData(
   textForExtraction,
   currentLead || {}
 );
-
+     
 // 🔥 NÃO SOBRESCREVE COM NULL
      
 const extractedData = {
