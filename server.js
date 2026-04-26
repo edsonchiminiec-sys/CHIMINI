@@ -2568,8 +2568,9 @@ if (changedConfirmedData) {
 
 const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
+const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
-     if (awaitingConfirmation && isNegativeConfirmation(text)) {
+if (awaitingConfirmation && isNegativeConfirmation(text)) {
   await saveLeadProfile(from, {
     faseQualificacao: "corrigir_dado_final",
     status: "corrigir_dado_final",
@@ -2596,8 +2597,6 @@ Pode me dizer assim:
   return res.sendStatus(200);
 }
      
-const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
-
 if (awaitingConfirmation && isPositiveConfirmation(text)) {
   await saveLeadProfile(from, {
     ...extractedData,
