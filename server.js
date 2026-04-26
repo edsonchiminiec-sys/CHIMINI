@@ -990,76 +990,151 @@ function extractActions(reply = "") {
     actions
   };
 }
-
-function extractLeadData(text = "") {
+function extractLeadData(text = "", currentLead = {}) {
   const data = {};
-  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  const fullText = String(text || "").trim();
+  const lower = fullText.toLowerCase();
 
-  for (const line of lines) {
-    const lower = line.toLowerCase();
+  // CPF com ou sem pontuação
+  const cpfMatch = fullText.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
+  if (cpfMatch) {
+    data.cpf = formatCPF(cpfMatch[0]);
+  }
 
-    if (lower.startsWith("nome")) {
-      data.nome = line.split(":").slice(1).join(":").trim();
-    }
+  // Telefone com DDD, com ou sem pontuação
+  const phoneCandidates = fullText.match(/\b(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?\d{4,5}[-\s]?\d{4}\b/g);
 
-    if (lower.startsWith("cpf")) {
-      data.cpf = line.split(":").slice(1).join(":").trim();
-    }
+  if (phoneCandidates?.length) {
+    const validPhone = phoneCandidates.find(candidate => {
+      const digits = onlyDigits(candidate);
+      return digits.length >= 10 && digits.length <= 13 && !onlyDigits(candidate).endsWith(onlyDigits(data.cpf || ""));
+    });
 
-    if (lower.startsWith("cidade/estado")) {
-      data.cidadeEstado = line.split(":").slice(1).join(":").trim();
-    }
+    if (validPhone) {
+      let digits = onlyDigits(validPhone);
 
-    if (lower.startsWith("cidade") && !lower.startsWith("cidade/estado")) {
-      data.cidade = line.split(":").slice(1).join(":").trim();
-    }
+      if (digits.startsWith("55") && digits.length > 11) {
+        digits = digits.slice(2);
+      }
 
-    if (lower.startsWith("estado") || lower.startsWith("uf")) {
-      data.estado = line.split(":").slice(1).join(":").trim();
-    }
-
-    if (lower.startsWith("telefone") || lower.startsWith("celular") || lower.startsWith("whatsapp")) {
-      data.telefone = line.split(":").slice(1).join(":").trim();
-    }
-
-    if (
-      lower.includes("vendas") ||
-      lower.includes("piscina") ||
-      lower.includes("manutenção") ||
-      lower.includes("manutencao") ||
-      lower.includes("agro") ||
-      lower.includes("limpeza") ||
-      lower.includes("comércio") ||
-      lower.includes("comercio")
-    ) {
-      data.areaAtuacao = line;
-    }
-
-    if (
-      lower.includes("nome limpo") ||
-      lower.includes("sem restrição") ||
-      lower.includes("sem restricao") ||
-      lower.includes("não tenho restrição") ||
-      lower.includes("nao tenho restricao")
-    ) {
-      data.nomeLimpo = "sim";
-    }
-
-    if (
-      lower.includes("tenho restrição") ||
-      lower.includes("tenho restricao") ||
-      lower.includes("negativado") ||
-      lower.includes("protesto")
-    ) {
-      data.nomeLimpo = "nao";
+      data.telefone = formatPhone(digits);
     }
   }
 
-  if (!data.cidadeEstado && data.cidade && data.estado) {
+  // Linhas organizadas: Nome:, CPF:, Cidade:, Estado:, Telefone:
+  const lines = fullText.split("\n").map(line => line.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const cleanLine = line.replace(/\s+/g, " ").trim();
+    const lineLower = cleanLine.toLowerCase();
+
+    if (/^nome\s*[:\-]/i.test(cleanLine)) {
+      data.nome = cleanLine.split(/[:\-]/).slice(1).join("-").trim();
+    }
+
+    if (/^cpf\s*[:\-]/i.test(cleanLine)) {
+      const value = cleanLine.split(/[:\-]/).slice(1).join("-").trim();
+      if (value) data.cpf = formatCPF(value);
+    }
+
+    if (/^(telefone|celular|whatsapp)\s*[:\-]/i.test(cleanLine)) {
+      const value = cleanLine.split(/[:\-]/).slice(1).join("-").trim();
+      if (value) data.telefone = formatPhone(value);
+    }
+
+    if (/^cidade\s*[:\-]/i.test(cleanLine)) {
+      data.cidade = cleanLine.split(/[:\-]/).slice(1).join("-").trim();
+    }
+
+    if (/^(estado|uf)\s*[:\-]/i.test(cleanLine)) {
+      data.estado = normalizeUF(cleanLine.split(/[:\-]/).slice(1).join("-").trim());
+    }
+
+    if (/^cidade\/estado\s*[:\-]/i.test(cleanLine)) {
+      const value = cleanLine.split(/[:\-]/).slice(1).join("-").trim();
+      const parts = value.split(/[\/,-]/).map(p => p.trim()).filter(Boolean);
+
+      if (parts[0]) data.cidade = parts[0];
+      if (parts[1]) data.estado = normalizeUF(parts[1]);
+      data.cidadeEstado = value;
+    }
+  }
+
+  // Cidade/UF no meio do texto: "Curitiba PR", "São Paulo/SP"
+  const cidadeUfMatch = fullText.match(/([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
+
+  if (cidadeUfMatch) {
+    data.cidade = cidadeUfMatch[1].trim();
+    data.estado = normalizeUF(cidadeUfMatch[2]);
     data.cidadeEstado = `${data.cidade}/${data.estado}`;
   }
 
-  return data;
+  // Nome solto quando a pessoa escreve "meu nome é..."
+  const namePatterns = [
+    /meu nome é\s+([A-Za-zÀ-ÿ\s]{3,})/i,
+    /me chamo\s+([A-Za-zÀ-ÿ\s]{3,})/i,
+    /sou\s+([A-Za-zÀ-ÿ\s]{3,})/i
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = fullText.match(pattern);
+
+    if (match?.[1]) {
+      let name = match[1]
+        .replace(/cpf|telefone|celular|whatsapp|cidade|estado|uf/gi, "")
+        .replace(/\d+/g, "")
+        .trim();
+
+      if (name.split(" ").length >= 2) {
+        data.nome = name;
+        break;
+      }
+    }
+  }
+
+  // Área de atuação
+  if (
+    lower.includes("vendas") ||
+    lower.includes("piscina") ||
+    lower.includes("manutenção") ||
+    lower.includes("manutencao") ||
+    lower.includes("agro") ||
+    lower.includes("limpeza") ||
+    lower.includes("comércio") ||
+    lower.includes("comercio")
+  ) {
+    data.areaAtuacao = fullText;
+  }
+
+  // Nome limpo
+  if (
+    lower.includes("nome limpo") ||
+    lower.includes("sem restrição") ||
+    lower.includes("sem restricao") ||
+    lower.includes("não tenho restrição") ||
+    lower.includes("nao tenho restricao")
+  ) {
+    data.nomeLimpo = "sim";
+  }
+
+  if (
+    lower.includes("tenho restrição") ||
+    lower.includes("tenho restricao") ||
+    lower.includes("negativado") ||
+    lower.includes("protesto") ||
+    lower.includes("sujo")
+  ) {
+    data.nomeLimpo = "nao";
+  }
+
+  if (data.cidade && data.estado) {
+    data.cidadeEstado = `${data.cidade}/${data.estado}`;
+  }
+
+  return {
+    ...currentLead,
+    ...data
+  };
 }
 
 function formatCPF(value = "") {
@@ -1489,7 +1564,8 @@ if (message.text?.body) {
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
 
-const extractedData = extractLeadData(text);
+const currentLead = await loadLeadProfile(from);
+const extractedData = extractLeadData(text, currentLead || {});
 const validation = validateLeadData(extractedData);
 const leadStatus = classifyLead(text, extractedData, history);
 
