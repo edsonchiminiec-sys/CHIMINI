@@ -1909,13 +1909,13 @@ app.get("/lead/:user/status/:status", async (req, res) => {
             <thead>
               <tr>
                 <th><a href="${makeSortLink("status", "Status")}">Status</a></th>
-                <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
-                <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
-                <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
-                <th>Estado</th>
-                <th>Última mensagem</th>
-                <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
-                <th>Ação</th>
+<th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
+<th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
+<th>CPF</th>
+<th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
+<th>Estado</th>
+<th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
+<th>Ação</th>
               </tr>
             </thead>
             <tbody>
