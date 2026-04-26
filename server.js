@@ -1011,31 +1011,17 @@ await saveLeadProfile(from, {
 
     await saveConversation(from, history);
 
-    let autoFolderSentThisTurn = false;
+// 🔥 REMOVIDO envio automático de folder
 
-    if (!state.folderSent && history.length <= 2) {
-      state.folderSent = true;
-      state.sentFiles.folder = true;
-      autoFolderSentThisTurn = true;
+const fileKey = detectRequestedFile(text);
+if (fileKey) {
+  await sendFileOnce(from, fileKey);
+}
 
-      await delay(2000);
-
-      await sendWhatsAppMessage(
-        from,
-        "Vou te enviar um material explicativo para você entender melhor 👇"
-      );
-
-      await delay(2000);
-      await sendWhatsAppDocument(from, FILES.folder);
-      scheduleShortFollowupAfterFile(from);
-    }
-
-    const fileKey = detectRequestedFile(text);
-    if (fileKey && !(fileKey === "folder" && autoFolderSentThisTurn)) {
-      await sendFileOnce(from, fileKey);
-    }
-
-    scheduleInactivityFollowup(from);
+// 🔥 follow-up só após alguma interação maior
+if (history.length > 3) {
+  scheduleInactivityFollowup(from);
+}
 
     if (messageId) {
       processingMessages.delete(messageId);
