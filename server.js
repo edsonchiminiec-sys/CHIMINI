@@ -1808,7 +1808,10 @@ if (missingFields.length > 0 && Object.keys(extractedData).some(key => REQUIRED_
 status: "dados_parciais"
   });
 
-  await sendWhatsAppMessage(from, getMissingFieldQuestion(missingFields[0]));
+  const missingMsg = getMissingFieldQuestion(missingFields[0]);
+
+await sendWhatsAppMessage(from, missingMsg);
+await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
