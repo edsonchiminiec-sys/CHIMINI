@@ -596,26 +596,24 @@ async function sendWhatsAppMessage(to, body) {
     })
   });
 
-   async function notifyConsultant(lead) {
+  async function notifyConsultant(lead) {
   if (!process.env.CONSULTANT_PHONE) return;
+
+  const leadPhone = lead.telefoneWhatsApp || lead.user;
+  const whatsappLink = `https://wa.me/${leadPhone}`;
 
   const message = `
 🔥 Lead quente!
 
-Telefone: ${lead.telefoneWhatsApp || lead.user}
+Telefone: ${leadPhone}
 Mensagem: ${lead.ultimaMensagem || "-"}
 Status: ${lead.status}
+
+Abrir conversa:
+${whatsappLink}
 `;
 
   await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
-}
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    console.error("Erro ao enviar mensagem WhatsApp:", data);
-    throw new Error("Falha ao enviar mensagem WhatsApp");
-  }
 }
 
 async function sendWhatsAppDocument(to, file) {
