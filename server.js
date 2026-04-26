@@ -902,6 +902,48 @@ function extractLeadData(text = "") {
 
   return data;
 }
+
+function onlyDigits(value = "") {
+  return String(value).replace(/\D/g, "");
+}
+
+function isRepeatedDigits(value = "") {
+  return /^(\d)\1+$/.test(value);
+}
+
+function validateLeadData(data = {}) {
+  const errors = [];
+
+  if (data.cpf) {
+    const cpfDigits = onlyDigits(data.cpf);
+
+    if (/[a-zA-Z]/.test(data.cpf)) {
+      errors.push("O CPF não deve conter letras.");
+    } else if (cpfDigits.length !== 11) {
+      errors.push("O CPF precisa ter exatamente 11 números.");
+    } else if (isRepeatedDigits(cpfDigits)) {
+      errors.push("O CPF informado parece inválido, pois repete o mesmo número.");
+    }
+  }
+
+  if (data.telefone) {
+    const phoneDigits = onlyDigits(data.telefone);
+
+    if (/[a-zA-Z]/.test(data.telefone)) {
+      errors.push("O telefone não deve conter letras.");
+    } else if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+      errors.push("O telefone precisa ter DDD e ter 10 ou 11 números.");
+    } else if (isRepeatedDigits(phoneDigits)) {
+      errors.push("O telefone informado parece inválido, pois repete o mesmo número.");
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
 function classifyLead(text = "") {
   const t = text.toLowerCase();
 
