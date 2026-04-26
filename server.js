@@ -925,10 +925,18 @@ app.post("/webhook", async (req, res) => {
       processingMessages.add(messageId);
     }
 
-    const from = message.from;
-    const state = getState(from);
+    cconst from = message.from;
+const state = getState(from);
 
-    clearTimers(from);
+if (from === process.env.CONSULTANT_PHONE) {
+  const toLead = message.to;
+
+  if (toLead) {
+    await updateLeadStatus(toLead, "em_atendimento");
+  }
+}
+
+clearTimers(from);
     state.closed = false;
 
     if (!message.text?.body) {
