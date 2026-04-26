@@ -1947,14 +1947,6 @@ const isDataCollectionContext =
   currentLead?.dadosConfirmadosPeloLead === true ||
   /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(text);
 
-const rawExtracted = extractLeadData(
-  const textForExtraction =
-  currentLead?.faseQualificacao === "corrigir_dado"
-    ? text
-    : isDataCollectionContext
-      ? `${historyText}\n${text}`
-      : text;
-
 const textForExtraction =
   currentLead?.faseQualificacao === "corrigir_dado"
     ? text
