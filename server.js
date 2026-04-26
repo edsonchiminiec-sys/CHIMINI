@@ -2111,6 +2111,7 @@ Está correto?`;
 if (currentLead?.aguardandoConfirmacaoCampo) {
   const campo = currentLead.campoPendente;
   const valor = currentLead.valorPendente;
+  let respostaConfirmacaoCampo = "";
 
   if (isPositiveConfirmation(text)) {
     const validation = validateLeadData({
