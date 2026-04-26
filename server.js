@@ -8,6 +8,8 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
+const client = new MongoClient(process.env.MONGODB_URI);
+let db;
 
 /* =========================
    🔥 MONGODB (CORRIGIDO)
@@ -2601,7 +2603,7 @@ Pode me dizer assim:
 - estado está errado`;
 
   await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+ await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
