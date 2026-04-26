@@ -1352,7 +1352,10 @@ await saveLeadProfile(from, {
 
     // 🔥 MONGO HISTÓRICO
    
-    history.push({ role: "user", content: text });
+    history.push({
+  role: "user",
+  content: message.audio?.id ? `[Áudio transcrito]: ${text}` : text
+});
     history = history.slice(-20);
 
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
