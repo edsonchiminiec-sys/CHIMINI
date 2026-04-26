@@ -1098,7 +1098,9 @@ function extractLeadData(text = "", currentLead = {}) {
   const cidadeUfMatch = fullText.match(/([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
 
   if (cidadeUfMatch) {
-    data.cidade = cidadeUfMatch[1].trim();
+    data.cidade = cidadeUfMatch[1]
+  .replace(/moro em|sou de|cidade|estado|uf/gi, "")
+  .trim();
     data.estado = normalizeUF(cidadeUfMatch[2]);
     data.cidadeEstado = `${data.cidade}/${data.estado}`;
   }
@@ -1310,6 +1312,21 @@ function normalizeUF(value = "") {
   if (/^[A-Z]{2}$/.test(text)) return text;
 
   return estados[text] || text;
+}
+
+async function saveHistoryStep(from, history, userText, botText, isAudio = false) {
+  history.push({
+    role: "user",
+    content: isAudio ? `[Áudio transcrito]: ${userText}` : userText
+  });
+
+  history.push({
+    role: "assistant",
+    content: botText
+  });
+
+  history = history.slice(-20);
+  await saveConversation(from, history);
 }
 
 function isRepeatedDigits(value = "") {
@@ -1659,6 +1676,32 @@ let history = await loadConversation(from);
 
 const currentLead = await loadLeadProfile(from);
 const extractedData = extractLeadData(text, currentLead || {});
+     const changedConfirmedData =
+  currentLead?.dadosConfirmadosPeloLead === true &&
+  REQUIRED_LEAD_FIELDS.some(field =>
+    extractedData[field] &&
+    currentLead[field] &&
+    String(extractedData[field]) !== String(currentLead[field])
+  );
+
+if (changedConfirmedData) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: true,
+    crmEnviado: false,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "aguardando_confirmacao_dados"
+  });
+
+  await sendWhatsAppMessage(from, buildLeadConfirmationMessage(extractedData));
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return res.sendStatus(200);
+}
 const validation = validateLeadData(extractedData);
 
 if (!validation.isValid) {
@@ -1710,6 +1753,12 @@ if (canSendLeadToCRM(confirmedLead)) {
     faseQualificacao: "enviado_crm",
     status: "qualificado"
   });
+   await notifyConsultant({
+  user: from,
+  telefoneWhatsApp: from,
+  ultimaMensagem: text,
+  status: "qualificado"
+});
 }
   await sendWhatsAppMessage(
     from,
