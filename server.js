@@ -932,7 +932,7 @@ app.post("/webhook", async (req, res) => {
       processingMessages.add(messageId);
     }
 
-    cconst from = message.from;
+    const from = message.from;
 const state = getState(from);
 
 if (from === process.env.CONSULTANT_PHONE) {
