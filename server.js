@@ -2970,12 +2970,7 @@ if (
   await saveLeadProfile(from, {
     faseQualificacao: "coletando_dados",
     status: "coletando_dados",
-    campoEsperado: "nome" // 🔥 começa pelo nome SEMPRE
-  });
-}
-  await saveLeadProfile(from, {
-    faseQualificacao: "coletando_dados",
-    status: "coletando_dados"
+    campoEsperado: "nome"
   });
 }
 
