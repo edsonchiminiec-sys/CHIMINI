@@ -1980,25 +1980,51 @@ function isPositiveConfirmation(text = "") {
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
-  const positivePatterns = [
-    /^sim$/,
-    /^s$/,
-    /^isso$/,
-    /^correto$/,
-    /^certo$/,
-    /^ta certo$/,
-    /^esta certo$/,
-    /^pode seguir$/,
-    /^pode$/,
-    /^confirmo$/,
-    /^confirmado$/,
-    /^perfeito$/,
-    /^ok$/,
-    /^exato$/,
-    /^tudo certo$/,
-    /^esta tudo correto$/,
-    /^pode continuar$/
-  ];
+const positivePatterns = [
+  /^sim$/,
+  /^s$/,
+  /^isso$/,
+  /^correto$/,
+  /^certo$/,
+  /^ta certo$/,
+  /^esta certo$/,
+  /^pode seguir$/,
+  /^pode$/,
+  /^pode continuar$/,
+  /^confirmo$/,
+  /^confirmado$/,
+  /^perfeito$/,
+  /^ok$/,
+  /^exato$/,
+  /^tudo certo$/,
+  /^esta tudo correto$/,
+
+  // confirmações naturais
+  /^faz sim$/,
+  /^faz sentido$/,
+  /^fez sentido$/,
+  /^pra mim faz sentido$/,
+  /^para mim faz sentido$/,
+  /^gostei$/,
+  /^top$/,
+  /^top demais$/,
+  /^beleza$/,
+  /^blz$/,
+  /^show$/,
+  /^show de bola$/,
+  /^entendi sim$/,
+  /^entendi perfeitamente$/,
+  /^estou de acordo$/,
+  /^to de acordo$/,
+  /^tô de acordo$/,
+  /^concordo$/,
+  /^vamos seguir$/,
+  /^podemos seguir$/,
+  /^bora$/,
+  /^bora seguir$/,
+  /^quero seguir$/,
+  /^quero continuar$/
+];
 
   return positivePatterns.some(pattern => pattern.test(t));
 }
@@ -3406,8 +3432,10 @@ const leadConfirmouCiencia =
   isPositiveConfirmation(text) &&
   (
     historyText.includes("ficou claro") ||
+    historyText.includes("faz sentido") ||
     historyText.includes("posso seguir") ||
-    historyText.includes("podemos seguir")
+    historyText.includes("podemos seguir") ||
+    historyText.includes("nesse formato")
   );
 
 const podeIniciarColeta =
