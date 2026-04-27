@@ -2585,19 +2585,18 @@ const remainingPendingData = Object.fromEntries(
   })
 );
 
-const nextPendingField = Object.keys(remainingPendingData)[0];
-
 if (nextPendingField) {
   await saveLeadProfile(from, {
-  ...dadosConfirmadosDoCampo,
-  campoPendente: nextPendingField,
-  valorPendente: remainingPendingData[nextPendingField],
-  cidadePendente: null,
-  estadoPendente: null,
-  aguardandoConfirmacaoCampo: true,
-  faseQualificacao: "aguardando_confirmacao_campo",
-  status: "aguardando_confirmacao_campo"
-});
+    ...dadosConfirmadosDoCampo,
+    campoPendente: nextPendingField,
+    valorPendente: remainingPendingData[nextPendingField],
+    campoEsperado: nextPendingField,
+    cidadePendente: null,
+    estadoPendente: null,
+    aguardandoConfirmacaoCampo: true,
+    faseQualificacao: "aguardando_confirmacao_campo",
+    status: "aguardando_confirmacao_campo"
+  });
    
   const labels = {
     nome: "nome",
@@ -2623,15 +2622,18 @@ Está correto?`;
   const missingFields = getMissingLeadFields(updatedLead);
    
 
-  await saveLeadProfile(from, {
+ await saveLeadProfile(from, {
   ...updatedLead,
   cidadePendente: null,
   estadoPendente: null,
   campoPendente: null,
   valorPendente: null,
+  campoEsperado: null,
   aguardandoConfirmacaoCampo: false,
-  faseQualificacao: "dados_parciais",
-  status: "dados_parciais"
+  aguardandoConfirmacao: true,
+  dadosConfirmadosPeloLead: false,
+  faseQualificacao: "aguardando_confirmacao_dados",
+  status: "aguardando_confirmacao_dados"
 });
    
   const labels = {
