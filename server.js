@@ -2989,14 +2989,17 @@ if (
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          ...history
-        ]
-      })
+     body: JSON.stringify({
+  model: "gpt-4o-mini",
+  messages: [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: "IMPORTANTE: Não use dados pessoais encontrados no histórico antigo como nome, CPF, telefone, cidade ou estado. Na coleta atual, peça e confirme os dados novamente, começando pelo nome completo."
+    },
+    ...history
+  ]
+})
     });
 
     const data = await openaiResponse.json();
