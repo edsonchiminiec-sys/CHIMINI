@@ -3460,7 +3460,11 @@ const leadConfirmouCiencia =
     historyText.includes("faz sentido") ||
     historyText.includes("posso seguir") ||
     historyText.includes("podemos seguir") ||
-    historyText.includes("nesse formato")
+    historyText.includes("nesse formato") ||
+    historyText.includes("resultado depende da sua atuação") ||
+    historyText.includes("resultado depende da sua atuacao") ||
+    historyText.includes("depende da sua atuação nas vendas") ||
+    historyText.includes("depende da sua atuacao nas vendas")
   );
 
 const podeIniciarColeta =
@@ -3550,18 +3554,29 @@ if (
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  respostaFinal = state.sentFiles.folder
-    ? "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nComo o material já está logo acima, posso te explicar os principais pontos por aqui. Quer que eu resuma?"
-    : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+  if (jaFalouInvestimento && isPositiveConfirmation(text)) {
+    respostaFinal = "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
+  } else {
+    respostaFinal = state.sentFiles.folder
+      ? "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nComo o material já está logo acima, posso te resumir os pontos principais por aqui. Quer que eu resuma?"
+      : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+  }
 }
-
-// 🚨 BLOQUEIO DE COLETA PREMATURA
+// 🚨 BLOQUEIO DE COLETA PREMATURA — SEM VOLTAR FASE
 if (startedDataCollection && !podeIniciarColeta) {
   const jaEnviouFolder = state.sentFiles?.folder === true;
 
-  respostaFinal = jaEnviouFolder
-    ? "Antes de seguirmos, só quero alinhar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nComo o material já está logo acima na conversa, posso te explicar os principais pontos por aqui. Quer que eu resuma de forma bem objetiva?"
-    : "Antes de seguirmos, só quero te explicar melhor como funciona o programa 😊\n\nEle é uma parceria onde você vende direto da indústria, com suporte, materiais e possibilidade de margem interessante.\n\nMas também tem algumas responsabilidades, como cuidar do estoque, atender clientes e manter uma boa comunicação com a equipe.\n\nSe fizer sentido, posso te enviar um material explicando melhor. Quer dar uma olhada?";
+  if (jaFalouInvestimento && isPositiveConfirmation(text)) {
+    respostaFinal = "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante: você está de acordo que o resultado depende da sua atuação nas vendas?";
+  } else if (jaFalouBeneficios && jaEnviouFolder && !jaFalouInvestimento) {
+    respostaFinal = "Perfeito 😊 Como você já viu os principais pontos do programa, o próximo passo é eu te explicar com transparência a parte do investimento. Posso te explicar?";
+  } else if (jaFalouBeneficios && !jaFalouInvestimento) {
+    respostaFinal = "Perfeito 😊 Antes de avançarmos, preciso te explicar a parte do investimento com transparência. Posso te passar esse ponto agora?";
+  } else {
+    respostaFinal = jaEnviouFolder
+      ? "Antes de seguirmos, preciso garantir que ficou claro como funciona o programa 😊 Como o material já está logo acima, ficou alguma dúvida específica?"
+      : "Antes de seguirmos, preciso te explicar melhor como funciona o programa 😊 Posso te enviar um material explicativo bem direto?";
+  }
 }
      
 
