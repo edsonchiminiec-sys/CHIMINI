@@ -3058,9 +3058,24 @@ if (
   currentLead?.faseQualificacao !== "coletando_dados"
 ) {
   await saveLeadProfile(from, {
+    // 🔥 limpa dados antigos para não reaproveitar nome/CPF/telefone de conversa passada
+    nome: null,
+    cpf: null,
+    telefone: null,
+    cidade: null,
+    estado: null,
+    cidadeEstado: null,
+
+    campoPendente: null,
+    valorPendente: null,
+    campoEsperado: "nome",
+
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: false,
+    dadosConfirmadosPeloLead: false,
+
     faseQualificacao: "coletando_dados",
-    status: "coletando_dados",
-    campoEsperado: "nome"
+    status: "coletando_dados"
   });
 }
 
