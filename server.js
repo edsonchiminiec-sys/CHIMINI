@@ -2655,6 +2655,12 @@ Está correto?`;
 
  if (missingFields.length > 0) {
   const nextField = missingFields[0];
+
+  // 🔥 DEFINE QUAL CAMPO DEVE VIR AGORA
+  await saveLeadProfile(from, {
+    campoEsperado: nextField
+  });
+
   respostaConfirmacaoCampo += `\n\n${getMissingFieldQuestion(nextField)}`;
 } else {
   await saveLeadProfile(from, {
