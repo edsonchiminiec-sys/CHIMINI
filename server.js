@@ -2731,8 +2731,11 @@ app.post("/webhook", async (req, res) => {
   let messageId = null;
 
   try {
-    const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!message) return res.sendStatus(200);
+   const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+if (!message) return;
+
+// 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
+res.sendStatus(200);
      
      const contact = req.body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
 const whatsappProfileName = contact?.profile?.name || "";
@@ -2743,7 +2746,7 @@ const whatsappProfileName = contact?.profile?.name || "";
   const canProcess = await claimMessage(messageId);
 
   if (!canProcess) {
-    return res.sendStatus(200);
+    return;
   }
 }
 
@@ -2762,17 +2765,17 @@ if (
   leadBeforeProcessing?.status === "perdido" ||
   leadBeforeProcessing?.faseQualificacao === "perdido"
 ) {
-  return res.sendStatus(200);
+  return;
 }
 
 if (state.closed) {
-  return res.sendStatus(200);
+  return;
 }
      
 // Atendimento humano deve ser marcado pelo botão "Atender" no dashboard.
 // Evita tentativa insegura de identificar lead por message.to no webhook.
 if (from === process.env.CONSULTANT_PHONE) {
-  return res.sendStatus(200);
+  return;
 }
      
 clearTimers(from);
@@ -2795,7 +2798,7 @@ if (message.text?.body) {
   // Se esta mensagem foi apenas adicionada ao buffer,
   // encerra este webhook sem chamar a IA.
   if (!buffered.shouldContinue) {
-    return res.sendStatus(200);
+    return;
   }
 
   // A primeira requisição continua com todas as mensagens juntas
@@ -2815,7 +2818,7 @@ if (message.text?.body) {
       "Não consegui entender bem o áudio. Pode me enviar novamente ou escrever sua dúvida?"
     );
 
-    return res.sendStatus(200);
+    return;
   }
 } else {
   await sendWhatsAppMessage(
@@ -2823,7 +2826,7 @@ if (message.text?.body) {
     "No momento consigo te atender melhor por texto ou áudio 😊 Pode me enviar sua dúvida?"
   );
 
-  return res.sendStatus(200);
+  return;
 }
 
 // 🔥 carrega histórico antes de classificar
@@ -3034,7 +3037,7 @@ if (
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
 
      if (
@@ -3086,7 +3089,7 @@ if (
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
      
 const isOnlyConfirmationText =
@@ -3154,7 +3157,7 @@ Está correto?`;
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
      
 if (currentLead?.aguardandoConfirmacaoCampo) {
@@ -3190,7 +3193,7 @@ Pode me enviar novamente?`;
         markMessageAsProcessed(messageId);
       }
 
-      return res.sendStatus(200);
+      return;
     }
 
     const dadosConfirmadosDoCampo = {
@@ -3328,7 +3331,7 @@ Está correto?`;
       markMessageAsProcessed(messageId);
     }
 
-    return res.sendStatus(200);
+    return;
   }
 
   if (isNegativeConfirmation(text)) {
@@ -3357,7 +3360,7 @@ Está correto?`;
       markMessageAsProcessed(messageId);
     }
 
-    return res.sendStatus(200);
+    return;
   }
 
   const labels = {
@@ -3379,7 +3382,7 @@ Pode responder sim ou não.`;
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }   
 
 const changedConfirmedData =
@@ -3408,7 +3411,7 @@ if (changedConfirmedData) {
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
 
 const leadStatus = classifyLead(text, extractedData, history);
@@ -3464,15 +3467,15 @@ Pode me dizer assim:
 - estado está errado`;
 
   await sendWhatsAppMessage(from, msg);
- await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
-     
+
 if (awaitingConfirmation && isPositiveConfirmation(text)) {
   await saveLeadProfile(from, {
     ...extractedData,
@@ -3490,34 +3493,40 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
   const confirmedLead = await loadLeadProfile(from);
 
   if (canSendLeadToCRM(confirmedLead)) {
-    const lockedLead = await db.collection("leads").findOneAndUpdate(
-      {
-        user: from,
-        crmEnviado: { $ne: true },
-        dadosConfirmadosPeloLead: true,
-        faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
-        status: "quente"
-      },
-      {
-        $set: {
-          crmEnviado: true,
-          crmEnviadoEm: new Date(),
-          faseQualificacao: "enviado_crm",
-          status: "enviado_crm",
-          updatedAt: new Date()
-        }
-      },
-      { returnDocument: "after" }
-    );
+    const alreadySent = await db.collection("leads").findOne({
+      user: from,
+      crmEnviado: true
+    });
 
-    if (lockedLead.value) {
-      console.log("🚀 Lead travado para envio ao CRM");
+    if (alreadySent) {
+      console.log("⚠️ Lead já enviado ao CRM anteriormente");
+    } else {
+      const lockedLead = await db.collection("leads").findOneAndUpdate(
+        {
+          user: from,
+          crmEnviado: { $ne: true },
+          dadosConfirmadosPeloLead: true,
+          faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
+          status: "quente"
+        },
+        {
+          $set: {
+            crmEnviado: true,
+            crmEnviadoEm: new Date(),
+            faseQualificacao: "enviado_crm",
+            status: "enviado_crm",
+            updatedAt: new Date()
+          }
+        },
+        { returnDocument: "after" }
+      );
+
+      if (lockedLead.value) {
+        console.log("🚀 Lead travado para envio ao CRM");
+      }
+
+      currentLead = await loadLeadProfile(from);
     }
-     if (lockedLead.value) {
-  console.log("🚀 Lead travado para envio ao CRM");
-}
-
-currentLead = await loadLeadProfile(from);
   }
 
   await notifyConsultant({
@@ -3530,19 +3539,19 @@ currentLead = await loadLeadProfile(from);
   const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
 
   await sendWhatsAppMessage(from, confirmedMsg);
-   state.closed = true;
-clearTimers(from);
-   await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
-   
+  state.closed = true;
+  clearTimers(from);
+
+  await saveHistoryStep(from, history, text, confirmedMsg, !!message.audio?.id);
+
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
 
-   
-   if (
+if (
   hasAllRequiredLeadFields(extractedData) &&
   !currentLead?.dadosConfirmadosPeloLead &&
   !currentLead?.aguardandoConfirmacaoCampo
@@ -3563,14 +3572,14 @@ clearTimers(from);
 
   await sendWhatsAppMessage(from, confirmationMsg);
   await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }
-
-const shouldAskMissingFields =
+     const shouldAskMissingFields =
   currentLead?.faseQualificacao === "coletando_dados" ||
   currentLead?.faseQualificacao === "dados_parciais" ||
   currentLead?.faseQualificacao === "aguardando_dados";
@@ -3600,7 +3609,7 @@ if (
     markMessageAsProcessed(messageId);
   }
 
-  return res.sendStatus(200);
+  return;
 }     
     // 🔥 MONGO HISTÓRICO
    
@@ -3904,7 +3913,7 @@ scheduleLeadFollowups(from);
       processedMessages.set(messageId, Date.now());
     }
 
-    return res.sendStatus(200);
+    return;
 
   } catch (error) {
     if (messageId) {
@@ -3912,7 +3921,7 @@ scheduleLeadFollowups(from);
     }
 
     console.error("Erro no webhook:", error);
-    return res.sendStatus(500);
+    return;
   }
 });
 
