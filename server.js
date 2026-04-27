@@ -3280,10 +3280,16 @@ body: JSON.stringify({
       throw new Error("Falha ao chamar OpenAI");
     }
 
-   const rawResposta = data.choices?.[0]?.message?.content || "Olá 😊";
+   const rawResposta = data.choices?.[0]?.message?.content || "";
 
 const { cleanReply, actions } = extractActions(rawResposta);
-const resposta = cleanReply || "Olá 😊";
+
+// 🔥 fallback inteligente (evita resposta vazia ou quebrada)
+let resposta = cleanReply?.trim();
+
+if (!resposta) {
+  resposta = "Perfeito 😊 Me conta um pouco melhor o que você quer entender pra eu te ajudar da melhor forma.";
+}
      const respostaLower = resposta.toLowerCase();
      const jaExplicouPrograma =
   historyText.includes("parceria") &&
