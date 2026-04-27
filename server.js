@@ -2747,10 +2747,9 @@ console.log("✅ Mensagem recebida do WhatsApp:", {
 });
 
 // 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
-res.sendStatus(200);
-
-// 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
-res.sendStatus(200);
+if (!res.headersSent) {
+  res.sendStatus(200);
+}
      
      const contact = req.body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
 const whatsappProfileName = contact?.profile?.name || "";
