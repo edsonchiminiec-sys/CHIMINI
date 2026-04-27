@@ -139,7 +139,6 @@ async function saveLeadProfile(user, data = {}) {
   createdAt,
   crmEnviado,
   crmEnviadoEm,
-  qualificadoEm,
   ...safeData
 } = data || {};
 
@@ -2732,7 +2731,10 @@ app.post("/webhook", async (req, res) => {
 
   try {
    const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-if (!message) return;
+
+if (!message) {
+  return res.sendStatus(200);
+}
 
 // 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
 res.sendStatus(200);
