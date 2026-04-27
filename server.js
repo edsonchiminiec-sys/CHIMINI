@@ -2394,64 +2394,97 @@ function getDelayUntilNextBusinessTime() {
   return Math.max(next.getTime() - now.getTime(), 0);
 }
 
-function scheduleInactivityFollowup(from) {
+function scheduleLeadFollowups(from) {
   const state = getState(from);
 
   if (state.closed) return;
 
-  if (state.inactivityTimer) clearTimeout(state.inactivityTimer);
+  clearTimers(from);
 
-  state.inactivityTimer = setTimeout(async () => {
-    try {
-      state.inactivityFollowupCount++;
+  state.inactivityFollowupCount = 0;
+  state.followupTimers = [];
 
-      let msg = "";
-
-      if (state.inactivityFollowupCount === 1) {
-        msg = "Passando só para saber se ficou alguma dúvida sobre o programa 😊";
-      } else if (state.inactivityFollowupCount === 2) {
-        msg = "Você vê isso como renda extra ou negócio principal?";
-      } else if (state.inactivityFollowupCount === 3) {
-        msg = "Você já trabalha com vendas ou atendimento?";
-      } else if (state.inactivityFollowupCount === 4) {
-        msg = "Quer que eu siga com sua pré-análise?";
-      } else {
-        msg = "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!";
-        state.closed = true;
-      }
-
-      await sendWhatsAppMessage(from, msg);
-
-      if (!state.closed) {
-        scheduleInactivityFollowup(from);
-      }
-    } catch (error) {
-      console.error("Erro no follow-up de inatividade:", error);
+  const followups = [
+    {
+      delay: 6 * 60 * 1000,
+      message: "Oi 😊 ficou alguma dúvida sobre o programa?"
+    },
+    {
+      delay: 30 * 60 * 1000,
+      message: "Passando só pra saber se você conseguiu ver minha mensagem. Quer que eu te explique de forma mais direta?"
+    },
+    {
+      delay: 6 * 60 * 60 * 1000,
+      message: "Passando só para saber se ficou alguma dúvida sobre o programa 😊",
+      businessOnly: true
+    },
+    {
+      delay: 12 * 60 * 60 * 1000,
+      message: "Você vê isso como renda extra ou algo mais estruturado?",
+      businessOnly: true
+    },
+    {
+      delay: 18 * 60 * 60 * 1000,
+      message: "Você já trabalha com vendas ou atendimento?",
+      businessOnly: true
+    },
+    {
+      delay: 24 * 60 * 60 * 1000,
+      message: "Quer que eu siga com sua pré-análise?",
+      businessOnly: true
+    },
+    {
+      delay: 30 * 60 * 60 * 1000,
+      message: "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!",
+      businessOnly: true,
+      closeAfter: true
     }
-  }, 6 * 60 * 60 * 1000);
-}
+  ];
 
-function scheduleShortFollowupAfterFile(from) {
-  const state = getState(from);
+  for (const followup of followups) {
+    const timer = setTimeout(async () => {
+      try {
+        const currentState = getState(from);
 
-  if (state.shortTimer) {
-    clearTimeout(state.shortTimer);
+        if (currentState.closed) return;
+
+        if (followup.businessOnly && !isBusinessTime()) {
+          const nextBusinessDelay = getDelayUntilNextBusinessTime();
+
+          const businessTimer = setTimeout(async () => {
+            try {
+              const latestState = getState(from);
+
+              if (latestState.closed) return;
+
+              await sendWhatsAppMessage(from, followup.message);
+
+              if (followup.closeAfter) {
+                latestState.closed = true;
+                clearTimers(from);
+              }
+            } catch (error) {
+              console.error("Erro no follow-up em horário comercial:", error);
+            }
+          }, nextBusinessDelay);
+
+          currentState.followupTimers.push(businessTimer);
+          return;
+        }
+
+        await sendWhatsAppMessage(from, followup.message);
+
+        if (followup.closeAfter) {
+          currentState.closed = true;
+          clearTimers(from);
+        }
+      } catch (error) {
+        console.error("Erro no follow-up automático:", error);
+      }
+    }, followup.delay);
+
+    state.followupTimers.push(timer);
   }
-
-  state.shortTimer = setTimeout(async () => {
-    try {
-      if (state.closed) return;
-
-      await sendWhatsAppMessage(
-        from,
-        "Conseguiu dar uma olhada no material? 😊"
-      );
-
-      state.shortTimer = null;
-    } catch (error) {
-      console.error("Erro no follow-up curto após arquivo:", error);
-    }
-  }, 6 * 60 * 1000);
 }
 
 app.get("/webhook", (req, res) => {
@@ -3522,7 +3555,7 @@ for (const key of fileKeys) {
 
 // 🔥 follow-up só após alguma interação maior
 if (history.length > 3) {
-  scheduleInactivityFollowup(from);
+  scheduleLeadFollowups(from);
 }
 
     if (messageId) {
