@@ -3581,10 +3581,8 @@ for (const key of fileKeys) {
   await sendFileOnce(from, key);
 }
 
-// 🔥 follow-up só após alguma interação maior
-if (history.length > 3) {
-  scheduleLeadFollowups(from);
-}
+// 🔥 follow-up sempre ativo após resposta da IA
+scheduleLeadFollowups(from);
 
     if (messageId) {
       processingMessages.delete(messageId);
