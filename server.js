@@ -2730,11 +2730,24 @@ app.post("/webhook", async (req, res) => {
   let messageId = null;
 
   try {
-   const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+   console.log("📩 Webhook POST recebido:", JSON.stringify(req.body, null, 2));
+
+const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
 
 if (!message) {
+  console.log("ℹ️ Webhook recebido sem mensagem. Pode ser status/read/delivery.");
   return res.sendStatus(200);
 }
+
+console.log("✅ Mensagem recebida do WhatsApp:", {
+  id: message.id,
+  from: message.from,
+  type: message.type,
+  text: message.text?.body || null
+});
+
+// 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
+res.sendStatus(200);
 
 // 🔥 RESPONDE IMEDIATAMENTE PARA O WHATSAPP
 res.sendStatus(200);
