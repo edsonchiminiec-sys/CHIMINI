@@ -1572,6 +1572,16 @@ function extractActions(reply = "") {
   };
 }
 
+function getFirstName(name = "") {
+  const cleanName = String(name || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!cleanName) return "";
+
+  return cleanName.split(" ")[0];
+}
+
 function onlyDigits(value = "") {
   return String(value).replace(/\D/g, "");
 }
@@ -2558,6 +2568,9 @@ app.post("/webhook", async (req, res) => {
   try {
     const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!message) return res.sendStatus(200);
+     
+     const contact = req.body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
+const whatsappProfileName = contact?.profile?.name || "";
 
     messageId = message.id || null;
 
@@ -2639,6 +2652,7 @@ if (!currentLead) {
   await saveLeadProfile(from, {
     user: from,
     telefoneWhatsApp: from,
+    nomeWhatsApp: whatsappProfileName,
     ultimaMensagem: text,
     faseQualificacao: "inicio",
     status: "novo"
@@ -2648,7 +2662,8 @@ if (!currentLead) {
 } else {
   await saveLeadProfile(from, {
     ultimaMensagem: text,
-    telefoneWhatsApp: from
+    telefoneWhatsApp: from,
+    nomeWhatsApp: currentLead.nomeWhatsApp || whatsappProfileName
   });
 }
      
@@ -3517,6 +3532,16 @@ if (
 }
 
 let respostaFinal = resposta;
+
+     const nomeCurto = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+     if (nomeCurto && !respostaFinal.toLowerCase().includes(nomeCurto.toLowerCase())) {
+  // adiciona o nome após o primeiro cumprimento
+  respostaFinal = respostaFinal.replace(
+    /(Perfeito 😊|Ótimo 😊|Certo 😊|Legal 😊|Show 😊)/,
+    `$1 ${nomeCurto},`
+  );
+}
+     
      // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
