@@ -2324,15 +2324,16 @@ let pendingExtractedData = Object.fromEntries(
   })
 );
 
-// 🔥 BLOQUEIO — só aceita o campo esperado
+// 🔥 CAMPO ESPERADO — usado apenas para priorizar, não para bloquear
 const campoEsperado = currentLead?.campoEsperado;
 
-if (campoEsperado) {
-  pendingExtractedData = Object.fromEntries(
-    Object.entries(pendingExtractedData).filter(
-      ([key]) => key === campoEsperado
+if (campoEsperado && pendingExtractedData[campoEsperado]) {
+  pendingExtractedData = {
+    [campoEsperado]: pendingExtractedData[campoEsperado],
+    ...Object.fromEntries(
+      Object.entries(pendingExtractedData).filter(([key]) => key !== campoEsperado)
     )
-  );
+  };
 }
 
  function isNegativeConfirmation(value = "") {
