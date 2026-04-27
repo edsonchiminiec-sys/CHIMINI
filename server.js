@@ -3067,7 +3067,20 @@ if (multiDataRequestPattern.test(respostaFinal)) {
   respostaFinal = "Perfeito 😊 Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
-await delay(humanDelay(respostaFinal));
+// 🔥 Simulação avançada de digitação humana
+
+const typingTime = humanDelay(respostaFinal);
+
+// pausa de leitura da mensagem do cliente
+await delay(1000);
+
+// simula "pensando"
+await delay(800);
+
+// simula digitação proporcional ao tamanho
+await delay(typingTime);
+
+// envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
 
 history.push({ role: "assistant", content: respostaFinal });
