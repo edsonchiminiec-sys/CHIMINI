@@ -2749,6 +2749,22 @@ const whatsappProfileName = contact?.profile?.name || "";
 
     const from = message.from;
 const state = getState(from);
+
+const leadBeforeProcessing = await loadLeadProfile(from);
+
+if (
+  leadBeforeProcessing?.status === "enviado_crm" ||
+  leadBeforeProcessing?.faseQualificacao === "enviado_crm" ||
+  leadBeforeProcessing?.status === "em_atendimento" ||
+  leadBeforeProcessing?.faseQualificacao === "em_atendimento" ||
+  leadBeforeProcessing?.status === "fechado" ||
+  leadBeforeProcessing?.faseQualificacao === "fechado" ||
+  leadBeforeProcessing?.status === "perdido" ||
+  leadBeforeProcessing?.faseQualificacao === "perdido"
+) {
+  return res.sendStatus(200);
+}
+
 if (state.closed) {
   return res.sendStatus(200);
 }
@@ -2762,7 +2778,13 @@ if (from === process.env.CONSULTANT_PHONE) {
 }
 
 clearTimers(from);
-    state.closed = false;
+
+if (
+  !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(leadBeforeProcessing?.status) &&
+  !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(leadBeforeProcessing?.faseQualificacao)
+) {
+  state.closed = false;
+}
 
   let text = "";
 
