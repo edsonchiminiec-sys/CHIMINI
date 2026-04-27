@@ -3683,7 +3683,6 @@ if (genero === "feminino") {
 }
      
 const nomeCurto = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
-const state = getState(from);
 
 if (
   nomeCurto &&
