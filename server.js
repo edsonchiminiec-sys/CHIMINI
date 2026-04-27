@@ -2302,16 +2302,7 @@ let pendingExtractedData = Object.fromEntries(
   })
 );
 
-// 🔥 BLOQUEIO — só aceita o campo esperado
-const campoEsperado = currentLead?.campoEsperado;
 
-if (campoEsperado) {
-  pendingExtractedData = Object.fromEntries(
-    Object.entries(pendingExtractedData).filter(
-      ([key]) => key === campoEsperado
-    )
-  );
-}
 
  function isNegativeConfirmation(value = "") {
   const t = String(value)
