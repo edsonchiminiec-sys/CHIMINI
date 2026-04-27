@@ -145,6 +145,12 @@ const processingMessages = new Set();
 const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_MESSAGES = 5000;
 
+// 🔥 BUFFER PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
+const incomingMessageBuffers = new Map();
+
+const TYPING_DEBOUNCE_MS = 4500; // espera 4,5s após a última mensagem
+const MAX_TYPING_WAIT_MS = 9000; // nunca espera mais de 9s no total
+
 /* =========================
    STATE
 ========================= */
@@ -174,6 +180,59 @@ function humanDelay(text = "") {
   const total = base + text.length * perChar;
 
   return Math.min(total, 7000);
+}
+
+async function collectBufferedText(from, text, messageId) {
+  const now = Date.now();
+
+  const existingBuffer = incomingMessageBuffers.get(from);
+
+  // Se já existe uma mensagem aguardando resposta,
+  // apenas junta esta nova mensagem ao mesmo bloco.
+  if (existingBuffer?.active) {
+    existingBuffer.messages.push(text);
+    existingBuffer.lastAt = now;
+
+    // Marca esta mensagem como processada para o WhatsApp não reenviar
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return {
+      shouldContinue: false,
+      text: ""
+    };
+  }
+
+  // Primeira mensagem: cria o buffer
+  const buffer = {
+    active: true,
+    messages: [text],
+    startedAt: now,
+    lastAt: now
+  };
+
+  incomingMessageBuffers.set(from, buffer);
+
+  // Espera até o lead parar de mandar mensagens por alguns segundos
+  while (Date.now() - buffer.startedAt < MAX_TYPING_WAIT_MS) {
+    const timeSinceLastMessage = Date.now() - buffer.lastAt;
+    const remainingQuietTime = TYPING_DEBOUNCE_MS - timeSinceLastMessage;
+
+    if (remainingQuietTime <= 0) {
+      break;
+    }
+
+    await delay(Math.min(remainingQuietTime, 1000));
+  }
+
+  const finalBuffer = incomingMessageBuffers.get(from) || buffer;
+  incomingMessageBuffers.delete(from);
+
+  return {
+    shouldContinue: true,
+    text: finalBuffer.messages.join("\n")
+  };
 }
 
 function clearTimers(from) {
@@ -2094,6 +2153,19 @@ clearTimers(from);
 
 if (message.text?.body) {
   text = message.text.body.trim();
+
+  // 🔥 Aguarda alguns segundos para ver se o lead vai mandar mais mensagens
+  const buffered = await collectBufferedText(from, text, messageId);
+
+  // Se esta mensagem foi apenas adicionada ao buffer,
+  // encerra este webhook sem chamar a IA.
+  if (!buffered.shouldContinue) {
+    return res.sendStatus(200);
+  }
+
+  // A primeira requisição continua com todas as mensagens juntas
+  text = buffered.text;
+
 } else if (message.audio?.id) {
   await sendWhatsAppMessage(from, "Vou ouvir seu áudio rapidinho e já te respondo 😊");
 
