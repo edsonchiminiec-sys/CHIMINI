@@ -2769,14 +2769,12 @@ if (state.closed) {
   return res.sendStatus(200);
 }
      
+// Atendimento humano deve ser marcado pelo botão "Atender" no dashboard.
+// Evita tentativa insegura de identificar lead por message.to no webhook.
 if (from === process.env.CONSULTANT_PHONE) {
-  const toLead = message.to;
-
-  if (toLead) {
-    await updateLeadStatus(toLead, "em_atendimento");
-  }
+  return res.sendStatus(200);
 }
-
+     
 clearTimers(from);
 
 if (
