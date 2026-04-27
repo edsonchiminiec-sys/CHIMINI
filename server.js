@@ -39,6 +39,47 @@ async function connectMongo() {
     }
   }
 }
+
+async function claimMessage(messageId) {
+  if (!messageId) return true;
+
+  await connectMongo();
+
+  try {
+    await db.collection("processed_messages").insertOne({
+      _id: messageId,
+      createdAt: new Date()
+    });
+
+    return true;
+  } catch (error) {
+    if (error.code === 11000) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function ensureIndexes() {
+  await connectMongo();
+
+  await db.collection("processed_messages").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 86400 }
+  );
+
+  await db.collection("leads").createIndex(
+    { user: 1 },
+    { unique: true }
+  );
+
+  await db.collection("conversations").createIndex(
+    { user: 1 },
+    { unique: true }
+  );
+}
+
 async function updateLeadStatus(user, status) {
   await connectMongo();
 
@@ -47,6 +88,7 @@ async function updateLeadStatus(user, status) {
     {
       $set: {
         status,
+        faseQualificacao: status,
         updatedAt: new Date()
       }
     }
@@ -93,10 +135,13 @@ async function saveLeadProfile(user, data = {}) {
 
   // 🔥 REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS
   const {
-    _id,
-    createdAt,
-    ...safeData
-  } = data || {};
+  _id,
+  createdAt,
+  crmEnviado,
+  crmEnviadoEm,
+  qualificadoEm,
+  ...safeData
+} = data || {};
 
   // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
   const insertData = {
@@ -2405,12 +2450,15 @@ if (
   return null;
 }
 async function sendFileOnce(from, key) {
-  const state = getState(from);
-
   if (!FILES[key]) return;
 
-  // 🚫 Se já enviou, não envia de novo
-  if (state.sentFiles[key]) {
+  await connectMongo();
+
+  const sentField = `sentFiles.${key}`;
+
+  const lead = await db.collection("leads").findOne({ user: from });
+
+  if (lead?.sentFiles?.[key]) {
     await sendWhatsAppMessage(
       from,
       "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se fez sentido pra você."
@@ -2418,13 +2466,20 @@ async function sendFileOnce(from, key) {
     return;
   }
 
-  // ✅ Marca ANTES de enviar
-  state.sentFiles[key] = true;
+  await db.collection("leads").updateOne(
+    { user: from },
+    {
+      $set: {
+        [sentField]: new Date(),
+        updatedAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
 
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
 }
-
 function getBrazilNow() {
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -2685,14 +2740,12 @@ const whatsappProfileName = contact?.profile?.name || "";
     messageId = message.id || null;
 
     if (messageId) {
-      cleanupProcessedMessages();
+  const canProcess = await claimMessage(messageId);
 
-      if (processedMessages.has(messageId) || processingMessages.has(messageId)) {
-        return res.sendStatus(200);
-      }
-
-      processingMessages.add(messageId);
-    }
+  if (!canProcess) {
+    return res.sendStatus(200);
+  }
+}
 
     const from = message.from;
 const state = getState(from);
@@ -2775,6 +2828,8 @@ if (!currentLead) {
     telefoneWhatsApp: from,
     nomeWhatsApp: currentLead.nomeWhatsApp || whatsappProfileName
   });
+
+  currentLead = await loadLeadProfile(from);
 }
      
 const historyText = history
@@ -3438,6 +3493,11 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     if (lockedLead.value) {
       console.log("🚀 Lead travado para envio ao CRM");
     }
+     if (lockedLead.value) {
+  console.log("🚀 Lead travado para envio ao CRM");
+}
+
+currentLead = await loadLeadProfile(from);
   }
 
   await notifyConsultant({
@@ -3739,7 +3799,7 @@ if (isBadResponse(respostaFinal)) {
      
      // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
 if (
-  state.sentFiles.folder &&
+  currentLead?.sentFiles?.folder &&
   /material|folder|te mandar|mandar o material|enviar o material|te enviar/i.test(respostaFinal)
 ) {
   respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Fez sentido pra você ou quer que eu te explique os pontos principais?";
@@ -3759,7 +3819,7 @@ if (mencionouPreAnalise && !podeIniciarColeta) {
 }
 // 🚨 BLOQUEIO DE COLETA PREMATURA — SEM VOLTAR FASE
 if (startedDataCollection && !podeIniciarColeta) {
-  const jaEnviouFolder = state.sentFiles?.folder === true;
+  const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
 
   if (jaFalouInvestimento && isPositiveConfirmation(text)) {
     respostaFinal = "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante: você está de acordo que o resultado depende da sua atuação nas vendas?";
@@ -4485,6 +4545,15 @@ app.get("/conversation/:user", async (req, res) => {
   }
 });
    
-app.listen(process.env.PORT || 3000, () => {
-  console.log("Servidor rodando...");
-});
+const PORT = process.env.PORT || 3000;
+
+ensureIndexes()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Servidor rodando na porta ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Erro ao iniciar servidor:", error);
+    process.exit(1);
+  });
