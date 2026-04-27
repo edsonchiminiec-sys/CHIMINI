@@ -183,6 +183,16 @@ function humanDelay(text = "") {
   return Math.min(total, 7000);
 }
 
+function shouldUseName(state) {
+  if (!state.lastNameUse) return true;
+
+  const now = Date.now();
+  const diff = now - state.lastNameUse;
+
+  // só permite usar o nome a cada 2 minutos
+  return diff > 2 * 60 * 1000;
+}
+
 async function collectBufferedText(from, text, messageId) {
   const now = Date.now();
 
@@ -517,6 +527,12 @@ IA:
 - Persuasiva sem pressão
 - Estilo WhatsApp
 - Até 3 blocos curtos
+
+- Quando houver nome informal do WhatsApp ou nome já informado, use o primeiro nome de forma natural e moderada.
+- Não chame o lead pelo nome em toda mensagem.
+- Use o nome em momentos importantes: início, validação, avanço de fase e coleta.
+- Ajuste pronomes conforme o gênero provável informado pelo sistema.
+- Se o gênero estiver indefinido, use linguagem neutra e evite masculino/feminino desnecessário.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 1 — APRESENTAÇÃO (inicio)
@@ -1582,6 +1598,35 @@ function getFirstName(name = "") {
   return cleanName.split(" ")[0];
 }
 
+function detectGenderByName(name = "") {
+  const firstName = getFirstName(name)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (!firstName) return "";
+
+  const maleNames = [
+    "edson", "joao", "jose", "antonio", "carlos", "paulo", "pedro",
+    "lucas", "marcos", "marcelo", "rafael", "rodrigo", "fernando",
+    "ricardo", "luiz", "luis", "bruno", "gustavo", "felipe", "andre",
+    "alexandre", "daniel", "diego", "fabio", "leandro", "mateus",
+    "matheus", "thiago", "tiago", "vinicius"
+  ];
+
+  const femaleNames = [
+    "maria", "ana", "julia", "juliana", "fernanda", "patricia",
+    "carla", "camila", "amanda", "bruna", "beatriz", "larissa",
+    "mariana", "aline", "vanessa", "renata", "leticia", "gabriela",
+    "cristina", "sandra", "monica", "priscila", "viviane", "daniela"
+  ];
+
+  if (maleNames.includes(firstName)) return "masculino";
+  if (femaleNames.includes(firstName)) return "feminino";
+
+  return "";
+}
+
 function onlyDigits(value = "") {
   return String(value).replace(/\D/g, "");
 }
@@ -2430,6 +2475,66 @@ function getDelayUntilNextBusinessTime() {
   return Math.max(next.getTime() - now.getTime(), 0);
 }
 
+function getSmartFollowupMessage(lead = {}, step = 1) {
+  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+  const prefixo = nome ? `${nome}, ` : "";
+
+  const fase = lead.faseQualificacao || lead.status || "";
+
+  if (fase === "morno") {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre os benefícios ou sobre o estoque em comodato? 😊`;
+    }
+
+    if (step === 2) {
+      return `${prefixo}quer que eu te explique de forma mais direta como funciona o estoque inicial?`;
+    }
+  }
+
+  if (fase === "qualificando") {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre o investimento ou sobre o que está incluso? 😊`;
+    }
+
+    if (step === 2) {
+      return `${prefixo}faz sentido pra você seguir nesse formato ou quer avaliar algum ponto antes?`;
+    }
+  }
+
+  if (
+    fase === "coletando_dados" ||
+    fase === "dados_parciais" ||
+    fase === "aguardando_dados"
+  ) {
+    if (step === 1) {
+      return `${prefixo}só falta continuarmos com seus dados para a pré-análise 😊`;
+    }
+
+    if (step === 2) {
+      return `${prefixo}quer seguir com a pré-análise agora? É bem rápido.`;
+    }
+  }
+
+  if (
+    fase === "aguardando_confirmacao_campo" ||
+    fase === "aguardando_confirmacao_dados"
+  ) {
+    if (step === 1) {
+      return `${prefixo}só preciso da sua confirmação para continuar 😊`;
+    }
+
+    if (step === 2) {
+      return `${prefixo}pode me confirmar se os dados estão corretos?`;
+    }
+  }
+
+  if (step === 1) {
+    return `${prefixo}ficou alguma dúvida sobre o programa? 😊`;
+  }
+
+  return `${prefixo}quer que eu te explique de forma mais direta?`;
+}
+
 function scheduleLeadFollowups(from) {
   const state = getState(from);
 
@@ -2728,6 +2833,15 @@ const extractedData = {
   ...(currentLead || {}),
   ...(rawExtracted || {})
 };
+
+// 🔥 Detecta gênero automaticamente quando tem nome
+if (extractedData.nome) {
+  const generoDetectado = detectGenderByName(extractedData.nome);
+
+  if (generoDetectado) {
+    extractedData.generoProvavel = generoDetectado;
+  }
+}
      
 function normalizeLeadFieldValue(field, value = "") {
   if (value === null || value === undefined) return "";
@@ -3421,13 +3535,25 @@ if (
 body: JSON.stringify({
   model: "gpt-4o-mini",
   messages: [
-    { role: "system", content: SYSTEM_PROMPT },
-    {
-      role: "system",
-      content: "IMPORTANTE: Não use dados pessoais encontrados no histórico antigo como nome, CPF, telefone, cidade ou estado. Na coleta atual, peça e confirme os dados novamente, começando pelo nome completo."
-    },
-    ...history
-  ]
+  { role: "system", content: SYSTEM_PROMPT },
+  {
+    role: "system",
+    content: `DADOS DE CONTEXTO DO LEAD:
+Nome informal do WhatsApp: ${currentLead?.nomeWhatsApp || "-"}
+Nome já informado: ${currentLead?.nome || "-"}
+Gênero provável: ${currentLead?.generoProvavel || extractedData?.generoProvavel || "indefinido"}
+
+Use o nome informal apenas de forma natural e moderada.
+Se o gênero provável for masculino, use pronomes masculinos quando necessário.
+Se o gênero provável for feminino, use pronomes femininos quando necessário.
+Se estiver indefinido, prefira linguagem neutra e evite frases como "interessado/interessada", "pronto/pronta".`
+  },
+  {
+    role: "system",
+    content: "IMPORTANTE: Não use dados pessoais encontrados no histórico antigo como nome, CPF, telefone, cidade ou estado. Na coleta atual, peça e confirme os dados novamente, começando pelo nome completo."
+  },
+  ...history
+]
 })
     });
 
@@ -3533,13 +3659,40 @@ if (
 
 let respostaFinal = resposta;
 
-     const nomeCurto = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
-     if (nomeCurto && !respostaFinal.toLowerCase().includes(nomeCurto.toLowerCase())) {
-  // adiciona o nome após o primeiro cumprimento
-  respostaFinal = respostaFinal.replace(
+     // 🔥 Ajuste fino de gênero (fallback)
+const genero = currentLead?.generoProvavel || extractedData?.generoProvavel;
+
+if (genero === "masculino") {
+  respostaFinal = respostaFinal
+    .replace(/\binteressada\b/gi, "interessado")
+    .replace(/\bpronta\b/gi, "pronto")
+    .replace(/\bpreparada\b/gi, "preparado");
+}
+
+if (genero === "feminino") {
+  respostaFinal = respostaFinal
+    .replace(/\binteressado\b/gi, "interessada")
+    .replace(/\bpronto\b/gi, "pronta")
+    .replace(/\bpreparado\b/gi, "preparada");
+}
+     
+const nomeCurto = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+const state = getState(from);
+
+if (
+  nomeCurto &&
+  shouldUseName(state) &&
+  !respostaFinal.toLowerCase().includes(nomeCurto.toLowerCase())
+) {
+  const novaResposta = respostaFinal.replace(
     /(Perfeito 😊|Ótimo 😊|Certo 😊|Legal 😊|Show 😊)/,
     `$1 ${nomeCurto},`
   );
+
+  if (novaResposta !== respostaFinal) {
+    respostaFinal = novaResposta;
+    state.lastNameUse = Date.now();
+  }
 }
      
      // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
