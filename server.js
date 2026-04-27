@@ -2259,39 +2259,7 @@ function normalizeLeadFieldValue(field, value = "") {
     .trim();
 }
 
-let pendingExtractedData = Object.fromEntries(
-  Object.entries(rawExtracted || {}).filter(([key, value]) => {
-    if (
-      value === null ||
-      value === undefined ||
-      value === "" ||
-      !REQUIRED_LEAD_FIELDS.includes(key)
-    ) {
-      return false;
-    }
 
-    const newValue = normalizeLeadFieldValue(key, value);
-    const savedValue = normalizeLeadFieldValue(key, currentLead?.[key]);
-
-    if (!newValue) {
-      return false;
-    }
-
-    if (savedValue && newValue === savedValue) {
-      return false;
-    }
-
-    if (
-      currentLead?.aguardandoConfirmacaoCampo &&
-      currentLead?.campoPendente === key &&
-      normalizeLeadFieldValue(key, currentLead?.valorPendente) === newValue
-    ) {
-      return false;
-    }
-
-    return true;
-  })
-);
 
 // 🔥 BLOQUEIO — só aceita o campo esperado
 const campoEsperado = currentLead?.campoEsperado;
