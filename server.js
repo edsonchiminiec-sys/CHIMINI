@@ -2304,16 +2304,8 @@ if (campoEsperado) {
   );
 }
      
-// 🔥 BLOQUEIO — só aceita o campo que o sistema está esperando
-const campoEsperado = currentLead?.campoEsperado;
-
-if (campoEsperado) {
-  pendingExtractedData = Object.fromEntries(
-    Object.entries(pendingExtractedData).filter(
-      ([key]) => key === campoEsperado
-    )
-  );
-}
+let pendingExtractedData = Object.fromEntries(
+  Object.entries(rawExtracted || {}).filter(([key, value]) => {
     if (
       value === null ||
       value === undefined ||
@@ -2326,16 +2318,10 @@ if (campoEsperado) {
     const newValue = normalizeLeadFieldValue(key, value);
     const savedValue = normalizeLeadFieldValue(key, currentLead?.[key]);
 
-    if (!newValue) {
-      return false;
-    }
+    if (!newValue) return false;
 
-    // Não pergunta novamente dado que já foi salvo/confirmado
-    if (savedValue && newValue === savedValue) {
-      return false;
-    }
+    if (savedValue && newValue === savedValue) return false;
 
-    // Não repete pergunta sobre o mesmo campo pendente
     if (
       currentLead?.aguardandoConfirmacaoCampo &&
       currentLead?.campoPendente === key &&
@@ -2347,6 +2333,17 @@ if (campoEsperado) {
     return true;
   })
 );
+
+// 🔥 BLOQUEIO — só aceita o campo esperado
+const campoEsperado = currentLead?.campoEsperado;
+
+if (campoEsperado) {
+  pendingExtractedData = Object.fromEntries(
+    Object.entries(pendingExtractedData).filter(
+      ([key]) => key === campoEsperado
+    )
+  );
+}
 
  function isNegativeConfirmation(value = "") {
   const t = String(value)
