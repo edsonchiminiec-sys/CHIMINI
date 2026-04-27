@@ -2297,8 +2297,7 @@ function canSendLeadToCRM(lead = {}) {
   lead.cpf &&
   lead.telefone &&
   lead.cidade &&
-  lead.estado &&
-  lead.nomeLimpo
+  lead.estado
 );
 }
 
@@ -2779,7 +2778,6 @@ if (!currentLead) {
 }
      
 const historyText = history
-  .filter(m => m.role === "user")
   .map(m => m.content || "")
   .join("\n");
 
