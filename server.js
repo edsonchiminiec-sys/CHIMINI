@@ -3360,6 +3360,38 @@ if (
 }
 
 let respostaFinal = resposta;
+     // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
+function isBadResponse(text = "") {
+  const t = text.toLowerCase().trim();
+
+  if (!t) return true;
+
+  // respostas genéricas ruins
+  const badPatterns = [
+    "como posso ajudar",
+    "em que posso ajudar",
+    "estou aqui para ajudar",
+    "fico à disposição",
+    "qualquer dúvida me avise",
+    "ok 👍",
+    "certo 👍"
+  ];
+
+  if (badPatterns.some(p => t.includes(p))) return true;
+
+  // muito curta (sem valor)
+  if (t.length < 15) return true;
+
+  // sem pergunta (sem condução)
+  if (!t.includes("?") && t.length < 80) return true;
+
+  return false;
+}
+
+// 🔥 CORREÇÃO AUTOMÁTICA
+if (isBadResponse(respostaFinal)) {
+  respostaFinal = "Perfeito 😊 Me conta: o que você quer entender melhor sobre o programa?";
+}
      
      // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
 if (
