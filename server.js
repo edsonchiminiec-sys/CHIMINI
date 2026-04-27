@@ -2238,15 +2238,25 @@ const explicitCorrection =
     ? extractExplicitCorrection(text)
     : {};
      
+const fasesQuePermitemExtracao = [
+  "coletando_dados",
+  "dados_parciais",
+  "aguardando_dados",
+  "aguardando_confirmacao_campo",
+  "aguardando_confirmacao_dados",
+  "corrigir_dado",
+  "corrigir_dado_final",
+  "aguardando_valor_correcao_final"
+];
+
+const mensagemPareceConterDados =
+  /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(text) ||
+  /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(text) ||
+  /(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4}/.test(text);
+
 const podeTentarExtrairDados =
-  currentLead?.faseQualificacao === "coletando_dados" ||
-  currentLead?.faseQualificacao === "dados_parciais" ||
-  currentLead?.faseQualificacao === "aguardando_dados" ||
-  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
-  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
-  currentLead?.faseQualificacao === "corrigir_dado" ||
-  currentLead?.faseQualificacao === "corrigir_dado_final" ||
-  currentLead?.faseQualificacao === "aguardando_valor_correcao_final";
+  fasesQuePermitemExtracao.includes(currentLead?.faseQualificacao) ||
+  mensagemPareceConterDados;
 
 const rawExtracted =
   Object.keys(explicitCorrection).length > 0
@@ -2434,15 +2444,7 @@ if (
 const isOnlyConfirmationText =
   isPositiveConfirmation(text) || isNegativeConfirmation(text);
 
-const podeExtrairDadosPessoais =
-  currentLead?.faseQualificacao === "coletando_dados" ||
-  currentLead?.faseQualificacao === "dados_parciais" ||
-  currentLead?.faseQualificacao === "aguardando_dados" ||
-  currentLead?.faseQualificacao === "aguardando_confirmacao_campo" ||
-  currentLead?.faseQualificacao === "aguardando_confirmacao_dados" ||
-  currentLead?.faseQualificacao === "corrigir_dado" ||
-  currentLead?.faseQualificacao === "corrigir_dado_final" ||
-  currentLead?.faseQualificacao === "aguardando_valor_correcao_final";
+const podeExtrairDadosPessoais = podeTentarExtrairDados;
 
 if (
   podeExtrairDadosPessoais &&
