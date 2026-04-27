@@ -2769,6 +2769,13 @@ const state = getState(from);
 
 const leadBeforeProcessing = await loadLeadProfile(from);
 
+     console.log("🔎 Lead antes do processamento:", {
+  from,
+  status: leadBeforeProcessing?.status || null,
+  faseQualificacao: leadBeforeProcessing?.faseQualificacao || null,
+  stateClosed: state.closed
+});
+
 if (
   leadBeforeProcessing?.status === "enviado_crm" ||
   leadBeforeProcessing?.faseQualificacao === "enviado_crm" ||
@@ -2779,18 +2786,30 @@ if (
   leadBeforeProcessing?.status === "perdido" ||
   leadBeforeProcessing?.faseQualificacao === "perdido"
 ) {
+  console.log("⛔ Lead bloqueado por status/fase:", {
+    status: leadBeforeProcessing?.status,
+    faseQualificacao: leadBeforeProcessing?.faseQualificacao
+  });
   return;
 }
 
 if (state.closed) {
+  console.log("⛔ Lead bloqueado por state.closed em memória");
   return;
 }
      
 // Atendimento humano deve ser marcado pelo botão "Atender" no dashboard.
 // Evita tentativa insegura de identificar lead por message.to no webhook.
-if (from === process.env.CONSULTANT_PHONE) {
-  return;
-}
+
+     
+     // BLOQUEIO DESATIVADO PARA TESTE.
+// Se o número que está testando for igual ao CONSULTANT_PHONE,
+// o bot recebia a mensagem e parava aqui sem responder.
+// if (from === process.env.CONSULTANT_PHONE) {
+//   console.log("⛔ Mensagem ignorada: número é CONSULTANT_PHONE");
+//   return;
+// }
+
      
 clearTimers(from);
 
