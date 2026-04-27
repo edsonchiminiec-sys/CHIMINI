@@ -2546,14 +2546,14 @@ function scheduleLeadFollowups(from) {
   state.followupTimers = [];
 
   const followups = [
-    {
-      delay: 6 * 60 * 1000,
-      message: "Oi 😊 ficou alguma dúvida sobre o programa?"
-    },
-    {
-      delay: 30 * 60 * 1000,
-      message: "Passando só pra saber se você conseguiu ver minha mensagem. Quer que eu te explique de forma mais direta?"
-    },
+  {
+    delay: 6 * 60 * 1000,
+    getMessage: (lead) => getSmartFollowupMessage(lead, 1)
+  },
+  {
+    delay: 30 * 60 * 1000,
+    getMessage: (lead) => getSmartFollowupMessage(lead, 2)
+  },
     {
       delay: 6 * 60 * 60 * 1000,
       message: "Passando só para saber se ficou alguma dúvida sobre o programa 😊",
@@ -2638,8 +2638,14 @@ await sendWhatsAppMessage(from, followup.message);
           return;
         }
 
-        await sendWhatsAppMessage(from, followup.message);
+        const leadAtual = await loadLeadProfile(from);
 
+const messageToSend = followup.getMessage
+  ? followup.getMessage(leadAtual)
+  : followup.message;
+
+await sendWhatsAppMessage(from, messageToSend);
+         
         if (followup.closeAfter) {
           currentState.closed = true;
           clearTimers(from);
