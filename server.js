@@ -2585,6 +2585,8 @@ const remainingPendingData = Object.fromEntries(
   })
 );
 
+     const nextPendingField = Object.keys(remainingPendingData)[0];
+
 if (nextPendingField) {
   await saveLeadProfile(from, {
     ...dadosConfirmadosDoCampo,
@@ -2630,10 +2632,8 @@ Está correto?`;
   valorPendente: null,
   campoEsperado: null,
   aguardandoConfirmacaoCampo: false,
-  aguardandoConfirmacao: true,
-  dadosConfirmadosPeloLead: false,
-  faseQualificacao: "aguardando_confirmacao_dados",
-  status: "aguardando_confirmacao_dados"
+  faseQualificacao: "dados_parciais",
+  status: "dados_parciais"
 });
    
   const labels = {
@@ -2662,6 +2662,7 @@ Está correto?`;
     estadoPendente: null,
     campoPendente: null,
     valorPendente: null,
+    campoEsperado: null,
     aguardandoConfirmacaoCampo: false,
     aguardandoConfirmacao: true,
     dadosConfirmadosPeloLead: false,
