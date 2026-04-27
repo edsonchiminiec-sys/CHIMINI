@@ -3480,9 +3480,15 @@ const startedDataCollection =
   respostaLower.includes("vamos seguir com a pré-análise") ||
   respostaLower.includes("seguir com a pré-análise aos poucos");
 
+     const deveForcarInicioColeta =
+  podeIniciarColeta &&
+  currentLead?.faseQualificacao !== "coletando_dados" &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !currentLead?.aguardandoConfirmacao;
+
 // 🔒 Só inicia coleta se realmente pode iniciar
 if (
-  startedDataCollection &&
+  (startedDataCollection || deveForcarInicioColeta) &&
   podeIniciarColeta &&
   currentLead?.faseQualificacao !== "coletando_dados"
 ) {
@@ -3506,6 +3512,8 @@ if (
     faseQualificacao: "coletando_dados",
     status: "coletando_dados"
   });
+
+  resposta = "Perfeito 😊 Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
 let respostaFinal = resposta;
