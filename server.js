@@ -3051,8 +3051,10 @@ const startedDataCollection =
   respostaLower.includes("vamos seguir com a pré-análise") ||
   respostaLower.includes("seguir com a pré-análise aos poucos");
 
+// 🔒 Só inicia coleta se realmente pode iniciar
 if (
   startedDataCollection &&
+  podeIniciarColeta &&
   currentLead?.faseQualificacao !== "coletando_dados"
 ) {
   await saveLeadProfile(from, {
