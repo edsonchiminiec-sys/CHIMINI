@@ -1077,6 +1077,32 @@ async function sendWhatsAppMessage(to, body) {
   }
 }
 
+async function sendTypingIndicator(messageId) {
+  if (!messageId) return;
+
+  const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      status: "read",
+      message_id: messageId,
+      typing_indicator: {
+        type: "text"
+      }
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao enviar typing indicator:", data);
+  }
+}
+
 async function notifyConsultant(lead) {
   if (!process.env.CONSULTANT_PHONE) return;
 
@@ -3073,22 +3099,19 @@ if (multiDataRequestPattern.test(respostaFinal)) {
   respostaFinal = "Perfeito 😊 Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
-// 🔥 Simulação avançada de digitação humana
+// 🔥 Mostra "digitando..." real no WhatsApp
+await sendTypingIndicator(messageId);
 
 const typingTime = humanDelay(respostaFinal);
 
-// pausa de leitura da mensagem do cliente
-await delay(1000);
-
-// simula "pensando"
+// pausa curta de leitura
 await delay(800);
 
-// simula digitação proporcional ao tamanho
+// tempo proporcional ao tamanho da resposta
 await delay(typingTime);
 
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
-
 history.push({ role: "assistant", content: respostaFinal });
      
 await saveConversation(from, history);
