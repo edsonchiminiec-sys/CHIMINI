@@ -158,13 +158,14 @@ const MAX_TYPING_WAIT_MS = 9000; // nunca espera mais de 9s no total
 function getState(from) {
   if (!leadState[from]) {
     leadState[from] = {
-      folderSent: false,
-      sentFiles: {},
-      closed: false,
-      inactivityTimer: null,
-      shortTimer: null,
-      inactivityFollowupCount: 0
-    };
+  folderSent: false,
+  sentFiles: {},
+  closed: false,
+  inactivityTimer: null,
+  shortTimer: null,
+  followupTimers: [],
+  inactivityFollowupCount: 0
+};
   }
 
   return leadState[from];
@@ -246,6 +247,14 @@ function clearTimers(from) {
   if (state.shortTimer) {
     clearTimeout(state.shortTimer);
     state.shortTimer = null;
+  }
+
+  if (Array.isArray(state.followupTimers)) {
+    for (const timer of state.followupTimers) {
+      clearTimeout(timer);
+    }
+
+    state.followupTimers = [];
   }
 }
 
@@ -2335,6 +2344,56 @@ async function sendFileOnce(from, key) {
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
 }
+
+function getBrazilNow() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
+}
+
+function isBusinessTime() {
+  const now = getBrazilNow();
+  const day = now.getDay(); // 0 = domingo, 6 = sábado
+  const hour = now.getHours();
+
+  const isWeekend = day === 0 || day === 6;
+
+  if (isWeekend) {
+    return false;
+  }
+
+  return hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
+}
+
+function getDelayUntilNextBusinessTime() {
+  const now = getBrazilNow();
+  const next = new Date(now);
+
+  next.setHours(BUSINESS_START_HOUR, 0, 0, 0);
+
+  if (
+    now.getHours() >= BUSINESS_END_HOUR ||
+    now.getDay() === 6 ||
+    now.getDay() === 0
+  ) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  while (next.getDay() === 0 || next.getDay() === 6) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  if (
+    now.getHours() < BUSINESS_START_HOUR &&
+    now.getDay() !== 0 &&
+    now.getDay() !== 6
+  ) {
+    next.setDate(now.getDate());
+  }
+
+  return Math.max(next.getTime() - now.getTime(), 0);
+}
+
 function scheduleInactivityFollowup(from) {
   const state = getState(from);
 
