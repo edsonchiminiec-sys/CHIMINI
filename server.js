@@ -3547,7 +3547,13 @@ function isBadResponse(text = "") {
 
 // 🔥 CORREÇÃO AUTOMÁTICA
 if (isBadResponse(respostaFinal)) {
-  respostaFinal = "Perfeito 😊 Me conta: o que você quer entender melhor sobre o programa?";
+  if (currentLead?.faseQualificacao === "coletando_dados") {
+    respostaFinal = "Perfeito 😊 Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
+  } else if (podeIniciarColeta) {
+    respostaFinal = "Perfeito 😊 Podemos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
+  } else {
+    respostaFinal = "Perfeito 😊 Me conta: o que você quer entender melhor sobre o programa?";
+  }
 }
      
      // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
