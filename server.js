@@ -2492,12 +2492,24 @@ if (
 
           const businessTimer = setTimeout(async () => {
             try {
-              const latestState = getState(from);
+const latestState = getState(from);
 
-              if (latestState.closed) return;
+if (latestState.closed) return;
 
-              await sendWhatsAppMessage(from, followup.message);
+const latestLead = await loadLeadProfile(from);
 
+if (
+  latestLead?.status === "em_atendimento" ||
+  latestLead?.faseQualificacao === "em_atendimento" ||
+  latestLead?.status === "enviado_crm" ||
+  latestLead?.faseQualificacao === "enviado_crm"
+) {
+  latestState.closed = true;
+  clearTimers(from);
+  return;
+}
+
+await sendWhatsAppMessage(from, followup.message);
               if (followup.closeAfter) {
                 latestState.closed = true;
                 clearTimers(from);
