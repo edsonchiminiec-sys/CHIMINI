@@ -2472,7 +2472,20 @@ function scheduleLeadFollowups(from) {
       try {
         const currentState = getState(from);
 
-        if (currentState.closed) return;
+if (currentState.closed) return;
+
+const latestLead = await loadLeadProfile(from);
+
+if (
+  latestLead?.status === "em_atendimento" ||
+  latestLead?.faseQualificacao === "em_atendimento" ||
+  latestLead?.status === "enviado_crm" ||
+  latestLead?.faseQualificacao === "enviado_crm"
+) {
+  currentState.closed = true;
+  clearTimers(from);
+  return;
+}
 
         if (followup.businessOnly && !isBusinessTime()) {
           const nextBusinessDelay = getDelayUntilNextBusinessTime();
