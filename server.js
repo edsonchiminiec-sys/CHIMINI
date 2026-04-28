@@ -2279,34 +2279,33 @@ Estado: ${normalizeUF(data.estado || "-")}
 Esses dados estão corretos?`;
 }
 
-function getMissingFieldQuestion(field) {
-  const variations = {
-    nome: [
-      "Perfeito. Para continuar, preciso do seu nome completo.",
-      "Pode me enviar seu nome completo, por favor?",
-      "Só preciso do seu nome completo para seguir."
-    ],
-    cpf: [
-      "Agora preciso do seu CPF, pode me enviar?",
-      "Pode me passar seu CPF, por favor?",
-      "Só falta seu CPF para avançarmos."
-    ],
-    telefone: [
-      "Pode me enviar seu telefone com DDD?",
-      "Qual é o melhor telefone para contato?",
-      "Me passa seu número com DDD, por favor."
-    ],
-    cidade: [
-  "Qual sua cidade e estado? Pode mandar assim: Duartina SP.",
-  "Pode me informar sua cidade e estado? Exemplo: Bauru SP.",
-  "Só falta sua cidade e estado para continuar."
-],
-estado: [
-  "Qual sua cidade e estado? Pode mandar assim: Duartina SP.",
-  "Pode me informar sua cidade e estado? Exemplo: Bauru SP.",
-  "Só falta sua cidade e estado para continuar."
-]
-  };
+const variations = {
+  nome: [
+    "Perfeito. Pra gente já ir adiantando sua ativação, me manda seu nome completo?",
+    "Boa! Vamos começar rapidinho. Qual seu nome completo?",
+    "Show 😊! Me passa seu nome completo pra gente dar sequência?"
+  ],
+  cpf: [
+    "Perfeito 👍 Agora me passa seu CPF pra gente seguir com a pré-análise?",
+    "Top 😊 Pode me enviar seu CPF?",
+    "Agora preciso do seu CPF pra continuar, pode me mandar?"
+  ],
+  telefone: [
+    "Obrigado! Qual o melhor número com DDD pra contato?",
+    "Me passa seu telefone com DDD pra gente seguir?",
+    "Agora seu número com DDD pra contato, por favor 😊"
+  ],
+  cidade: [
+    "👍... Qual sua cidade?" ,
+    "Agora me diz sua cidade, por gentileza?",
+    "Por favor, qual sua cidade?"
+  ],
+  estado: [
+    "Perfeito. Qual seu estado?",
+    "Agora me diz seu estado, por favor?",
+    "Só pra finalizar, qual seu estado?"
+  ]
+};
 
   const options = variations[field] || ["Preciso de uma informação para continuar."];
 
