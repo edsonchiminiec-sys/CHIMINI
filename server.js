@@ -2279,6 +2279,8 @@ Estado: ${normalizeUF(data.estado || "-")}
 Esses dados estão corretos?`;
 }
 
+
+
 const variations = {
   nome: [
     "Perfeito. Pra gente já ir adiantando sua ativação, me manda seu nome completo?",
@@ -2287,7 +2289,7 @@ const variations = {
   ],
   cpf: [
     "Perfeito 👍 Agora me passa seu CPF pra gente seguir com a pré-análise?",
-    "Top 😊 Pode me enviar seu CPF?",
+    "Top!!! Pode me enviar seu CPF?",
     "Agora preciso do seu CPF pra continuar, pode me mandar?"
   ],
   telefone: [
