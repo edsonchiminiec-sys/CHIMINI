@@ -3714,12 +3714,13 @@ const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confi
 if (leadStatus === "afiliado") {
   const isAlternative = isAffiliateAlternativeOpportunity(text);
 
-  await saveLeadProfile(from, {
-    status: "afiliado",
-    faseQualificacao: "afiliado",
-    interesseAfiliado: true,
-    ultimaMensagem: text
-  });
+await saveLeadProfile(from, {
+  status: "afiliado",
+  faseQualificacao: "afiliado",
+  interesseAfiliado: true,
+  origemConversao: isAffiliateAlternativeOpportunity(text) ? "recuperado_objecao" : "interesse_direto",
+  ultimaMensagem: text
+});
 
   const affiliateMsg = buildAffiliateResponse(isAlternative);
 
@@ -3761,10 +3762,11 @@ const faseMap = {
   afiliado: "afiliado"
 };
 
-  await saveLeadProfile(from, {
-    status: statusMap[leadStatus] || leadStatus,
-    faseQualificacao: faseMap[leadStatus] || leadStatus
-  });
+ await saveLeadProfile(from, {
+  status: statusMap[leadStatus] || leadStatus,
+  faseQualificacao: faseMap[leadStatus] || leadStatus,
+  origemConversao: leadStatus === "afiliado" ? "afiliado" : "homologado"
+});
 
   currentLead = await loadLeadProfile(from);
 }
@@ -4587,7 +4589,8 @@ app.get("/conversation/:user", async (req, res) => {
 
       return `
         <tr>
-          <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
+  <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
+  <td>${escapeHtml(lead.origemConversao || "-")}</td>
 <td>${escapeHtml(lead.nome || "-")}</td>
 <td>${escapeHtml(phone)}</td>
 <td>${escapeHtml(lead.cpf || "-")}</td>
@@ -4860,8 +4863,9 @@ app.get("/conversation/:user", async (req, res) => {
               <option value="">Todos os status</option>
               <option value="novo" ${statusFilter === "novo" ? "selected" : ""}>Novo</option>
               <option value="morno" ${statusFilter === "morno" ? "selected" : ""}>Morno</option>
-              <option value="qualificando" ${statusFilter === "qualificando" ? "selected" : ""}>Qualificando</option>
-              <option value="pre_analise" ${statusFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
+             <option value="qualificando" ${statusFilter === "qualificando" ? "selected" : ""}>Qualificando</option>
+<option value="afiliado" ${statusFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
+<option value="pre_analise" ${statusFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
               <option value="quente" ${statusFilter === "quente" ? "selected" : ""}>Quente</option>
               <option value="em_atendimento" ${statusFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
               <option value="fechado" ${statusFilter === "fechado" ? "selected" : ""}>Fechado</option>
@@ -4887,7 +4891,8 @@ app.get("/conversation/:user", async (req, res) => {
           <table>
             <thead>
               <tr>
-                <th><a href="${makeSortLink("status", "Status")}">Status</a></th>
+               <th><a href="${makeSortLink("status", "Status")}">Status</a></th>
+<th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
 <th>CPF</th>
@@ -4898,7 +4903,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-              ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
+             ${rows || `<tr><td colspan="9">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
