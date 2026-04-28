@@ -2411,6 +2411,7 @@ const variations = {
   ]
 };
 
+  function getMissingFieldQuestion(field) {
   const options = variations[field] || ["Preciso de uma informação para continuar."];
 
   return options[Math.floor(Math.random() * options.length)];
@@ -2462,8 +2463,110 @@ function canSendLeadToCRM(lead = {}) {
 );
 }
 
+function normalizeTextForIntent(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isAffiliateIntent(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    t.includes("afiliado") ||
+    t.includes("afiliados") ||
+    t.includes("afiliacao") ||
+    t.includes("link de afiliado") ||
+    t.includes("link para vender") ||
+    t.includes("vender pela internet") ||
+    t.includes("vender online") ||
+    t.includes("divulgar online") ||
+    t.includes("divulgar produtos online") ||
+    t.includes("redes sociais") ||
+    t.includes("instagram") ||
+    t.includes("facebook") ||
+    t.includes("tiktok") ||
+    t.includes("engajamento") ||
+    t.includes("indicacao online") ||
+    t.includes("indicar online") ||
+    t.includes("quero divulgar") ||
+    t.includes("divulgar produtos")
+  );
+}
+
+function isAffiliateAlternativeOpportunity(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    t.includes("muito caro") ||
+    t.includes("achei caro") ||
+    t.includes("taxa alta") ||
+    t.includes("nao quero pagar") ||
+    t.includes("não quero pagar") ||
+    t.includes("nao tenho dinheiro") ||
+    t.includes("não tenho dinheiro") ||
+    t.includes("sem dinheiro") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão") ||
+    t.includes("nao quero pagar adesao") ||
+    t.includes("não quero pagar adesão") ||
+    t.includes("nao quero estoque") ||
+    t.includes("não quero estoque") ||
+    t.includes("nao quero produto fisico") ||
+    t.includes("não quero produto físico") ||
+    t.includes("nao quero mexer com estoque") ||
+t.includes("não quero mexer com estoque")
+
+  );
+}
+
+function buildAffiliateResponse(isAlternative = false) {
+  if (isAlternative) {
+    return `Entendi 😊 Nesse caso, talvez o Programa de Afiliados IQG faça mais sentido como uma alternativa mais simples.
+
+Ele é outro projeto, separado do Parceiro Homologado, mas você pode participar dos dois se fizer sentido para você.
+
+No afiliado, você não precisa ter estoque, não precisa comprar produtos e não passa pela pré-análise do Homologado. Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+O cadastro e acesso são por aqui:
+https://minhaiqg.com.br/
+
+Acesse o portal para fazer seu cadastro e consultar mais informações do programa.`;
+  }
+
+  return `Perfeito 😊 Nesse caso, o caminho certo é o Programa de Afiliados IQG.
+
+Ele é diferente do Parceiro Homologado. No afiliado, você não precisa ter estoque, não precisa comprar produtos e não passa pela pré-análise do Homologado.
+
+Funciona assim: você faz o cadastro, gera seus links exclusivos e divulga os produtos nas redes sociais, WhatsApp, Instagram, Facebook ou outros canais. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+Principais pontos:
+• não precisa de estoque;
+• não exige investimento inicial;
+• você divulga por link;
+• recebe comissão por vendas validadas;
+• o saque pode ser feito a partir de R$100;
+• há materiais prontos para divulgação.
+
+O cadastro e acesso são por aqui:
+https://minhaiqg.com.br/
+
+Acesse o portal para fazer seu cadastro e consultar mais informações do programa.`;
+}
+
 function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
+
+// 🔥 PRIORIDADE MÁXIMA — intenção de afiliado
+if (isAffiliateIntent(text)) {
+  return "afiliado";
+}
+
+// 🔥 OPORTUNIDADE — alternativa ao homologado
+if (isAffiliateAlternativeOpportunity(text)) {
+  return "afiliado";
+}
 
   const hasInterest =
     t.includes("quero começar") ||
@@ -2650,6 +2753,14 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   const prefixo = nome ? `${nome}, ` : "";
 
   const fase = lead.faseQualificacao || lead.status || "";
+
+if (fase === "afiliado") {
+  if (step === 1) {
+    return `${prefixo}conseguiu acessar o cadastro de afiliado? 😊 O link é: https://minhaiqg.com.br/`;
+  }
+
+  return `${prefixo}se quiser começar sem estoque e sem taxa de adesão do Homologado, o afiliado pode ser um bom primeiro passo. As informações e cadastro estão aqui: https://minhaiqg.com.br/`;
+}
 
   if (fase === "morno") {
     if (step === 1) {
@@ -3600,6 +3711,30 @@ const leadStatus = classifyLead(text, extractedData, history);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
+if (leadStatus === "afiliado") {
+  const isAlternative = isAffiliateAlternativeOpportunity(text);
+
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    interesseAfiliado: true,
+    ultimaMensagem: text
+  });
+
+  const affiliateMsg = buildAffiliateResponse(isAlternative);
+
+  await sendWhatsAppMessage(from, affiliateMsg);
+  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
 // 🔥 ATUALIZA STATUS / FASE DO CRM COM BASE NA CLASSIFICAÇÃO
 // Antes o sistema classificava, mas não salvava no Mongo.
 // Por isso o dashboard não mudava de status.
@@ -3609,19 +3744,22 @@ if (
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-  const statusMap = {
-    frio: "perdido",
-    morno: "morno",
-    qualificando: "qualificando",
-    pre_analise: "pre_analise"
-  };
+  
+const statusMap = {
+  frio: "perdido",
+  morno: "morno",
+  qualificando: "qualificando",
+  pre_analise: "pre_analise",
+  afiliado: "afiliado"
+};
 
-  const faseMap = {
-    frio: "perdido",
-    morno: "morno",
-    qualificando: "qualificando",
-    pre_analise: "pre_analise"
-  };
+const faseMap = {
+  frio: "perdido",
+  morno: "morno",
+  qualificando: "qualificando",
+  pre_analise: "pre_analise",
+  afiliado: "afiliado"
+};
 
   await saveLeadProfile(from, {
     status: statusMap[leadStatus] || leadStatus,
@@ -4175,6 +4313,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "novo",
   "morno",
   "qualificando",
+"afiliado",
   "dados_parciais",
   "aguardando_confirmacao_dados",
   "dados_confirmados",
