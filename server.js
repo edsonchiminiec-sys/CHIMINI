@@ -143,9 +143,20 @@ async function saveLeadProfile(user, data = {}) {
 } = data || {};
 
   // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
+   
   const insertData = {
-    createdAt: new Date()
-  };
+  createdAt: new Date(),
+
+  // 🔥 NOVO: controle real do funil
+  etapas: {
+    programa: false,
+    beneficios: false,
+    estoque: false,
+    responsabilidades: false,
+    investimento: false,
+    compromisso: false
+  }
+};
 
   // 🔥 DEFINE STATUS INICIAL SE NÃO EXISTIR
   if (!safeData.status) {
@@ -2244,6 +2255,34 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+function isStrongBuyIntent(text = "") {
+  const t = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const patterns = [
+    "vamos negociar",
+    "vamos fechar",
+    "quero entrar",
+    "quero comecar",
+    "quero começar",
+    "como faco pra entrar",
+    "como faço pra entrar",
+    "bora",
+    "bora seguir",
+    "quero seguir",
+    "pode iniciar",
+    "vamos seguir",
+    "tenho interesse",
+    "quero participar",
+    "quero aderir"
+  ];
+
+  return patterns.some(p => t.includes(p));
+}
+
 const VALID_UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
   "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
@@ -2314,6 +2353,83 @@ async function saveHistoryStep(from, history, userText, botText, isAudio = false
 
   history = history.slice(-20);
   await saveConversation(from, history);
+}
+
+function canStartDataCollection(lead = {}) {
+  const e = lead.etapas || {};
+
+  return Boolean(
+    e.programa &&
+    e.beneficios &&
+    e.estoque &&
+    e.responsabilidades &&
+    e.investimento &&
+    e.compromisso &&
+    lead.interesseReal === true
+  );
+}
+
+function canStartDataCollection(lead = {}) {
+  const e = lead.etapas || {};
+
+  return Boolean(
+    e.programa &&
+    e.beneficios &&
+    e.estoque &&
+    e.responsabilidades &&
+    e.investimento &&
+    e.compromisso &&
+    lead.interesseReal === true
+  );
+}
+
+// 👇 COLE AQUI EMBAIXO 👇
+function getNextFunnelStepMessage(lead = {}) {
+  const e = lead.etapas || {};
+
+  if (!e.programa) {
+    return "Vou te explicar de forma direta como funciona o programa.\n\nÉ uma parceria comercial onde você vende produtos da IQG com suporte da indústria e uma estrutura pensada para começar de forma organizada.";
+  }
+
+  if (!e.beneficios) {
+    return "Ótimo! O próximo ponto são os benefícios.\n\nVocê não começa sozinho: recebe suporte, materiais, treinamento e orientação para vender com mais segurança.";
+  }
+
+  if (!e.estoque) {
+    return "Vamos falar do estoque inicial.\n\nVocê começa com um lote estratégico de produtos em comodato, ou seja, ele fica com você para operação e demonstração, mas continua sendo da IQG.";
+  }
+
+  if (!e.responsabilidades) {
+    return "Agora preciso alinhar as responsabilidades.\n\nComo parceiro, você fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.";
+  }
+
+  if (!e.investimento) {
+    return "Show! Agora falta explicar o investimento com transparência.\n\nExiste uma adesão de R$ 1.990 para ativação no programa, suporte, treinamento e liberação do lote inicial em comodato. Pode ser parcelado em até 10x de R$ 199 no cartão.";
+  }
+
+  if (!e.compromisso) {
+    return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
+  }
+
+  if (lead.interesseReal !== true) {
+    return "Faz sentido pra você seguir para a pré-análise agora?";
+  }
+
+  return "Perfeito! Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
+}
+
+function getCurrentFunnelStage(lead = {}) {
+  const e = lead.etapas || {};
+
+  if (!e.programa) return 1;
+  if (!e.beneficios) return 2;
+  if (!e.estoque) return 3;
+  if (!e.responsabilidades) return 4;
+  if (!e.investimento) return 5;
+  if (!e.compromisso) return 6;
+  if (lead.interesseReal !== true) return 7;
+
+  return 8; // coleta
 }
 
 function isRepeatedDigits(value = "") {
@@ -2461,6 +2577,32 @@ function canSendLeadToCRM(lead = {}) {
   lead.cidade &&
   lead.estado
 );
+}
+
+function normalizeForRepeatCheck(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isRepeatedBotReply(newReply = "", history = []) {
+  const normalizedNewReply = normalizeForRepeatCheck(newReply);
+
+  if (!normalizedNewReply) return false;
+
+  const lastAssistantMessage = [...history]
+    .reverse()
+    .find(m => m.role === "assistant")?.content || "";
+
+  const normalizedLastReply = normalizeForRepeatCheck(lastAssistantMessage);
+
+  if (!normalizedLastReply) return false;
+
+  return normalizedNewReply === normalizedLastReply;
 }
 
 function normalizeTextForIntent(text = "") {
@@ -3708,6 +3850,7 @@ if (changedConfirmedData) {
 }
 
 const leadStatus = classifyLead(text, extractedData, history);
+     const strongIntent = isStrongBuyIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
@@ -3739,6 +3882,21 @@ await saveLeadProfile(from, {
 // 🔥 ATUALIZA STATUS / FASE DO CRM COM BASE NA CLASSIFICAÇÃO
 // Antes o sistema classificava, mas não salvava no Mongo.
 // Por isso o dashboard não mudava de status.
+
+     // 🔥 PRIORIDADE: LEAD QUENTE (INTENÇÃO FORTE)
+if (
+  strongIntent &&
+  currentLead?.faseQualificacao !== "coletando_dados" &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    interesseReal: true,
+    faseQualificacao: "qualificando",
+    status: "qualificando"
+  });
+}
+     
 if (
   leadStatus &&
   !currentLead?.aguardandoConfirmacaoCampo &&
@@ -4039,12 +4197,7 @@ const leadConfirmouCiencia =
     historyText.includes("depende da sua atuacao nas vendas")
   );
 
-const podeIniciarColeta =
-  jaExplicouPrograma &&
-  jaFalouBeneficios &&
-  jaFalouRegras &&
-  jaFalouInvestimento &&
-  leadConfirmouCiencia;
+const podeIniciarColeta = canStartDataCollection(currentLead);
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
@@ -4089,6 +4242,40 @@ if (
 }
 
 let respostaFinal = resposta;
+
+     // 🚫 BLOQUEIO DE REGRESSÃO DE FASE
+const etapaAtual = getCurrentFunnelStage(currentLead);
+const respostaLowerCheck = respostaFinal.toLowerCase();
+
+let etapaDetectadaNaResposta = etapaAtual;
+
+if (respostaLowerCheck.includes("parceria") || respostaLowerCheck.includes("programa")) {
+  etapaDetectadaNaResposta = 1;
+}
+
+if (respostaLowerCheck.includes("benef")) {
+  etapaDetectadaNaResposta = 2;
+}
+
+if (respostaLowerCheck.includes("estoque") || respostaLowerCheck.includes("comodato")) {
+  etapaDetectadaNaResposta = 3;
+}
+
+if (respostaLowerCheck.includes("respons")) {
+  etapaDetectadaNaResposta = 4;
+}
+
+if (respostaLowerCheck.includes("1.990") || respostaLowerCheck.includes("1990") || respostaLowerCheck.includes("investimento")) {
+  etapaDetectadaNaResposta = 5;
+}
+
+if (respostaLowerCheck.includes("resultado depende")) {
+  etapaDetectadaNaResposta = 6;
+}
+
+if (etapaDetectadaNaResposta < etapaAtual) {
+  respostaFinal = getNextFunnelStepMessage(currentLead);
+}
 
      // 🔥 Ajuste fino de gênero (fallback)
 const genero = currentLead?.generoProvavel || extractedData?.generoProvavel;
@@ -4184,20 +4371,36 @@ if (mencionouPreAnalise && !podeIniciarColeta) {
       : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
   }
 }
-// 🚨 BLOQUEIO DE COLETA PREMATURA — SEM VOLTAR FASE
+// 🚨 BLOQUEIO DE COLETA PREMATURA — COM AVANÇO CONTROLADO E SEM LOOP
 if (startedDataCollection && !podeIniciarColeta) {
   const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
 
+  const ultimaRespostaBot = [...history]
+    .reverse()
+    .find(m => m.role === "assistant")?.content || "";
+
+  const jaPerguntouDuvida =
+    ultimaRespostaBot.includes("ficou alguma dúvida específica") ||
+    ultimaRespostaBot.includes("ficou alguma dúvida");
+
   if (jaFalouInvestimento && isPositiveConfirmation(text)) {
-    respostaFinal = "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante: você está de acordo que o resultado depende da sua atuação nas vendas?";
+    respostaFinal =
+      "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante:\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   } else if (jaFalouBeneficios && jaEnviouFolder && !jaFalouInvestimento) {
-    respostaFinal = "Perfeito 😊 Como você já viu os principais pontos do programa, o próximo passo é eu te explicar com transparência a parte do investimento. Posso te explicar?";
+    respostaFinal =
+      "Perfeito 😊 Agora o próximo ponto é o investimento de adesão.\n\nPosso te explicar esse valor com transparência?";
   } else if (jaFalouBeneficios && !jaFalouInvestimento) {
-    respostaFinal = "Perfeito 😊 Antes de avançarmos, preciso te explicar a parte do investimento com transparência. Posso te passar esse ponto agora?";
+    respostaFinal =
+      "Top! Antes de avançarmos, preciso te explicar a parte do investimento com transparência.\n\nPosso te passar esse ponto agora?";
+  } else if (jaPerguntouDuvida && isPositiveConfirmation(text)) {
+    respostaFinal =
+      "Ótimo! Então vamos avançar.\n\nO próximo ponto é entender melhor os benefícios e o funcionamento do programa. Posso te explicar de forma direta?";
+  } else if (jaEnviouFolder) {
+    respostaFinal =
+      "Perfeito! Como o material já está acima, vou seguir de forma objetiva.\n\nO próximo passo é te explicar os principais pontos do programa antes da pré-análise.";
   } else {
-    respostaFinal = jaEnviouFolder
-      ? "Antes de seguirmos, preciso garantir que ficou claro como funciona o programa 😊 Como o material já está logo acima, ficou alguma dúvida específica?"
-      : "Antes de seguirmos, preciso te explicar melhor como funciona o programa 😊 Posso te enviar um material explicativo bem direto?";
+    respostaFinal =
+      "Antes de seguirmos, preciso te explicar melhor como funciona o programa 😊\n\nPosso te enviar um material explicativo bem direto?";
   }
 }
      
@@ -4207,9 +4410,55 @@ const multiDataRequestPattern =
   /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
 
 if (multiDataRequestPattern.test(respostaFinal)) {
-  respostaFinal = "Perfeito 😊 Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
+  respostaFinal = "Show! Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
+// 🚫 ANTI-LOOP FINAL — impede repetir a última resposta do bot
+if (isRepeatedBotReply(respostaFinal, history)) {
+  respostaFinal = getNextFunnelStepMessage(currentLead);
+}
+     
+     // 🔥 ATUALIZA ETAPAS DO FUNIL
+const etapasUpdate = { ...(currentLead?.etapas || {}) };
+
+const respostaEtapaLower = respostaFinal.toLowerCase();
+
+if (respostaEtapaLower.includes("parceria") || respostaEtapaLower.includes("programa")) {
+  etapasUpdate.programa = true;
+}
+
+if (respostaEtapaLower.includes("benef")) {
+  etapasUpdate.beneficios = true;
+}
+
+if (respostaEtapaLower.includes("comodato") || respostaEtapaLower.includes("estoque")) {
+  etapasUpdate.estoque = true;
+}
+
+if (respostaEtapaLower.includes("respons")) {
+  etapasUpdate.responsabilidades = true;
+}
+
+if (
+  respostaEtapaLower.includes("1.990") ||
+  respostaEtapaLower.includes("1990") ||
+  respostaEtapaLower.includes("investimento")
+) {
+  etapasUpdate.investimento = true;
+}
+
+if (
+  respostaEtapaLower.includes("resultado depende") ||
+  respostaEtapaLower.includes("depende da sua atuação") ||
+  respostaEtapaLower.includes("depende da sua atuacao")
+) {
+  etapasUpdate.compromisso = true;
+}
+
+await saveLeadProfile(from, {
+  etapas: etapasUpdate
+});
+     
 // 🔥 Mostra "digitando..." real no WhatsApp
 await sendTypingIndicator(messageId);
 
