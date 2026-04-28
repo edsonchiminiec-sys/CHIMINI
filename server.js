@@ -192,8 +192,8 @@ const MAX_PROCESSED_MESSAGES = 5000;
 // 🔥 BUFFER PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
 const incomingMessageBuffers = new Map();
 
-const TYPING_DEBOUNCE_MS = 4500; // espera 4,5s após a última mensagem
-const MAX_TYPING_WAIT_MS = 9000; // nunca espera mais de 9s no total
+const TYPING_DEBOUNCE_MS = 7000; // espera 7s após a última mensagem
+const MAX_TYPING_WAIT_MS = 15000; // limite máximo de espera
 
 /* =========================
    STATE
@@ -240,53 +240,70 @@ function shouldUseName(state) {
 async function collectBufferedText(from, text, messageId) {
   const now = Date.now();
 
-  const existingBuffer = incomingMessageBuffers.get(from);
+  let buffer = incomingMessageBuffers.get(from);
 
-  // Se já existe uma mensagem aguardando resposta,
-  // apenas junta esta nova mensagem ao mesmo bloco.
-  if (existingBuffer?.active) {
-    existingBuffer.messages.push(text);
-    existingBuffer.lastAt = now;
+  if (!buffer) {
+    buffer = {
+      active: true,
+      processing: false,
+      messages: [],
+      messageIds: [],
+      startedAt: now,
+      lastAt: now
+    };
 
-    // Marca esta mensagem como processada para o WhatsApp não reenviar
-    if (messageId) {
-      markMessageAsProcessed(messageId);
-    }
+    incomingMessageBuffers.set(from, buffer);
+  }
 
+  buffer.messages.push(text);
+  buffer.lastAt = now;
+
+  if (messageId) {
+    buffer.messageIds.push(messageId);
+  }
+
+  // Se outra requisição já está aguardando o lead terminar de digitar,
+  // esta aqui só adiciona a mensagem ao buffer e para.
+  if (buffer.processing) {
     return {
       shouldContinue: false,
       text: ""
     };
   }
 
-  // Primeira mensagem: cria o buffer
-  const buffer = {
-    active: true,
-    messages: [text],
-    startedAt: now,
-    lastAt: now
-  };
+  buffer.processing = true;
 
-  incomingMessageBuffers.set(from, buffer);
-
-  // Espera até o lead parar de mandar mensagens por alguns segundos
+  // Aguarda o lead parar de mandar mensagens por alguns segundos.
   while (Date.now() - buffer.startedAt < MAX_TYPING_WAIT_MS) {
-    const timeSinceLastMessage = Date.now() - buffer.lastAt;
-    const remainingQuietTime = TYPING_DEBOUNCE_MS - timeSinceLastMessage;
+    const quietFor = Date.now() - buffer.lastAt;
 
-    if (remainingQuietTime <= 0) {
+    if (quietFor >= TYPING_DEBOUNCE_MS) {
       break;
     }
 
-    await delay(Math.min(remainingQuietTime, 1000));
+    await delay(500);
   }
 
-  const finalBuffer = incomingMessageBuffers.get(from) || buffer;
+  const finalBuffer = incomingMessageBuffers.get(from);
+
+  if (!finalBuffer) {
+    return {
+      shouldContinue: false,
+      text: ""
+    };
+  }
+
   incomingMessageBuffers.delete(from);
+
+  const finalText = finalBuffer.messages
+    .map(msg => String(msg || "").trim())
+    .filter(Boolean)
+    .join("\n");
 
   return {
     shouldContinue: true,
-    text: finalBuffer.messages.join("\n")
+    text: finalText,
+    messageIds: finalBuffer.messageIds
   };
 }
 
@@ -3736,6 +3753,11 @@ Se estiver indefinido, prefira linguagem neutra e evite frases como "interessado
     role: "system",
     content: "IMPORTANTE: Não use dados pessoais encontrados no histórico antigo como nome, CPF, telefone, cidade ou estado. Na coleta atual, peça e confirme os dados novamente, começando pelo nome completo."
   },
+
+     {
+  role: "system",
+  content: "A última mensagem do lead pode conter várias mensagens enviadas em sequência ou separadas por quebras de linha. Considere tudo como um único contexto e responda em uma única mensagem completa, organizada e natural, sem dividir a resposta em várias partes."
+},
   ...history
 ]
 })
