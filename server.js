@@ -2369,20 +2369,6 @@ function canStartDataCollection(lead = {}) {
   );
 }
 
-function canStartDataCollection(lead = {}) {
-  const e = lead.etapas || {};
-
-  return Boolean(
-    e.programa &&
-    e.beneficios &&
-    e.estoque &&
-    e.responsabilidades &&
-    e.investimento &&
-    e.compromisso &&
-    lead.interesseReal === true
-  );
-}
-
 // 👇 COLE AQUI EMBAIXO 👇
 function getNextFunnelStepMessage(lead = {}) {
   const e = lead.etapas || {};
