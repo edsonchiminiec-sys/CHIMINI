@@ -1849,6 +1849,20 @@ if (cidadeUfSpaceMatch) {
 }
    
   // Cidade/UF no meio do texto: "Curitiba PR", "São Paulo/SP"
+   // 🔥 CORREÇÃO EXPLÍCITA DE ESTADO (PRIORIDADE ALTA)
+// Evita interpretar frases como "estado o correto é sc" como cidade
+const estadoCorrecaoMatch = fullText.match(
+  /\b(?:estado|uf)\b.*\b(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i
+);
+
+if (estadoCorrecaoMatch) {
+  data.estado = normalizeUF(estadoCorrecaoMatch[1]);
+
+  return {
+    ...safeCurrentLead,
+    ...data
+  };
+}
   const cidadeUfMatch = fullText.match(
   /(?:moro em|sou de|resido em|cidade\s*[:\-]?\s*)?\s*([A-Za-zÀ-ÿ\s]{3,})\s*[\/,-]\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i
 );
@@ -3179,6 +3193,38 @@ if (field === "estado" && rawExtracted?.cidade) {
   labelParaMostrar = "cidade/estado";
 }
 
+// 🔥 NÃO CONFIRMAR NOME (deixa fluxo mais natural)
+if (field === "nome") {
+  await saveLeadProfile(from, {
+    ...currentLead,
+    nome: value,
+    campoPendente: null,
+    valorPendente: null,
+    aguardandoConfirmacaoCampo: false,
+    faseQualificacao: "dados_parciais",
+    status: "dados_parciais"
+  });
+
+  const nextField = getMissingLeadFields({
+    ...currentLead,
+    nome: value
+  })[0];
+
+  const msg = `Perfeito 👍
+
+${getMissingFieldQuestion(nextField)}`;
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+// 🔥 PARA OS OUTROS CAMPOS MANTÉM CONFIRMAÇÃO
 const msg = `Identifiquei seu ${labelParaMostrar} como: ${valorParaMostrar}
 
 Está correto?`;
@@ -3562,16 +3608,27 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     }
   }
 
-  await notifyConsultant({
-    user: from,
-    telefoneWhatsApp: from,
-    ultimaMensagem: text,
-    status: "quente"
-  });
+    const confirmedMsg = `Perfeito, pré-cadastro confirmado ✅
 
-  const confirmedMsg = "Perfeito, dados confirmados ✅ Vou encaminhar sua pré-análise para a equipe interna da IQG. Se estiver tudo certo, o próximo passo será a fase contratual.";
+Vou encaminhar suas informações para a equipe comercial de consultores da IQG.
+
+Eles vão entrar em contato em breve para validar os dados, tirar qualquer dúvida final e orientar a finalização da adesão ao Programa Parceiro Homologado.
+
+Só reforçando: essa etapa ainda é um pré-cadastro, não uma aprovação automática nem cobrança. O próximo passo acontece com o consultor IQG.`;
 
   await sendWhatsAppMessage(from, confirmedMsg);
+
+  try {
+    await notifyConsultant({
+      user: from,
+      telefoneWhatsApp: from,
+      ultimaMensagem: text,
+      status: "quente"
+    });
+  } catch (error) {
+    console.error("Erro ao notificar consultor:", error);
+  }
+   
   state.closed = true;
   clearTimers(from);
 
