@@ -145,17 +145,7 @@ async function saveLeadProfile(user, data = {}) {
   // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
    
   const insertData = {
-  createdAt: new Date(),
-
-  // 🔥 NOVO: controle real do funil
-  etapas: {
-    programa: false,
-    beneficios: false,
-    estoque: false,
-    responsabilidades: false,
-    investimento: false,
-    compromisso: false
-  }
+  createdAt: new Date()
 };
 
   // 🔥 DEFINE STATUS INICIAL SE NÃO EXISTIR
@@ -163,6 +153,17 @@ async function saveLeadProfile(user, data = {}) {
     insertData.status = "novo";
   }
 
+   if (!safeData.etapas) {
+  insertData.etapas = {
+    programa: false,
+    beneficios: false,
+    estoque: false,
+    responsabilidades: false,
+    investimento: false,
+    compromisso: false
+  };
+}
+   
  await db.collection("leads").updateOne(
   { user },
   {
