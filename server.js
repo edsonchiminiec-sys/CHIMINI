@@ -228,6 +228,33 @@ async function loadLeadProfile(user) {
   return await db.collection("leads").findOne({ user });
 }
 
+async function saveSupervisorAnalysis(user, supervisorData = {}) {
+  await connectMongo();
+
+  const defaultSupervisor = buildDefaultSupervisorAnalysis();
+
+  const safeSupervisorData = {
+    ...defaultSupervisor,
+    ...(supervisorData || {}),
+    analisadoEm: supervisorData?.analisadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        supervisor: safeSupervisorData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+}
+
 const STATUS_OPERACIONAL_VALUES = [
   "ativo",
   "em_atendimento",
@@ -5237,27 +5264,40 @@ app.get("/conversation/:user", async (req, res) => {
       const waLink = phone ? `https://wa.me/${phone}` : "#";
       const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-           const status = lead.status || "novo";
+                const status = lead.status || "novo";
       const faseAntiga = lead.faseQualificacao || "-";
       const statusOperacional = lead.statusOperacional || "-";
       const faseFunil = lead.faseFunil || "-";
       const temperaturaComercial = lead.temperaturaComercial || "-";
       const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
 
+      const supervisor = lead.supervisor || {};
+      const supervisorRisco = supervisor.riscoPerda || "nao_analisado";
+      const supervisorTrava = supervisor.pontoTrava || "-";
+      const supervisorHumano = supervisor.necessitaHumano === true ? "sim" : "não";
+      const supervisorQualidade = supervisor.qualidadeConducaoSdr || "nao_analisado";
+      const supervisorUltimaAnalise = supervisor.analisadoEm
+        ? formatDate(supervisor.analisadoEm)
+        : "-";
+
       const user = encodeURIComponent(lead.user || phone);
 
       const baseStatusLink = `/lead/${user}/status`;
       return `
-                <tr>
+                       <tr>
   <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
   <td>${escapeHtml(faseAntiga)}</td>
   <td>${escapeHtml(statusOperacional)}</td>
   <td>${escapeHtml(faseFunil)}</td>
   <td>${escapeHtml(temperaturaComercial)}</td>
   <td>${escapeHtml(rotaComercial)}</td>
+  <td>${escapeHtml(supervisorRisco)}</td>
+  <td>${escapeHtml(supervisorTrava)}</td>
+  <td>${escapeHtml(supervisorHumano)}</td>
+  <td>${escapeHtml(supervisorQualidade)}</td>
+  <td>${escapeHtml(supervisorUltimaAnalise)}</td>
   <td>${escapeHtml(lead.origemConversao || "-")}</td>
-<td>${escapeHtml(lead.nome || "-")}</td>
-<td>${escapeHtml(phone)}</td>
+<td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone)}</td>
 <td>${escapeHtml(lead.cpf || "-")}</td>
 <td>${escapeHtml(lead.cidade || cidade)}</td>
 <td>${escapeHtml(lead.estado || estado)}</td>
@@ -5599,13 +5639,18 @@ app.get("/conversation/:user", async (req, res) => {
 
           <table>
             <thead>
-                            <tr>
+                                          <tr>
                <th><a href="${makeSortLink("status", "Status")}">Status antigo</a></th>
 <th>Fase antiga</th>
 <th>Operacional</th>
 <th>Funil</th>
 <th>Temperatura</th>
 <th>Rota</th>
+<th>Risco</th>
+<th>Ponto de trava</th>
+<th>Humano?</th>
+<th>Qualidade SDR</th>
+<th>Última análise</th>
 <th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
@@ -5617,7 +5662,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-                         ${rows || `<tr><td colspan="14">Nenhum lead encontrado.</td></tr>`}
+                        ${rows || `<tr><td colspan="19">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
