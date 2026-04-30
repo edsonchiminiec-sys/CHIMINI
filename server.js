@@ -3406,19 +3406,12 @@ const leadBeforeProcessing = await loadLeadProfile(from);
   stateClosed: state.closed
 });
 
-if (
-  leadBeforeProcessing?.status === "enviado_crm" ||
-  leadBeforeProcessing?.faseQualificacao === "enviado_crm" ||
-  leadBeforeProcessing?.status === "em_atendimento" ||
-  leadBeforeProcessing?.faseQualificacao === "em_atendimento" ||
-  leadBeforeProcessing?.status === "fechado" ||
-  leadBeforeProcessing?.faseQualificacao === "fechado" ||
-  leadBeforeProcessing?.status === "perdido" ||
-  leadBeforeProcessing?.faseQualificacao === "perdido"
-) {
-  console.log("⛔ Lead bloqueado por status/fase:", {
+if (shouldStopBotByLifecycle(leadBeforeProcessing)) {
+  console.log("⛔ Lead bloqueado pelo ciclo de vida:", {
     status: leadBeforeProcessing?.status,
-    faseQualificacao: leadBeforeProcessing?.faseQualificacao
+    faseQualificacao: leadBeforeProcessing?.faseQualificacao,
+    statusOperacional: leadBeforeProcessing?.statusOperacional,
+    faseFunil: leadBeforeProcessing?.faseFunil
   });
   return;
 }
@@ -3443,10 +3436,7 @@ if (state.closed) {
      
 clearTimers(from);
 
-if (
-  !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(leadBeforeProcessing?.status) &&
-  !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(leadBeforeProcessing?.faseQualificacao)
-) {
+if (!shouldStopBotByLifecycle(leadBeforeProcessing)) {
   state.closed = false;
 }
 
