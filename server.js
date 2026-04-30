@@ -163,60 +163,61 @@ async function saveConversation(user, messages) {
 async function saveLeadProfile(user, data = {}) {
   await connectMongo();
 
-  // 🔥 REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS
+  const currentLead = await db.collection("leads").findOne({ user });
+
+  // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
   const {
-  _id,
-  createdAt,
-  crmEnviado,
-  crmEnviadoEm,
-  ...safeData
-} = data || {};
+    _id,
+    createdAt,
+    crmEnviado,
+    crmEnviadoEm,
+    ...safeData
+  } = data || {};
 
-  // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
-   
+  // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
   const insertData = {
-  createdAt: new Date()
-};
+    createdAt: new Date()
+  };
 
-  // DEFINE STATUS INICIAL SE NÃO EXISTIR
-  if (!safeData.status) {
+  // STATUS INICIAL APENAS PARA LEAD NOVO
+  if (!currentLead && !safeData.status) {
     insertData.status = "novo";
-    insertData.statusOperacional = "ativo";
-    insertData.faseFunil = "inicio";
-    insertData.temperaturaComercial = "indefinida";
-    insertData.rotaComercial = "homologado";
   }
 
-   if (!safeData.etapas) {
-  insertData.etapas = {
-    programa: false,
-    beneficios: false,
-    estoque: false,
-    responsabilidades: false,
-    investimento: false,
-    compromisso: false
-  };
-}
-   
- const lifecycleData = getLeadLifecycleFields({
-  ...safeData,
-  ...insertData
-});
+  // ETAPAS INICIAIS APENAS PARA LEAD NOVO
+  if (!currentLead && !safeData.etapas) {
+    insertData.etapas = {
+      programa: false,
+      beneficios: false,
+      estoque: false,
+      responsabilidades: false,
+      investimento: false,
+      compromisso: false
+    };
+  }
 
- await db.collection("leads").updateOne(
-  { user },
-  {
-    $set: {
-      user,
-      ...safeData,
-      ...lifecycleData,
-      updatedAt: new Date()
+  const lifecycleBase = {
+    ...(currentLead || {}),
+    ...insertData,
+    ...safeData
+  };
+
+  const lifecycleData = getLeadLifecycleFields(lifecycleBase);
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        user,
+        ...safeData,
+        ...lifecycleData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: insertData
     },
-    $setOnInsert: insertData
-  },
-  { upsert: true }
-);
-    }
+    { upsert: true }
+  );
+}
 
 async function loadLeadProfile(user) {
   await connectMongo();
