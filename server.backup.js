@@ -4918,14 +4918,24 @@ app.get("/conversation/:user", async (req, res) => {
       const waLink = phone ? `https://wa.me/${phone}` : "#";
       const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-      const status = lead.status || "novo";
+           const status = lead.status || "novo";
+      const faseAntiga = lead.faseQualificacao || "-";
+      const statusOperacional = lead.statusOperacional || "-";
+      const faseFunil = lead.faseFunil || "-";
+      const temperaturaComercial = lead.temperaturaComercial || "-";
+      const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
+
       const user = encodeURIComponent(lead.user || phone);
 
       const baseStatusLink = `/lead/${user}/status`;
-
       return `
-        <tr>
+                <tr>
   <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
+  <td>${escapeHtml(faseAntiga)}</td>
+  <td>${escapeHtml(statusOperacional)}</td>
+  <td>${escapeHtml(faseFunil)}</td>
+  <td>${escapeHtml(temperaturaComercial)}</td>
+  <td>${escapeHtml(rotaComercial)}</td>
   <td>${escapeHtml(lead.origemConversao || "-")}</td>
 <td>${escapeHtml(lead.nome || "-")}</td>
 <td>${escapeHtml(phone)}</td>
@@ -5226,8 +5236,13 @@ app.get("/conversation/:user", async (req, res) => {
 
           <table>
             <thead>
-              <tr>
-               <th><a href="${makeSortLink("status", "Status")}">Status</a></th>
+                            <tr>
+               <th><a href="${makeSortLink("status", "Status")}">Status antigo</a></th>
+<th>Fase antiga</th>
+<th>Operacional</th>
+<th>Funil</th>
+<th>Temperatura</th>
+<th>Rota</th>
 <th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
@@ -5239,7 +5254,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-             ${rows || `<tr><td colspan="9">Nenhum lead encontrado.</td></tr>`}
+                         ${rows || `<tr><td colspan="14">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
