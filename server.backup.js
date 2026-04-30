@@ -163,65 +163,96 @@ async function saveConversation(user, messages) {
 async function saveLeadProfile(user, data = {}) {
   await connectMongo();
 
-  // 🔥 REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS
+  const currentLead = await db.collection("leads").findOne({ user });
+
+  // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
   const {
-  _id,
-  createdAt,
-  crmEnviado,
-  crmEnviadoEm,
-  ...safeData
-} = data || {};
+    _id,
+    createdAt,
+    crmEnviado,
+    crmEnviadoEm,
+    ...safeData
+  } = data || {};
 
-  // 🔥 DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
+  // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
    
-  const insertData = {
-  createdAt: new Date()
+ const insertData = {
+  createdAt: new Date(),
+  supervisor: buildDefaultSupervisorAnalysis()
 };
-
-  // DEFINE STATUS INICIAL SE NÃO EXISTIR
-  if (!safeData.status) {
+   
+  // STATUS INICIAL APENAS PARA LEAD NOVO
+  
+   if (!currentLead && !safeData.status) {
     insertData.status = "novo";
-    insertData.statusOperacional = "ativo";
-    insertData.faseFunil = "inicio";
-    insertData.temperaturaComercial = "indefinida";
-    insertData.rotaComercial = "homologado";
   }
 
-   if (!safeData.etapas) {
-  insertData.etapas = {
-    programa: false,
-    beneficios: false,
-    estoque: false,
-    responsabilidades: false,
-    investimento: false,
-    compromisso: false
-  };
-}
-   
- const lifecycleData = getLeadLifecycleFields({
-  ...safeData,
-  ...insertData
-});
+  // ETAPAS INICIAIS APENAS PARA LEAD NOVO
+  if (!currentLead && !safeData.etapas) {
+    insertData.etapas = {
+      programa: false,
+      beneficios: false,
+      estoque: false,
+      responsabilidades: false,
+      investimento: false,
+      compromisso: false
+    };
+  }
 
- await db.collection("leads").updateOne(
-  { user },
-  {
-    $set: {
-      user,
-      ...safeData,
-      ...lifecycleData,
-      updatedAt: new Date()
+  const lifecycleBase = {
+    ...(currentLead || {}),
+    ...insertData,
+    ...safeData
+  };
+
+  const lifecycleData = getLeadLifecycleFields(lifecycleBase);
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        user,
+        ...safeData,
+        ...lifecycleData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: insertData
     },
-    $setOnInsert: insertData
-  },
-  { upsert: true }
-);
-    }
+    { upsert: true }
+  );
+}
 
 async function loadLeadProfile(user) {
   await connectMongo();
 
   return await db.collection("leads").findOne({ user });
+}
+
+async function saveSupervisorAnalysis(user, supervisorData = {}) {
+  await connectMongo();
+
+  const defaultSupervisor = buildDefaultSupervisorAnalysis();
+
+  const safeSupervisorData = {
+    ...defaultSupervisor,
+    ...(supervisorData || {}),
+    analisadoEm: supervisorData?.analisadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        supervisor: safeSupervisorData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
 }
 
 const STATUS_OPERACIONAL_VALUES = [
@@ -270,6 +301,28 @@ function keepAllowedValue(value, allowedValues, fallback) {
   }
 
   return fallback;
+}
+
+function buildDefaultSupervisorAnalysis() {
+  return {
+    houveErroSdr: false,
+    errosDetectados: [],
+    sdrPulouFase: false,
+    fasePulada: "",
+    descricaoErroPrincipal: "",
+    riscoPerda: "nao_analisado",
+    motivoRisco: "",
+    pontoTrava: "",
+    leadEsfriou: false,
+    motivoEsfriamento: "",
+    necessitaHumano: false,
+    prioridadeHumana: "nao_analisado",
+    qualidadeConducaoSdr: "nao_analisado",
+    notaConducaoSdr: null,
+    resumoDiagnostico: "",
+    observacoesTecnicas: [],
+    analisadoEm: null
+  };
 }
 
 function getLeadLifecycleFields(data = {}) {
@@ -609,6 +662,235 @@ const FILES = {
 /* =========================
    PROMPT
 ========================= */
+
+const SUPERVISOR_SYSTEM_PROMPT = `
+Você é o GPT Supervisor Comercial da IQG.
+
+Sua função é auditar a qualidade da condução da SDR IA da IQG em conversas de WhatsApp.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve a resposta final da SDR.
+Você NÃO aprova lead.
+Você NÃO pede dados.
+Você NÃO altera status.
+Você NÃO decide pagamento.
+Você apenas analisa a conversa e retorna um diagnóstico interno em JSON.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OBJETIVO DO SUPERVISOR
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Avaliar se a SDR conduziu corretamente o lead no funil comercial da IQG.
+
+Você deve identificar:
+
+- se a SDR pulou fase;
+- se pediu dados cedo demais;
+- se falou da taxa cedo demais;
+- se apresentou taxa sem ancorar valor;
+- se explicou o lote em comodato;
+- se explicou responsabilidades;
+- se confundiu Programa Parceiro Homologado com Programa de Afiliados;
+- se classificou Afiliado sem contexto suficiente;
+- se repetiu perguntas;
+- se entrou em loop;
+- se deixou o lead sem próximo passo;
+- se houve confirmação excessiva;
+- se houve risco de perda;
+- se o lead esfriou;
+- se humano deve assumir.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTO COMERCIAL IQG
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A IQG possui dois caminhos comerciais:
+
+1. Programa Parceiro Homologado IQG
+- Caminho principal do funil.
+- Envolve produto físico.
+- Envolve lote inicial em comodato.
+- Envolve suporte, treinamento e estrutura comercial.
+- Envolve taxa de adesão de R$ 1.990.
+- O lote inicial representa mais de R$ 5.000 em preço de venda ao consumidor final.
+- O pagamento só ocorre após análise interna e contrato.
+- O resultado depende da atuação do parceiro nas vendas.
+
+2. Programa de Afiliados IQG
+- Caminho separado.
+- O lead divulga por link.
+- Não precisa de estoque.
+- Não passa pela pré-análise do Homologado.
+- Não envolve taxa de adesão do Homologado.
+- É indicado quando o lead quer algo digital, sem estoque, sem taxa ou por comissão/link.
+
+Afiliado não é perda.
+Afiliado é rota alternativa quando fizer sentido.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS DE AUDITORIA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Não considere "ok", "sim", "entendi", "legal" ou "perfeito" como avanço comercial forte por si só.
+
+2. Se o lead apenas confirmou recebimento, marque risco se a SDR avançou fase de forma precipitada.
+
+3. Se a SDR pediu CPF, telefone, cidade ou estado antes da fase de coleta, marque erro.
+
+4. Se a SDR falou da taxa de R$ 1.990 sem explicar valor percebido, comodato, suporte, parcelamento ou segurança, marque erro.
+
+5. Se o lead falou Instagram, Facebook, WhatsApp ou redes sociais, não assuma Afiliado automaticamente. Avalie contexto.
+
+6. Se o lead falou claramente em link, comissão, cadastro de afiliado ou divulgar por link, considere intenção de Afiliado.
+
+7. Se o lead reclamou do preço, isso não significa automaticamente Afiliado. Pode ser objeção de taxa do Homologado.
+
+8. Se o lead rejeitou estoque, produto físico ou taxa de adesão, Afiliado pode ser rota estratégica.
+
+9. Se a SDR repetiu a mesma pergunta ou mesma explicação sem necessidade, marque possível loop ou repetição.
+
+10. Se o lead ficou sem próximo passo claro, marque erro de condução.
+
+11. Se houver risco médio ou alto, explique o motivo.
+
+12. Se houver necessidade de humano, justifique.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+ESCALA DE RISCO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para riscoPerda:
+
+- "baixo"
+- "medio"
+- "alto"
+- "critico"
+- "nao_analisado"
+
+Critérios:
+
+baixo:
+Conversa saudável, sem objeção relevante ou erro grave.
+
+medio:
+Há dúvida, hesitação, resposta vaga, pequena objeção ou risco de esfriar.
+
+alto:
+Lead travou em taxa, demonstrou desconfiança, sumiu após ponto sensível, ou SDR cometeu erro relevante.
+
+critico:
+Lead demonstra irritação, rejeição forte, acusação de golpe, confusão grave, coleta indevida ou risco de perda imediata.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PONTOS DE TRAVA POSSÍVEIS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use preferencialmente um destes valores para pontoTrava:
+
+- "sem_trava_detectada"
+- "taxa_adesao"
+- "desconfianca"
+- "comodato"
+- "responsabilidades"
+- "estoque"
+- "afiliado_vs_homologado"
+- "coleta_dados"
+- "confirmacao_dados"
+- "sem_resposta"
+- "preco"
+- "outro"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+ERROS DETECTADOS POSSÍVEIS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use uma lista com zero ou mais destes códigos:
+
+- "pulou_fase"
+- "pediu_dados_cedo"
+- "falou_taxa_cedo"
+- "nao_ancorou_valor"
+- "nao_explicou_comodato"
+- "nao_explicou_responsabilidades"
+- "confundiu_afiliado_homologado"
+- "classificou_afiliado_sem_contexto"
+- "repetiu_pergunta"
+- "entrou_em_loop"
+- "sem_proximo_passo"
+- "confirmacao_excessiva"
+- "resposta_robotica"
+- "nao_respondeu_duvida"
+- "nenhum_erro_detectado"
+
+Se não houver erro, use:
+["nenhum_erro_detectado"]
+
+━━━━━━━━━━━━━━━━━━━━━━━
+QUALIDADE DA CONDUÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para qualidadeConducaoSdr:
+
+- "excelente"
+- "boa"
+- "regular"
+- "ruim"
+- "nao_analisado"
+
+A notaConducaoSdr deve ser um número de 0 a 10.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PRIORIDADE HUMANA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para prioridadeHumana:
+
+- "nenhuma"
+- "baixa"
+- "media"
+- "alta"
+- "urgente"
+- "nao_analisado"
+
+Marque necessitaHumano como true quando:
+- riscoPerda for "alto" ou "critico";
+- lead quente estiver pronto;
+- houver desconfiança forte;
+- houver confusão grave;
+- houver erro de coleta ou interpretação;
+- lead pedir contrato, pagamento, jurídico ou condição especial;
+- lead demonstrar alto potencial comercial.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FORMATO DE SAÍDA OBRIGATÓRIO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Responda somente com JSON válido.
+Não use markdown.
+Não use texto antes ou depois.
+Não use comentários.
+
+O JSON deve ter exatamente esta estrutura:
+
+{
+  "houveErroSdr": false,
+  "errosDetectados": ["nenhum_erro_detectado"],
+  "sdrPulouFase": false,
+  "fasePulada": "",
+  "descricaoErroPrincipal": "",
+  "riscoPerda": "baixo",
+  "motivoRisco": "",
+  "pontoTrava": "sem_trava_detectada",
+  "leadEsfriou": false,
+  "motivoEsfriamento": "",
+  "necessitaHumano": false,
+  "prioridadeHumana": "nenhuma",
+  "qualidadeConducaoSdr": "boa",
+  "notaConducaoSdr": 8,
+  "resumoDiagnostico": "",
+  "observacoesTecnicas": []
+}
+`;
 
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
@@ -2797,17 +3079,47 @@ ${question}`;
 }
 
 function canSendLeadToCRM(lead = {}) {
+  const dadosConfirmados = lead.dadosConfirmadosPeloLead === true;
+
+  const faseAntigaValida = [
+    "dados_confirmados",
+    "qualificado"
+  ].includes(lead.faseQualificacao);
+
+  const statusAntigoValido = lead.status === "quente";
+
+  const faseNovaValida = [
+    "confirmacao_dados",
+    "pre_analise"
+  ].includes(lead.faseFunil);
+
+  const temperaturaNovaValida = lead.temperaturaComercial === "quente";
+
+  const statusOperacionalPermiteEnvio =
+    ![
+      "em_atendimento",
+      "enviado_crm",
+      "fechado",
+      "perdido"
+    ].includes(lead.statusOperacional);
+
+  const temDadosObrigatorios =
+    lead.nome &&
+    lead.cpf &&
+    lead.telefone &&
+    lead.cidade &&
+    lead.estado;
+
+  const caminhoAntigoValido = faseAntigaValida && statusAntigoValido;
+  const caminhoNovoValido = faseNovaValida && temperaturaNovaValida;
+
   return (
-  lead.dadosConfirmadosPeloLead === true &&
-  ["dados_confirmados", "qualificado"].includes(lead.faseQualificacao) &&
-  lead.status === "quente" &&
-  lead.crmEnviado !== true &&
-  lead.nome &&
-  lead.cpf &&
-  lead.telefone &&
-  lead.cidade &&
-  lead.estado
-);
+    dadosConfirmados &&
+    lead.crmEnviado !== true &&
+    statusOperacionalPermiteEnvio &&
+    temDadosObrigatorios &&
+    (caminhoAntigoValido || caminhoNovoValido)
+  );
 }
 
 function normalizeForRepeatCheck(text = "") {
@@ -4306,12 +4618,16 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
         },
         {
           $set: {
-            crmEnviado: true,
-            crmEnviadoEm: new Date(),
-            faseQualificacao: "enviado_crm",
-            status: "enviado_crm",
-            updatedAt: new Date()
-          }
+  crmEnviado: true,
+  crmEnviadoEm: new Date(),
+  faseQualificacao: "enviado_crm",
+  status: "enviado_crm",
+  statusOperacional: "enviado_crm",
+  faseFunil: "crm",
+  temperaturaComercial: "quente",
+  rotaComercial: confirmedLead?.rotaComercial || confirmedLead?.origemConversao || "homologado",
+  updatedAt: new Date()
+}
         },
         { returnDocument: "after" }
       );
@@ -5177,27 +5493,40 @@ app.get("/conversation/:user", async (req, res) => {
       const waLink = phone ? `https://wa.me/${phone}` : "#";
       const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-           const status = lead.status || "novo";
+                const status = lead.status || "novo";
       const faseAntiga = lead.faseQualificacao || "-";
       const statusOperacional = lead.statusOperacional || "-";
       const faseFunil = lead.faseFunil || "-";
       const temperaturaComercial = lead.temperaturaComercial || "-";
       const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
 
+      const supervisor = lead.supervisor || {};
+      const supervisorRisco = supervisor.riscoPerda || "nao_analisado";
+      const supervisorTrava = supervisor.pontoTrava || "-";
+      const supervisorHumano = supervisor.necessitaHumano === true ? "sim" : "não";
+      const supervisorQualidade = supervisor.qualidadeConducaoSdr || "nao_analisado";
+      const supervisorUltimaAnalise = supervisor.analisadoEm
+        ? formatDate(supervisor.analisadoEm)
+        : "-";
+
       const user = encodeURIComponent(lead.user || phone);
 
       const baseStatusLink = `/lead/${user}/status`;
       return `
-                <tr>
+                       <tr>
   <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
   <td>${escapeHtml(faseAntiga)}</td>
   <td>${escapeHtml(statusOperacional)}</td>
   <td>${escapeHtml(faseFunil)}</td>
   <td>${escapeHtml(temperaturaComercial)}</td>
   <td>${escapeHtml(rotaComercial)}</td>
+  <td>${escapeHtml(supervisorRisco)}</td>
+  <td>${escapeHtml(supervisorTrava)}</td>
+  <td>${escapeHtml(supervisorHumano)}</td>
+  <td>${escapeHtml(supervisorQualidade)}</td>
+  <td>${escapeHtml(supervisorUltimaAnalise)}</td>
   <td>${escapeHtml(lead.origemConversao || "-")}</td>
-<td>${escapeHtml(lead.nome || "-")}</td>
-<td>${escapeHtml(phone)}</td>
+<td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone)}</td>
 <td>${escapeHtml(lead.cpf || "-")}</td>
 <td>${escapeHtml(lead.cidade || cidade)}</td>
 <td>${escapeHtml(lead.estado || estado)}</td>
@@ -5539,13 +5868,18 @@ app.get("/conversation/:user", async (req, res) => {
 
           <table>
             <thead>
-                            <tr>
+                                          <tr>
                <th><a href="${makeSortLink("status", "Status")}">Status antigo</a></th>
 <th>Fase antiga</th>
 <th>Operacional</th>
 <th>Funil</th>
 <th>Temperatura</th>
 <th>Rota</th>
+<th>Risco</th>
+<th>Ponto de trava</th>
+<th>Humano?</th>
+<th>Qualidade SDR</th>
+<th>Última análise</th>
 <th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
@@ -5557,7 +5891,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-                         ${rows || `<tr><td colspan="14">Nenhum lead encontrado.</td></tr>`}
+                        ${rows || `<tr><td colspan="19">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
