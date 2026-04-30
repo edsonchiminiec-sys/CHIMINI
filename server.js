@@ -2798,17 +2798,47 @@ ${question}`;
 }
 
 function canSendLeadToCRM(lead = {}) {
+  const dadosConfirmados = lead.dadosConfirmadosPeloLead === true;
+
+  const faseAntigaValida = [
+    "dados_confirmados",
+    "qualificado"
+  ].includes(lead.faseQualificacao);
+
+  const statusAntigoValido = lead.status === "quente";
+
+  const faseNovaValida = [
+    "confirmacao_dados",
+    "pre_analise"
+  ].includes(lead.faseFunil);
+
+  const temperaturaNovaValida = lead.temperaturaComercial === "quente";
+
+  const statusOperacionalPermiteEnvio =
+    ![
+      "em_atendimento",
+      "enviado_crm",
+      "fechado",
+      "perdido"
+    ].includes(lead.statusOperacional);
+
+  const temDadosObrigatorios =
+    lead.nome &&
+    lead.cpf &&
+    lead.telefone &&
+    lead.cidade &&
+    lead.estado;
+
+  const caminhoAntigoValido = faseAntigaValida && statusAntigoValido;
+  const caminhoNovoValido = faseNovaValida && temperaturaNovaValida;
+
   return (
-  lead.dadosConfirmadosPeloLead === true &&
-  ["dados_confirmados", "qualificado"].includes(lead.faseQualificacao) &&
-  lead.status === "quente" &&
-  lead.crmEnviado !== true &&
-  lead.nome &&
-  lead.cpf &&
-  lead.telefone &&
-  lead.cidade &&
-  lead.estado
-);
+    dadosConfirmados &&
+    lead.crmEnviado !== true &&
+    statusOperacionalPermiteEnvio &&
+    temDadosObrigatorios &&
+    (caminhoAntigoValido || caminhoNovoValido)
+  );
 }
 
 function normalizeForRepeatCheck(text = "") {
