@@ -224,6 +224,54 @@ async function loadLeadProfile(user) {
   return await db.collection("leads").findOne({ user });
 }
 
+const STATUS_OPERACIONAL_VALUES = [
+  "ativo",
+  "em_atendimento",
+  "enviado_crm",
+  "fechado",
+  "perdido",
+  "erro_dados",
+  "erro_envio_crm"
+];
+
+const FASE_FUNIL_VALUES = [
+  "inicio",
+  "esclarecimento",
+  "beneficios",
+  "estoque",
+  "responsabilidades",
+  "investimento",
+  "compromisso",
+  "coleta_dados",
+  "confirmacao_dados",
+  "pre_analise",
+  "crm",
+  "encerrado",
+  "afiliado"
+];
+
+const TEMPERATURA_COMERCIAL_VALUES = [
+  "indefinida",
+  "frio",
+  "morno",
+  "quente"
+];
+
+const ROTA_COMERCIAL_VALUES = [
+  "indefinida",
+  "homologado",
+  "afiliado",
+  "ambos"
+];
+
+function keepAllowedValue(value, allowedValues, fallback) {
+  if (allowedValues.includes(value)) {
+    return value;
+  }
+
+  return fallback;
+}
+
 function getLeadLifecycleFields(data = {}) {
   const status = data.status || "";
   const fase = data.faseQualificacao || "";
@@ -308,6 +356,38 @@ function getLeadLifecycleFields(data = {}) {
     } else if (statusOuFase === "inicio") {
       result.faseFunil = "inicio";
     }
+  }
+
+    if (result.statusOperacional) {
+    result.statusOperacional = keepAllowedValue(
+      result.statusOperacional,
+      STATUS_OPERACIONAL_VALUES,
+      "ativo"
+    );
+  }
+
+  if (result.faseFunil) {
+    result.faseFunil = keepAllowedValue(
+      result.faseFunil,
+      FASE_FUNIL_VALUES,
+      "inicio"
+    );
+  }
+
+  if (result.temperaturaComercial) {
+    result.temperaturaComercial = keepAllowedValue(
+      result.temperaturaComercial,
+      TEMPERATURA_COMERCIAL_VALUES,
+      "indefinida"
+    );
+  }
+
+  if (result.rotaComercial) {
+    result.rotaComercial = keepAllowedValue(
+      result.rotaComercial,
+      ROTA_COMERCIAL_VALUES,
+      "homologado"
+    );
   }
 
   return result;
