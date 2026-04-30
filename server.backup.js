@@ -2466,42 +2466,6 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
-function isPositiveConfirmation(text = "") {
-  ...
-  return positivePatterns.some(pattern => pattern.test(t));
-}
-
-// COLE A NOVA FUNÇÃO AQUI
-
-function isStrongBuyIntent(text = "") {
-
-function isStrongBuyIntent(text = "") {
-  const t = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-
-  const patterns = [
-    "vamos negociar",
-    "vamos fechar",
-    "quero entrar",
-    "quero comecar",
-    "quero começar",
-    "como faco pra entrar",
-    "como faço pra entrar",
-    "bora",
-    "bora seguir",
-    "quero seguir",
-    "pode iniciar",
-    "vamos seguir",
-    "tenho interesse",
-    "quero participar",
-    "quero aderir"
-  ];
-
-  return patterns.some(p => t.includes(p));
-}
 
 const VALID_UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
@@ -3168,6 +3132,39 @@ if (fase === "afiliado") {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+   function shouldStopBotByLifecycle(lead = {}) {
+  const status = lead.status || "";
+  const fase = lead.faseQualificacao || "";
+  const statusOperacional = lead.statusOperacional || "";
+  const faseFunil = lead.faseFunil || "";
+
+  const blockedOldValues = [
+    "em_atendimento",
+    "enviado_crm",
+    "fechado",
+    "perdido"
+  ];
+
+  const blockedOperationalValues = [
+    "em_atendimento",
+    "enviado_crm",
+    "fechado",
+    "perdido"
+  ];
+
+  const blockedFunnelValues = [
+    "crm",
+    "encerrado"
+  ];
+
+  return (
+    blockedOldValues.includes(status) ||
+    blockedOldValues.includes(fase) ||
+    blockedOperationalValues.includes(statusOperacional) ||
+    blockedFunnelValues.includes(faseFunil)
+  );
+}
+   
 function scheduleLeadFollowups(from) {
   const state = getState(from);
 
@@ -3224,12 +3221,7 @@ if (currentState.closed) return;
 
 const latestLead = await loadLeadProfile(from);
 
-if (
-  latestLead?.status === "em_atendimento" ||
-  latestLead?.faseQualificacao === "em_atendimento" ||
-  latestLead?.status === "enviado_crm" ||
-  latestLead?.faseQualificacao === "enviado_crm"
-) {
+if (shouldStopBotByLifecycle(latestLead)) {
   currentState.closed = true;
   clearTimers(from);
   return;
@@ -3246,12 +3238,7 @@ if (latestState.closed) return;
 
 const latestLead = await loadLeadProfile(from);
 
-if (
-  latestLead?.status === "em_atendimento" ||
-  latestLead?.faseQualificacao === "em_atendimento" ||
-  latestLead?.status === "enviado_crm" ||
-  latestLead?.faseQualificacao === "enviado_crm"
-) {
+if (shouldStopBotByLifecycle(latestLead)) {
   latestState.closed = true;
   clearTimers(from);
   return;
