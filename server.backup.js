@@ -2466,6 +2466,15 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+function isPositiveConfirmation(text = "") {
+  ...
+  return positivePatterns.some(pattern => pattern.test(t));
+}
+
+// COLE A NOVA FUNÇÃO AQUI
+
+function isStrongBuyIntent(text = "") {
+
 function isStrongBuyIntent(text = "") {
   const t = text
     .toLowerCase()
@@ -2816,48 +2825,52 @@ function isAffiliateIntent(text = "") {
     t.includes("afiliado") ||
     t.includes("afiliados") ||
     t.includes("afiliacao") ||
+    t.includes("programa de afiliados") ||
+    t.includes("cadastro de afiliado") ||
+    t.includes("cadastrar como afiliado") ||
+    t.includes("quero ser afiliado") ||
+    t.includes("quero virar afiliado") ||
     t.includes("link de afiliado") ||
-    t.includes("link para vender") ||
-    t.includes("vender pela internet") ||
-    t.includes("vender online") ||
-    t.includes("divulgar online") ||
-    t.includes("divulgar produtos online") ||
-    t.includes("redes sociais") ||
-    t.includes("instagram") ||
-    t.includes("facebook") ||
-    t.includes("tiktok") ||
-    t.includes("engajamento") ||
-    t.includes("indicacao online") ||
-    t.includes("indicar online") ||
-    t.includes("quero divulgar") ||
-    t.includes("divulgar produtos")
+    t.includes("meu link de afiliado") ||
+    t.includes("gerar link") ||
+    t.includes("link exclusivo") ||
+    t.includes("comissao por link") ||
+    t.includes("comissao online") ||
+    t.includes("ganhar comissao online") ||
+    t.includes("divulgar por link") ||
+    t.includes("vender por link")
   );
 }
 
 function isAffiliateAlternativeOpportunity(text = "") {
   const t = normalizeTextForIntent(text);
 
-  return (
-    t.includes("muito caro") ||
-    t.includes("achei caro") ||
-    t.includes("taxa alta") ||
-    t.includes("nao quero pagar") ||
-    t.includes("não quero pagar") ||
-    t.includes("nao tenho dinheiro") ||
-    t.includes("não tenho dinheiro") ||
-    t.includes("sem dinheiro") ||
-    t.includes("nao quero adesao") ||
-    t.includes("não quero adesão") ||
+  const rejeitouAdesao =
     t.includes("nao quero pagar adesao") ||
     t.includes("não quero pagar adesão") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão") ||
+    t.includes("nao quero pagar taxa") ||
+    t.includes("não quero pagar taxa");
+
+  const rejeitouEstoque =
     t.includes("nao quero estoque") ||
     t.includes("não quero estoque") ||
     t.includes("nao quero produto fisico") ||
     t.includes("não quero produto físico") ||
     t.includes("nao quero mexer com estoque") ||
-t.includes("não quero mexer com estoque")
+    t.includes("não quero mexer com estoque");
 
-  );
+  const pediuModeloSemEstoque =
+    t.includes("tem algo sem estoque") ||
+    t.includes("tem opcao sem estoque") ||
+    t.includes("tem opção sem estoque") ||
+    t.includes("quero algo sem estoque") ||
+    t.includes("sem estoque e sem taxa") ||
+    t.includes("sem pagar adesao") ||
+    t.includes("sem pagar adesão");
+
+  return rejeitouAdesao || rejeitouEstoque || pediuModeloSemEstoque;
 }
 
 function buildAffiliateResponse(isAlternative = false) {
@@ -3495,9 +3508,11 @@ const mensagemPareceConterDados =
   /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/.test(text) ||
   /(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4}/.test(text);
 
-const podeTentarExtrairDados =
+const leadPodeColetarDadosAgora =
   fasesQuePermitemExtracao.includes(currentLead?.faseQualificacao) ||
-  mensagemPareceConterDados;
+  canStartDataCollection(currentLead || {});
+
+const podeTentarExtrairDados = leadPodeColetarDadosAgora;
 
 const rawExtracted =
   Object.keys(explicitCorrection).length > 0
@@ -4381,7 +4396,7 @@ const jaFalouInvestimento =
   historyText.includes("investimento");
 
 const leadConfirmouCiencia =
-  isPositiveConfirmation(text) &&
+  isCommercialProgressConfirmation(text) &&
   (
     historyText.includes("ficou claro") ||
     historyText.includes("faz sentido") ||
@@ -4560,7 +4575,7 @@ if (
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  if (jaFalouInvestimento && isPositiveConfirmation(text)) {
+  if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
     respostaFinal = "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
   } else {
     respostaFinal = state.sentFiles.folder
@@ -4580,7 +4595,7 @@ if (startedDataCollection && !podeIniciarColeta) {
     ultimaRespostaBot.includes("ficou alguma dúvida específica") ||
     ultimaRespostaBot.includes("ficou alguma dúvida");
 
-  if (jaFalouInvestimento && isPositiveConfirmation(text)) {
+    if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
     respostaFinal =
       "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante:\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   } else if (jaFalouBeneficios && jaEnviouFolder && !jaFalouInvestimento) {
@@ -4589,7 +4604,7 @@ if (startedDataCollection && !podeIniciarColeta) {
   } else if (jaFalouBeneficios && !jaFalouInvestimento) {
     respostaFinal =
       "Top! Antes de avançarmos, preciso te explicar a parte do investimento com transparência.\n\nPosso te passar esse ponto agora?";
-  } else if (jaPerguntouDuvida && isPositiveConfirmation(text)) {
+    } else if (jaPerguntouDuvida && isCommercialProgressConfirmation(text)) {
     respostaFinal =
       "Ótimo! Então vamos avançar.\n\nO próximo ponto é entender melhor os benefícios e o funcionamento do programa. Posso te explicar de forma direta?";
   } else if (jaEnviouFolder) {
