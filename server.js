@@ -2466,42 +2466,6 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
-function isPositiveConfirmation(text = "") {
-  ...
-  return positivePatterns.some(pattern => pattern.test(t));
-}
-
-// COLE A NOVA FUNÇÃO AQUI
-
-function isStrongBuyIntent(text = "") {
-
-function isStrongBuyIntent(text = "") {
-  const t = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-
-  const patterns = [
-    "vamos negociar",
-    "vamos fechar",
-    "quero entrar",
-    "quero comecar",
-    "quero começar",
-    "como faco pra entrar",
-    "como faço pra entrar",
-    "bora",
-    "bora seguir",
-    "quero seguir",
-    "pode iniciar",
-    "vamos seguir",
-    "tenho interesse",
-    "quero participar",
-    "quero aderir"
-  ];
-
-  return patterns.some(p => t.includes(p));
-}
 
 const VALID_UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
