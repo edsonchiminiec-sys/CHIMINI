@@ -3168,6 +3168,39 @@ if (fase === "afiliado") {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+   function shouldStopBotByLifecycle(lead = {}) {
+  const status = lead.status || "";
+  const fase = lead.faseQualificacao || "";
+  const statusOperacional = lead.statusOperacional || "";
+  const faseFunil = lead.faseFunil || "";
+
+  const blockedOldValues = [
+    "em_atendimento",
+    "enviado_crm",
+    "fechado",
+    "perdido"
+  ];
+
+  const blockedOperationalValues = [
+    "em_atendimento",
+    "enviado_crm",
+    "fechado",
+    "perdido"
+  ];
+
+  const blockedFunnelValues = [
+    "crm",
+    "encerrado"
+  ];
+
+  return (
+    blockedOldValues.includes(status) ||
+    blockedOldValues.includes(fase) ||
+    blockedOperationalValues.includes(statusOperacional) ||
+    blockedFunnelValues.includes(faseFunil)
+  );
+}
+   
 function scheduleLeadFollowups(from) {
   const state = getState(from);
 
@@ -3224,12 +3257,7 @@ if (currentState.closed) return;
 
 const latestLead = await loadLeadProfile(from);
 
-if (
-  latestLead?.status === "em_atendimento" ||
-  latestLead?.faseQualificacao === "em_atendimento" ||
-  latestLead?.status === "enviado_crm" ||
-  latestLead?.faseQualificacao === "enviado_crm"
-) {
+if (shouldStopBotByLifecycle(latestLead)) {
   currentState.closed = true;
   clearTimers(from);
   return;
@@ -3246,12 +3274,7 @@ if (latestState.closed) return;
 
 const latestLead = await loadLeadProfile(from);
 
-if (
-  latestLead?.status === "em_atendimento" ||
-  latestLead?.faseQualificacao === "em_atendimento" ||
-  latestLead?.status === "enviado_crm" ||
-  latestLead?.faseQualificacao === "enviado_crm"
-) {
+if (shouldStopBotByLifecycle(latestLead)) {
   latestState.closed = true;
   clearTimers(from);
   return;
