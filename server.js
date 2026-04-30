@@ -3068,61 +3068,124 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
   const prefixo = nome ? `${nome}, ` : "";
 
-  const fase = lead.faseQualificacao || lead.status || "";
+  const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
+  const faseFunil = lead.faseFunil || "";
+  const temperaturaComercial = lead.temperaturaComercial || "";
+  const faseAntiga = lead.faseQualificacao || lead.status || "";
 
-if (fase === "afiliado") {
-  if (step === 1) {
-    return `${prefixo}conseguiu acessar o cadastro de afiliado? 😊 O link é: https://minhaiqg.com.br/`;
-  }
+  const fase = faseFunil || faseAntiga;
 
-  return `${prefixo}se quiser começar sem estoque e sem taxa de adesão do Homologado, o afiliado pode ser um bom primeiro passo. As informações e cadastro estão aqui: https://minhaiqg.com.br/`;
-}
+  const isAfiliado =
+    rotaComercial === "afiliado" ||
+    fase === "afiliado" ||
+    faseAntiga === "afiliado";
 
-  if (fase === "morno") {
+  if (isAfiliado) {
     if (step === 1) {
-      return `${prefixo}ficou alguma dúvida sobre os benefícios ou sobre o estoque em comodato? 😊`;
+      return `${prefixo}conseguiu acessar o cadastro de afiliado? 😊 O link é: https://minhaiqg.com.br/`;
     }
 
-    if (step === 2) {
-      return `${prefixo}quer que eu te explique de forma mais direta como funciona o estoque inicial?`;
-    }
-  }
-
-  if (fase === "qualificando") {
-    if (step === 1) {
-      return `${prefixo}ficou alguma dúvida sobre o investimento ou sobre o que está incluso? 😊`;
-    }
-
-    if (step === 2) {
-      return `${prefixo}faz sentido pra você seguir nesse formato ou quer avaliar algum ponto antes?`;
-    }
+    return `${prefixo}se quiser começar sem estoque e sem taxa de adesão do Homologado, o afiliado pode ser um bom primeiro passo. As informações e cadastro estão aqui: https://minhaiqg.com.br/`;
   }
 
   if (
-    fase === "coletando_dados" ||
-    fase === "dados_parciais" ||
-    fase === "aguardando_dados"
+    fase === "inicio" ||
+    fase === "esclarecimento" ||
+    faseAntiga === "inicio" ||
+    faseAntiga === "novo"
+  ) {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG? 😊`;
+    }
+
+    return `${prefixo}quer que eu te explique os principais benefícios de forma bem direta?`;
+  }
+
+  if (
+    fase === "beneficios" ||
+    faseAntiga === "morno"
+  ) {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre os benefícios ou sobre o suporte que a IQG oferece ao parceiro? 😊`;
+    }
+
+    return `${prefixo}quer que eu te explique agora como funciona o estoque inicial em comodato?`;
+  }
+
+  if (fase === "estoque") {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre o estoque inicial em comodato? 😊`;
+    }
+
+    return `${prefixo}quer que eu te resuma o que vem no lote inicial e como ele funciona na prática?`;
+  }
+
+  if (fase === "responsabilidades") {
+    if (step === 1) {
+      return `${prefixo}ficou claro para você a parte das responsabilidades do parceiro? 😊`;
+    }
+
+    return `${prefixo}quer que eu avance para te explicar o investimento de adesão com transparência?`;
+  }
+
+  if (
+    fase === "investimento" ||
+    faseAntiga === "qualificando"
+  ) {
+    if (step === 1) {
+      return `${prefixo}ficou alguma dúvida sobre o investimento de adesão ou sobre o que está incluso? 😊`;
+    }
+
+    return `${prefixo}faz sentido pra você seguir nesse formato ou quer avaliar algum ponto antes?`;
+  }
+
+  if (fase === "compromisso") {
+    if (step === 1) {
+      return `${prefixo}só preciso confirmar um ponto importante: você está de acordo que o resultado depende da sua atuação nas vendas? 😊`;
+    }
+
+    return `${prefixo}se esse ponto fizer sentido pra você, podemos seguir para a pré-análise.`;
+  }
+
+  if (
+    fase === "coleta_dados" ||
+    faseAntiga === "coletando_dados" ||
+    faseAntiga === "dados_parciais" ||
+    faseAntiga === "aguardando_dados"
   ) {
     if (step === 1) {
       return `${prefixo}só falta continuarmos com seus dados para a pré-análise 😊`;
     }
 
-    if (step === 2) {
-      return `${prefixo}quer seguir com a pré-análise agora? É bem rápido.`;
-    }
+    return `${prefixo}quer seguir com a pré-análise agora? É bem rápido.`;
   }
 
   if (
-    fase === "aguardando_confirmacao_campo" ||
-    fase === "aguardando_confirmacao_dados"
+    fase === "confirmacao_dados" ||
+    faseAntiga === "aguardando_confirmacao_campo" ||
+    faseAntiga === "aguardando_confirmacao_dados"
   ) {
     if (step === 1) {
       return `${prefixo}só preciso da sua confirmação para continuar 😊`;
     }
 
-    if (step === 2) {
-      return `${prefixo}pode me confirmar se os dados estão corretos?`;
+    return `${prefixo}pode me confirmar se os dados estão corretos?`;
+  }
+
+  if (fase === "pre_analise") {
+    if (step === 1) {
+      return `${prefixo}sua pré-análise está encaminhada. Ficou alguma dúvida final sobre o próximo passo? 😊`;
     }
+
+    return `${prefixo}o próximo passo é a validação da equipe comercial da IQG. Se tiver alguma dúvida, posso te orientar por aqui.`;
+  }
+
+  if (temperaturaComercial === "quente") {
+    if (step === 1) {
+      return `${prefixo}faz sentido seguirmos para o próximo passo? 😊`;
+    }
+
+    return `${prefixo}posso te ajudar a avançar com segurança na pré-análise.`;
   }
 
   if (step === 1) {
