@@ -4307,12 +4307,16 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
         },
         {
           $set: {
-            crmEnviado: true,
-            crmEnviadoEm: new Date(),
-            faseQualificacao: "enviado_crm",
-            status: "enviado_crm",
-            updatedAt: new Date()
-          }
+  crmEnviado: true,
+  crmEnviadoEm: new Date(),
+  faseQualificacao: "enviado_crm",
+  status: "enviado_crm",
+  statusOperacional: "enviado_crm",
+  faseFunil: "crm",
+  temperaturaComercial: "quente",
+  rotaComercial: confirmedLead?.rotaComercial || confirmedLead?.origemConversao || "homologado",
+  updatedAt: new Date()
+}
         },
         { returnDocument: "after" }
       );
