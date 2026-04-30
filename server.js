@@ -175,12 +175,15 @@ async function saveLeadProfile(user, data = {}) {
   } = data || {};
 
   // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
-  const insertData = {
-    createdAt: new Date()
-  };
-
+   
+ const insertData = {
+  createdAt: new Date(),
+  supervisor: buildDefaultSupervisorAnalysis()
+};
+   
   // STATUS INICIAL APENAS PARA LEAD NOVO
-  if (!currentLead && !safeData.status) {
+  
+   if (!currentLead && !safeData.status) {
     insertData.status = "novo";
   }
 
@@ -271,6 +274,28 @@ function keepAllowedValue(value, allowedValues, fallback) {
   }
 
   return fallback;
+}
+
+function buildDefaultSupervisorAnalysis() {
+  return {
+    houveErroSdr: false,
+    errosDetectados: [],
+    sdrPulouFase: false,
+    fasePulada: "",
+    descricaoErroPrincipal: "",
+    riscoPerda: "nao_analisado",
+    motivoRisco: "",
+    pontoTrava: "",
+    leadEsfriou: false,
+    motivoEsfriamento: "",
+    necessitaHumano: false,
+    prioridadeHumana: "nao_analisado",
+    qualidadeConducaoSdr: "nao_analisado",
+    notaConducaoSdr: null,
+    resumoDiagnostico: "",
+    observacoesTecnicas: [],
+    analisadoEm: null
+  };
 }
 
 function getLeadLifecycleFields(data = {}) {
