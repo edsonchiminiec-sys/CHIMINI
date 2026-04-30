@@ -148,9 +148,13 @@ async function saveLeadProfile(user, data = {}) {
   createdAt: new Date()
 };
 
-  // 🔥 DEFINE STATUS INICIAL SE NÃO EXISTIR
+  // DEFINE STATUS INICIAL SE NÃO EXISTIR
   if (!safeData.status) {
     insertData.status = "novo";
+    insertData.statusOperacional = "ativo";
+    insertData.faseFunil = "inicio";
+    insertData.temperaturaComercial = "indefinida";
+    insertData.rotaComercial = "homologado";
   }
 
    if (!safeData.etapas) {
@@ -164,12 +168,18 @@ async function saveLeadProfile(user, data = {}) {
   };
 }
    
+ const lifecycleData = getLeadLifecycleFields({
+  ...safeData,
+  ...insertData
+});
+
  await db.collection("leads").updateOne(
   { user },
   {
     $set: {
       user,
       ...safeData,
+      ...lifecycleData,
       updatedAt: new Date()
     },
     $setOnInsert: insertData
@@ -183,6 +193,96 @@ async function loadLeadProfile(user) {
 
   return await db.collection("leads").findOne({ user });
 }
+
+function getLeadLifecycleFields(data = {}) {
+  const status = data.status || "";
+  const fase = data.faseQualificacao || "";
+  const statusOuFase = status || fase;
+  const etapas = data.etapas || null;
+
+  const result = {};
+
+  if (status || fase) {
+    if (
+      ["em_atendimento", "enviado_crm", "fechado", "perdido", "erro_dados", "erro_envio_crm"].includes(statusOuFase)
+    ) {
+      result.statusOperacional = statusOuFase;
+    } else {
+      result.statusOperacional = "ativo";
+    }
+  }
+
+  if (
+    status === "afiliado" ||
+    fase === "afiliado" ||
+    data.interesseAfiliado === true ||
+    data.origemConversao === "afiliado" ||
+    data.origemConversao === "recuperado_objecao" ||
+    data.origemConversao === "interesse_direto"
+  ) {
+    result.rotaComercial = "afiliado";
+  } else if (status || fase || data.origemConversao) {
+    result.rotaComercial = "homologado";
+  }
+
+  if (
+    data.interesseReal === true ||
+    ["quente", "pre_analise", "qualificado", "dados_confirmados"].includes(statusOuFase)
+  ) {
+    result.temperaturaComercial = "quente";
+  } else if (statusOuFase === "morno") {
+    result.temperaturaComercial = "morno";
+  } else if (statusOuFase === "perdido" || statusOuFase === "frio") {
+    result.temperaturaComercial = "frio";
+  } else if (status || fase) {
+    result.temperaturaComercial = "indefinida";
+  }
+
+  if (status || fase || etapas) {
+    if (status === "afiliado" || fase === "afiliado") {
+      result.faseFunil = "afiliado";
+    } else if (["enviado_crm", "em_atendimento"].includes(statusOuFase)) {
+      result.faseFunil = "crm";
+    } else if (["fechado", "perdido"].includes(statusOuFase)) {
+      result.faseFunil = "encerrado";
+    } else if (
+      ["dados_confirmados", "pre_analise", "qualificado", "quente"].includes(statusOuFase)
+    ) {
+      result.faseFunil = "pre_analise";
+    } else if (statusOuFase === "aguardando_confirmacao_dados") {
+      result.faseFunil = "confirmacao_dados";
+    } else if (
+      [
+        "coletando_dados",
+        "dados_parciais",
+        "aguardando_dados",
+        "aguardando_confirmacao_campo",
+        "corrigir_dado",
+        "corrigir_dado_final",
+        "aguardando_valor_correcao_final"
+      ].includes(statusOuFase)
+    ) {
+      result.faseFunil = "coleta_dados";
+    } else if (etapas?.compromisso) {
+      result.faseFunil = "compromisso";
+    } else if (etapas?.investimento || statusOuFase === "qualificando") {
+      result.faseFunil = "investimento";
+    } else if (etapas?.responsabilidades) {
+      result.faseFunil = "responsabilidades";
+    } else if (etapas?.estoque) {
+      result.faseFunil = "estoque";
+    } else if (etapas?.beneficios || statusOuFase === "morno") {
+      result.faseFunil = "beneficios";
+    } else if (etapas?.programa || statusOuFase === "novo") {
+      result.faseFunil = "esclarecimento";
+    } else if (statusOuFase === "inicio") {
+      result.faseFunil = "inicio";
+    }
+  }
+
+  return result;
+}
+
 /* =========================
    CONFIG
 ========================= */
@@ -5164,4 +5264,3 @@ ensureIndexes()
     console.error("Erro ao iniciar servidor:", error);
     process.exit(1);
   });
-
