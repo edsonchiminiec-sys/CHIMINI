@@ -83,12 +83,42 @@ async function ensureIndexes() {
 async function updateLeadStatus(user, status) {
   await connectMongo();
 
+  const currentLead = await db.collection("leads").findOne({ user });
+
+  const lifecycleData = getLeadLifecycleFields({
+    ...(currentLead || {}),
+    status,
+    faseQualificacao: status
+  });
+
+  if (status === "em_atendimento") {
+    lifecycleData.statusOperacional = "em_atendimento";
+    lifecycleData.faseFunil = "crm";
+    lifecycleData.temperaturaComercial = currentLead?.temperaturaComercial || "indefinida";
+    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+  }
+
+  if (status === "fechado") {
+    lifecycleData.statusOperacional = "fechado";
+    lifecycleData.faseFunil = "encerrado";
+    lifecycleData.temperaturaComercial = "quente";
+    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+  }
+
+  if (status === "perdido") {
+    lifecycleData.statusOperacional = "perdido";
+    lifecycleData.faseFunil = "encerrado";
+    lifecycleData.temperaturaComercial = "frio";
+    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+  }
+
   await db.collection("leads").updateOne(
     { user },
     {
       $set: {
         status,
         faseQualificacao: status,
+        ...lifecycleData,
         updatedAt: new Date()
       }
     }
@@ -4852,17 +4882,38 @@ app.get("/conversation/:user", async (req, res) => {
 
     await connectMongo();
 
-    const statusFilter = req.query.status || "";
+        const statusFilter = req.query.status || "";
+    const statusOperacionalFilter = req.query.statusOperacional || "";
+    const faseFunilFilter = req.query.faseFunil || "";
+    const temperaturaComercialFilter = req.query.temperaturaComercial || "";
+    const rotaComercialFilter = req.query.rotaComercial || "";
+
     const search = req.query.q || "";
     const sort = req.query.sort || "updatedAt";
     const dir = req.query.dir === "asc" ? 1 : -1;
 
     const query = {};
 
-    if (statusFilter) {
+        if (statusFilter) {
       query.status = statusFilter;
     }
 
+    if (statusOperacionalFilter) {
+      query.statusOperacional = statusOperacionalFilter;
+    }
+
+    if (faseFunilFilter) {
+      query.faseFunil = faseFunilFilter;
+    }
+
+    if (temperaturaComercialFilter) {
+      query.temperaturaComercial = temperaturaComercialFilter;
+    }
+
+    if (rotaComercialFilter) {
+      query.rotaComercial = rotaComercialFilter;
+    }
+     
     if (search) {
       query.$or = [
         { user: { $regex: search, $options: "i" } },
@@ -4908,9 +4959,19 @@ app.get("/conversation/:user", async (req, res) => {
     const senhaParam = req.query.senha ? `&senha=${encodeURIComponent(req.query.senha)}` : "";
     const senhaQuery = req.query.senha ? `?senha=${encodeURIComponent(req.query.senha)}` : "";
 
-    const makeSortLink = (field, label) => {
+       const makeSortLink = (field, label) => {
       const nextDir = sort === field && req.query.dir !== "asc" ? "asc" : "desc";
-      return `/dashboard?sort=${field}&dir=${nextDir}${statusFilter ? `&status=${statusFilter}` : ""}${search ? `&q=${encodeURIComponent(search)}` : ""}${senhaParam}`;
+
+      const filtrosNovos =
+        `${statusFilter ? `&status=${encodeURIComponent(statusFilter)}` : ""}` +
+        `${statusOperacionalFilter ? `&statusOperacional=${encodeURIComponent(statusOperacionalFilter)}` : ""}` +
+        `${faseFunilFilter ? `&faseFunil=${encodeURIComponent(faseFunilFilter)}` : ""}` +
+        `${temperaturaComercialFilter ? `&temperaturaComercial=${encodeURIComponent(temperaturaComercialFilter)}` : ""}` +
+        `${rotaComercialFilter ? `&rotaComercial=${encodeURIComponent(rotaComercialFilter)}` : ""}` +
+        `${search ? `&q=${encodeURIComponent(search)}` : ""}` +
+        `${senhaParam}`;
+
+      return `/dashboard?sort=${field}&dir=${nextDir}${filtrosNovos}`;
     };
 
     const rows = leads.map(lead => {
@@ -5224,6 +5285,50 @@ app.get("/conversation/:user", async (req, res) => {
 <option value="aguardando_confirmacao_campo" ${statusFilter === "aguardando_confirmacao_campo" ? "selected" : ""}>Aguardando confirmação de campo</option>
 <option value="corrigir_dado" ${statusFilter === "corrigir_dado" ? "selected" : ""}>Corrigir dado</option>
 <option value="qualificado" ${statusFilter === "qualificado" ? "selected" : ""}>Qualificado</option>
+            </select>
+
+            <select name="statusOperacional">
+              <option value="">Operacional: todos</option>
+              <option value="ativo" ${statusOperacionalFilter === "ativo" ? "selected" : ""}>Ativo</option>
+              <option value="em_atendimento" ${statusOperacionalFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
+              <option value="enviado_crm" ${statusOperacionalFilter === "enviado_crm" ? "selected" : ""}>Enviado CRM</option>
+              <option value="fechado" ${statusOperacionalFilter === "fechado" ? "selected" : ""}>Fechado</option>
+              <option value="perdido" ${statusOperacionalFilter === "perdido" ? "selected" : ""}>Perdido</option>
+              <option value="erro_dados" ${statusOperacionalFilter === "erro_dados" ? "selected" : ""}>Erro dados</option>
+              <option value="erro_envio_crm" ${statusOperacionalFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
+            </select>
+
+            <select name="faseFunil">
+              <option value="">Funil: todos</option>
+              <option value="inicio" ${faseFunilFilter === "inicio" ? "selected" : ""}>Início</option>
+              <option value="esclarecimento" ${faseFunilFilter === "esclarecimento" ? "selected" : ""}>Esclarecimento</option>
+              <option value="beneficios" ${faseFunilFilter === "beneficios" ? "selected" : ""}>Benefícios</option>
+              <option value="estoque" ${faseFunilFilter === "estoque" ? "selected" : ""}>Estoque</option>
+              <option value="responsabilidades" ${faseFunilFilter === "responsabilidades" ? "selected" : ""}>Responsabilidades</option>
+              <option value="investimento" ${faseFunilFilter === "investimento" ? "selected" : ""}>Investimento</option>
+              <option value="compromisso" ${faseFunilFilter === "compromisso" ? "selected" : ""}>Compromisso</option>
+              <option value="coleta_dados" ${faseFunilFilter === "coleta_dados" ? "selected" : ""}>Coleta de dados</option>
+              <option value="confirmacao_dados" ${faseFunilFilter === "confirmacao_dados" ? "selected" : ""}>Confirmação de dados</option>
+              <option value="pre_analise" ${faseFunilFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
+              <option value="crm" ${faseFunilFilter === "crm" ? "selected" : ""}>CRM</option>
+              <option value="encerrado" ${faseFunilFilter === "encerrado" ? "selected" : ""}>Encerrado</option>
+              <option value="afiliado" ${faseFunilFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
+            </select>
+
+            <select name="temperaturaComercial">
+              <option value="">Temperatura: todas</option>
+              <option value="indefinida" ${temperaturaComercialFilter === "indefinida" ? "selected" : ""}>Indefinida</option>
+              <option value="frio" ${temperaturaComercialFilter === "frio" ? "selected" : ""}>Frio</option>
+              <option value="morno" ${temperaturaComercialFilter === "morno" ? "selected" : ""}>Morno</option>
+              <option value="quente" ${temperaturaComercialFilter === "quente" ? "selected" : ""}>Quente</option>
+            </select>
+
+            <select name="rotaComercial">
+              <option value="">Rota: todas</option>
+              <option value="homologado" ${rotaComercialFilter === "homologado" ? "selected" : ""}>Homologado</option>
+              <option value="afiliado" ${rotaComercialFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
+              <option value="ambos" ${rotaComercialFilter === "ambos" ? "selected" : ""}>Ambos</option>
+              <option value="indefinida" ${rotaComercialFilter === "indefinida" ? "selected" : ""}>Indefinida</option>
             </select>
 
             <button type="submit">Filtrar</button>
