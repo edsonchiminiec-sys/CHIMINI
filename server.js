@@ -2466,6 +2466,67 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+function isCommercialProgressConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const commercialPatterns = [
+    /^faz sentido$/,
+    /^faz sim$/,
+    /^fez sentido$/,
+    /^pra mim faz sentido$/,
+    /^para mim faz sentido$/,
+    /^estou de acordo$/,
+    /^to de acordo$/,
+    /^tou de acordo$/,
+    /^concordo$/,
+    /^podemos seguir$/,
+    /^vamos seguir$/,
+    /^bora seguir$/,
+    /^quero seguir$/,
+    /^quero continuar$/,
+    /^pode continuar$/,
+    /^pode avancar$/,
+    /^quero avancar$/,
+    /^faz sentido, podemos seguir$/,
+    /^faz sentido podemos seguir$/,
+    /^estou de acordo, vamos seguir$/,
+    /^estou de acordo vamos seguir$/,
+    /^podemos avancar$/
+  ];
+
+  return commercialPatterns.some(pattern => pattern.test(t));
+}
+
+function isStrongBuyIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const patterns = [
+    "vamos negociar",
+    "vamos fechar",
+    "quero entrar",
+    "quero comecar",
+    "como faco pra entrar",
+    "bora",
+    "bora seguir",
+    "quero seguir",
+    "pode iniciar",
+    "vamos seguir",
+    "tenho interesse",
+    "quero participar",
+    "quero aderir"
+  ];
+
+  return patterns.some(p => t.includes(p));
+}
 
 const VALID_UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
@@ -3195,7 +3256,9 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
-   function shouldStopBotByLifecycle(lead = {}) {
+  function shouldStopBotByLifecycle(lead = {}) {
+  lead = lead || {};
+
   const status = lead.status || "";
   const fase = lead.faseQualificacao || "";
   const statusOperacional = lead.statusOperacional || "";
