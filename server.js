@@ -6391,9 +6391,11 @@ await delay(typingTime);
 await sendWhatsAppMessage(from, respostaFinal);
 history.push({ role: "assistant", content: respostaFinal });
 
+const leadAtualizadoParaAgentes = await loadLeadProfile(from);
+
 runSupervisorAfterSdrReply({
   user: from,
-  lead: currentLead,
+  lead: leadAtualizadoParaAgentes || currentLead,
   history,
   lastUserText: text,
   lastSdrText: respostaFinal
