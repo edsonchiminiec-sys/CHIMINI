@@ -1094,6 +1094,41 @@ async function runConsultantAssistant({
   return parseConsultantAdviceJson(rawText);
 }
 
+async function runConsultantAfterClassifier({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {},
+  classification = {}
+} = {}) {
+  try {
+    if (!user) return;
+
+    const consultantAdvice = await runConsultantAssistant({
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis,
+      classification
+    });
+
+    await saveConsultantAdvice(user, consultantAdvice);
+
+    console.log("✅ Consultor Assistente analisou estratégia:", {
+      user,
+      estrategiaRecomendada: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
+      ofertaMaisAdequada: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+      momentoIdealHumano: consultantAdvice?.momentoIdealHumano || "nao_analisado",
+      prioridadeComercial: consultantAdvice?.prioridadeComercial || "nao_analisado"
+    });
+  } catch (error) {
+    console.error("⚠️ Consultor Assistente falhou, mas atendimento continua:", error.message);
+  }
+}
+
 const CLASSIFIER_SYSTEM_PROMPT = `
 Você é o GPT Classificador Comercial da IQG.
 
@@ -1506,19 +1541,29 @@ async function runClassifierAfterSupervisor({
 
     await saveLeadClassification(user, classification);
 
+    runConsultantAfterClassifier({
+      user,
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis,
+      classification
+    });
+
     console.log("✅ Classificador analisou lead:", {
       user,
       temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
       perfil: classification?.perfilComportamentalPrincipal || "nao_analisado",
       intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado",
       objecaoPrincipal: classification?.objecaoPrincipal || "sem_objecao_detectada",
-      confianca: classification?.confiancaClassificacao || "nao_analisado"
+      confianca: classification?.confiancaClassificacao || "nao_analisado",
+      consultorAcionado: true
     });
   } catch (error) {
     console.error("⚠️ Classificador falhou, mas atendimento continua:", error.message);
   }
 }
-
 const SUPERVISOR_SYSTEM_PROMPT = `
 Você é o GPT Supervisor Comercial da IQG.
 
