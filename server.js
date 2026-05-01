@@ -179,7 +179,8 @@ async function saveLeadProfile(user, data = {}) {
  const insertData = {
   createdAt: new Date(),
   supervisor: buildDefaultSupervisorAnalysis(),
-  classificacao: buildDefaultLeadClassification()
+  classificacao: buildDefaultLeadClassification(),
+  consultoria: buildDefaultConsultantAdvice()
 };
    
   // STATUS INICIAL APENAS PARA LEAD NOVO
@@ -366,6 +367,21 @@ function buildDefaultLeadClassification() {
     sinaisObservados: [],
     resumoPerfil: "",
     classificadoEm: null
+  };
+}
+
+function buildDefaultConsultantAdvice() {
+  return {
+    estrategiaRecomendada: "nao_analisado",
+    proximaMelhorAcao: "",
+    abordagemSugerida: "",
+    argumentoPrincipal: "",
+    cuidadoPrincipal: "",
+    ofertaMaisAdequada: "nao_analisado",
+    momentoIdealHumano: "nao_analisado",
+    prioridadeComercial: "nao_analisado",
+    resumoConsultivo: "",
+    consultadoEm: null
   };
 }
 
