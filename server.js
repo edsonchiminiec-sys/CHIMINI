@@ -6694,13 +6694,22 @@ app.get("/conversation/:user", async (req, res) => {
         ? formatDate(supervisor.analisadoEm)
         : "-";
 
-      const classificacao = lead.classificacao || {};
+            const classificacao = lead.classificacao || {};
       const classificacaoPerfil = classificacao.perfilComportamentalPrincipal || "nao_analisado";
       const classificacaoIntencao = classificacao.intencaoPrincipal || "nao_analisado";
       const classificacaoObjecao = classificacao.objecaoPrincipal || "sem_objecao_detectada";
       const classificacaoConfianca = classificacao.confiancaClassificacao || "nao_analisado";
       const classificacaoUltima = classificacao.classificadoEm
         ? formatDate(classificacao.classificadoEm)
+        : "-";
+
+      const consultoria = lead.consultoria || {};
+      const consultoriaEstrategia = consultoria.estrategiaRecomendada || "nao_analisado";
+      const consultoriaProximaAcao = consultoria.proximaMelhorAcao || "-";
+      const consultoriaOferta = consultoria.ofertaMaisAdequada || "nao_analisado";
+      const consultoriaPrioridade = consultoria.prioridadeComercial || "nao_analisado";
+      const consultoriaUltima = consultoria.consultadoEm
+        ? formatDate(consultoria.consultadoEm)
         : "-";
 
       const user = encodeURIComponent(lead.user || phone);
@@ -6719,11 +6728,16 @@ app.get("/conversation/:user", async (req, res) => {
   <td>${escapeHtml(supervisorHumano)}</td>
   <td>${escapeHtml(supervisorQualidade)}</td>
   <td>${escapeHtml(supervisorUltimaAnalise)}</td>
-  <td>${escapeHtml(classificacaoPerfil)}</td>
+    <td>${escapeHtml(classificacaoPerfil)}</td>
   <td>${escapeHtml(classificacaoIntencao)}</td>
   <td>${escapeHtml(classificacaoObjecao)}</td>
   <td>${escapeHtml(classificacaoConfianca)}</td>
   <td>${escapeHtml(classificacaoUltima)}</td>
+  <td>${escapeHtml(consultoriaEstrategia)}</td>
+  <td>${escapeHtml(consultoriaProximaAcao)}</td>
+  <td>${escapeHtml(consultoriaOferta)}</td>
+  <td>${escapeHtml(consultoriaPrioridade)}</td>
+  <td>${escapeHtml(consultoriaUltima)}</td>
   <td>${escapeHtml(lead.origemConversao || "-")}</td>
 <td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone)}</td>
 <td>${escapeHtml(lead.cpf || "-")}</td>
@@ -7084,6 +7098,11 @@ app.get("/conversation/:user", async (req, res) => {
 <th>Objeção</th>
 <th>Confiança</th>
 <th>Classificado em</th>
+<th>Estratégia</th>
+<th>Próxima ação</th>
+<th>Oferta ideal</th>
+<th>Prioridade</th>
+<th>Consultado em</th>
 <th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
@@ -7095,7 +7114,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-                        ${rows || `<tr><td colspan="24">Nenhum lead encontrado.</td></tr>`}
+                        ${rows || `<tr><td colspan="29">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
