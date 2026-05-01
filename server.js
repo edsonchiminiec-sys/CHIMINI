@@ -2068,6 +2068,69 @@ async function sendSupervisorInternalAlert({
   }
 }
 
+function buildSdrInternalStrategicContext({
+  lead = {}
+} = {}) {
+  const supervisor = lead.supervisor || {};
+  const classificacao = lead.classificacao || {};
+  const consultoria = lead.consultoria || {};
+
+  const hasSupervisor =
+    supervisor.analisadoEm ||
+    supervisor.riscoPerda ||
+    supervisor.pontoTrava ||
+    supervisor.necessitaHumano === true;
+
+  const hasClassification =
+    classificacao.classificadoEm ||
+    classificacao.perfilComportamentalPrincipal ||
+    classificacao.intencaoPrincipal ||
+    classificacao.objecaoPrincipal;
+
+  const hasConsulting =
+    consultoria.consultadoEm ||
+    consultoria.estrategiaRecomendada ||
+    consultoria.proximaMelhorAcao ||
+    consultoria.prioridadeComercial;
+
+  if (!hasSupervisor && !hasClassification && !hasConsulting) {
+    return "";
+  }
+
+  return `CONTEXTO ESTRATÉGICO INTERNO — NÃO MOSTRAR AO LEAD
+
+Supervisor:
+- Risco de perda: ${supervisor.riscoPerda || "nao_analisado"}
+- Ponto de trava: ${supervisor.pontoTrava || "sem_trava_detectada"}
+- Necessita humano: ${supervisor.necessitaHumano === true ? "sim" : "não"}
+- Qualidade da condução SDR: ${supervisor.qualidadeConducaoSdr || "nao_analisado"}
+- Resumo do Supervisor: ${supervisor.resumoDiagnostico || "-"}
+
+Classificador:
+- Perfil comportamental: ${classificacao.perfilComportamentalPrincipal || "nao_analisado"}
+- Intenção principal: ${classificacao.intencaoPrincipal || "nao_analisado"}
+- Objeção principal: ${classificacao.objecaoPrincipal || "sem_objecao_detectada"}
+- Confiança da classificação: ${classificacao.confiancaClassificacao || "nao_analisado"}
+- Resumo do perfil: ${classificacao.resumoPerfil || "-"}
+
+Consultor Assistente:
+- Estratégia recomendada: ${consultoria.estrategiaRecomendada || "nao_analisado"}
+- Próxima melhor ação: ${consultoria.proximaMelhorAcao || "-"}
+- Abordagem sugerida: ${consultoria.abordagemSugerida || "-"}
+- Argumento principal: ${consultoria.argumentoPrincipal || "-"}
+- Cuidado principal: ${consultoria.cuidadoPrincipal || "-"}
+- Oferta mais adequada: ${consultoria.ofertaMaisAdequada || "nao_analisado"}
+- Prioridade comercial: ${consultoria.prioridadeComercial || "nao_analisado"}
+
+REGRAS PARA USO FUTURO:
+- Este contexto é interno.
+- Não repetir esses rótulos para o lead.
+- Não dizer que houve análise de Supervisor, Classificador ou Consultor.
+- Usar apenas como orientação de tom, cuidado e condução.
+- Nunca prometer aprovação, ganho ou resultado.
+- Nunca pedir pagamento.
+- Nunca pular fase do funil.`;
+}
 
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
