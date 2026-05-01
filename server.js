@@ -285,6 +285,35 @@ async function saveLeadClassification(user, classificationData = {}) {
   );
 }
 
+async function saveConsultantAdvice(user, adviceData = {}) {
+  await connectMongo();
+
+  const defaultAdvice = buildDefaultConsultantAdvice();
+
+  const safeAdviceData = {
+    ...defaultAdvice,
+    ...(adviceData || {}),
+    consultadoEm: adviceData?.consultadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        consultoria: safeAdviceData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date(),
+        supervisor: buildDefaultSupervisorAnalysis(),
+        classificacao: buildDefaultLeadClassification()
+      }
+    },
+    { upsert: true }
+  );
+}
+
 const STATUS_OPERACIONAL_VALUES = [
   "ativo",
   "em_atendimento",
