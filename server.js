@@ -965,6 +965,135 @@ O JSON deve ter exatamente esta estrutura:
 }
 `;
 
+function parseConsultantAdviceJson(rawText = "") {
+  const fallback = buildDefaultConsultantAdvice();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      consultadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          estrategiaRecomendada: "nao_analisado",
+          proximaMelhorAcao: "Consultor Assistente retornou resposta sem JSON válido.",
+          prioridadeComercial: "nao_analisado",
+          resumoConsultivo: "Falha ao localizar objeto JSON na resposta do Consultor Assistente.",
+          consultadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        consultadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        estrategiaRecomendada: "nao_analisado",
+        proximaMelhorAcao: "Consultor Assistente retornou JSON inválido.",
+        prioridadeComercial: "nao_analisado",
+        resumoConsultivo: `Não foi possível interpretar a resposta do Consultor Assistente como JSON. Erro: ${String(secondError.message || secondError)}`,
+        consultadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runConsultantAssistant({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {},
+  classification = {}
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const consultantPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    supervisor: supervisorAnalysis || {},
+    classificacao: classification || {},
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_CONSULTANT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: CONSULTANT_ASSISTANT_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(consultantPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Consultor Assistente:", data);
+
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "nao_analisado",
+      proximaMelhorAcao: "Falha ao chamar a OpenAI para consultoria interna.",
+      prioridadeComercial: "nao_analisado",
+      resumoConsultivo: "Erro na chamada OpenAI do Consultor Assistente.",
+      consultadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseConsultantAdviceJson(rawText);
+}
+
 const CLASSIFIER_SYSTEM_PROMPT = `
 Você é o GPT Classificador Comercial da IQG.
 
