@@ -6368,10 +6368,6 @@ await saveLeadProfile(from, {
   etapas: etapasUpdate
 });
 
-     await saveLeadProfile(from, {
-  etapas: etapasUpdate
-});
-
 if (containsInternalContextLeak(respostaFinal)) {
   console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
     user: from
@@ -6379,9 +6375,6 @@ if (containsInternalContextLeak(respostaFinal)) {
 
   respostaFinal = "Perfeito 😊 Vou te orientar de forma simples e direta.\n\nMe conta: qual ponto você quer entender melhor agora sobre o programa?";
 }
-     
-// 🔥 Mostra "digitando..." real no WhatsApp
-await sendTypingIndicator(messageId);
      
 // 🔥 Mostra "digitando..." real no WhatsApp
 await sendTypingIndicator(messageId);
