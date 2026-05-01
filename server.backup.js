@@ -892,6 +892,272 @@ O JSON deve ter exatamente esta estrutura:
 }
 `;
 
+function parseSupervisorJson(rawText = "") {
+  const fallback = buildDefaultSupervisorAnalysis();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      analisadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          houveErroSdr: true,
+          errosDetectados: ["erro_json_supervisor"],
+          descricaoErroPrincipal: "Supervisor retornou resposta sem JSON válido.",
+          riscoPerda: "nao_analisado",
+          qualidadeConducaoSdr: "nao_analisado",
+          observacoesTecnicas: ["Falha ao localizar objeto JSON na resposta do Supervisor."],
+          analisadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        analisadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        houveErroSdr: true,
+        errosDetectados: ["erro_json_supervisor"],
+        descricaoErroPrincipal: "Supervisor retornou JSON inválido.",
+        riscoPerda: "nao_analisado",
+        qualidadeConducaoSdr: "nao_analisado",
+        observacoesTecnicas: [
+          "Não foi possível interpretar a resposta do Supervisor como JSON.",
+          String(secondError.message || secondError)
+        ],
+        analisadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runSupervisor({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const supervisorPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_SUPERVISOR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: SUPERVISOR_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(supervisorPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Supervisor:", data);
+
+    return {
+      ...buildDefaultSupervisorAnalysis(),
+      houveErroSdr: true,
+      errosDetectados: ["erro_api_supervisor"],
+      descricaoErroPrincipal: "Falha ao chamar a OpenAI para análise do Supervisor.",
+      riscoPerda: "nao_analisado",
+      qualidadeConducaoSdr: "nao_analisado",
+      observacoesTecnicas: [
+        "Erro na chamada OpenAI do Supervisor.",
+        JSON.stringify(data)
+      ],
+      analisadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseSupervisorJson(rawText);
+}
+
+async function runSupervisorAfterSdrReply({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  try {
+    if (!user) return;
+
+    const supervisorAnalysis = await runSupervisor({
+      lead,
+      history,
+      lastUserText,
+      lastSdrText
+    });
+
+    await saveSupervisorAnalysis(user, supervisorAnalysis);
+
+    const deveEnviarAlertaSupervisor =
+      ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda) ||
+      supervisorAnalysis?.necessitaHumano === true;
+
+    if (deveEnviarAlertaSupervisor) {
+      await sendSupervisorInternalAlert({
+        lead: {
+          ...(lead || {}),
+          user
+        },
+        supervisorAnalysis
+      });
+    }
+
+    console.log("✅ Supervisor analisou conversa:", {
+      user,
+      riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+      pontoTrava: supervisorAnalysis?.pontoTrava || "-",
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true,
+      alertaEnviado: deveEnviarAlertaSupervisor
+    });
+  } catch (error) {
+    console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
+  }
+}
+
+function buildSupervisorInternalAlertMessage({
+  lead = {},
+  supervisorAnalysis = {}
+} = {}) {
+  const leadName = lead.nome || lead.nomeWhatsApp || "Lead sem nome";
+  const leadPhone = lead.telefoneWhatsApp || lead.user || lead.telefone || "-";
+  const whatsappLink = leadPhone !== "-" ? `https://wa.me/${leadPhone}` : "-";
+
+  const risco = supervisorAnalysis.riscoPerda || "nao_analisado";
+  const pontoTrava = supervisorAnalysis.pontoTrava || "-";
+  const necessitaHumano = supervisorAnalysis.necessitaHumano === true ? "sim" : "não";
+  const prioridadeHumana = supervisorAnalysis.prioridadeHumana || "nao_analisado";
+  const qualidade = supervisorAnalysis.qualidadeConducaoSdr || "nao_analisado";
+  const nota = supervisorAnalysis.notaConducaoSdr ?? "-";
+  const resumo = supervisorAnalysis.resumoDiagnostico || "-";
+  const motivoRisco = supervisorAnalysis.motivoRisco || "-";
+  const erroPrincipal = supervisorAnalysis.descricaoErroPrincipal || "-";
+
+  const errosDetectados = Array.isArray(supervisorAnalysis.errosDetectados)
+    ? supervisorAnalysis.errosDetectados.join(", ")
+    : "-";
+
+  return `🧠 Relatório Supervisor IQG
+
+Lead: ${leadName}
+Telefone: ${leadPhone}
+WhatsApp: ${whatsappLink}
+
+Status antigo: ${lead.status || "-"}
+Fase antiga: ${lead.faseQualificacao || "-"}
+Operacional: ${lead.statusOperacional || "-"}
+Funil: ${lead.faseFunil || "-"}
+Temperatura: ${lead.temperaturaComercial || "-"}
+Rota: ${lead.rotaComercial || lead.origemConversao || "-"}
+
+Risco: ${risco}
+Ponto de trava: ${pontoTrava}
+Humano necessário: ${necessitaHumano}
+Prioridade humana: ${prioridadeHumana}
+
+Qualidade SDR: ${qualidade}
+Nota SDR: ${nota}
+
+Erros detectados:
+${errosDetectados}
+
+Erro principal:
+${erroPrincipal}
+
+Motivo do risco:
+${motivoRisco}
+
+Resumo:
+${resumo}`;
+}
+
+async function sendSupervisorInternalAlert({
+  lead = {},
+  supervisorAnalysis = {}
+} = {}) {
+  try {
+    if (!process.env.CONSULTANT_PHONE) {
+      console.log("ℹ️ Alerta Supervisor não enviado: CONSULTANT_PHONE não configurado.");
+      return;
+    }
+
+    const message = buildSupervisorInternalAlertMessage({
+      lead,
+      supervisorAnalysis
+    });
+
+    await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
+
+    console.log("📣 Alerta interno do Supervisor enviado:", {
+      user: lead.user || lead.telefoneWhatsApp || "-",
+      riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true
+    });
+  } catch (error) {
+    console.error("⚠️ Falha ao enviar alerta interno do Supervisor:", error.message);
+  }
+}
+
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
@@ -5104,6 +5370,14 @@ await delay(typingTime);
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
 history.push({ role: "assistant", content: respostaFinal });
+
+runSupervisorAfterSdrReply({
+  user: from,
+  lead: currentLead,
+  history,
+  lastUserText: text,
+  lastSdrText: respostaFinal
+});
      
 await saveConversation(from, history);
 
@@ -5916,3 +6190,4 @@ ensureIndexes()
     console.error("Erro ao iniciar servidor:", error);
     process.exit(1);
   });
+
