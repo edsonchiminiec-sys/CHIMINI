@@ -178,7 +178,8 @@ async function saveLeadProfile(user, data = {}) {
    
  const insertData = {
   createdAt: new Date(),
-  supervisor: buildDefaultSupervisorAnalysis()
+  supervisor: buildDefaultSupervisorAnalysis(),
+  classificacao: buildDefaultLeadClassification()
 };
    
   // STATUS INICIAL APENAS PARA LEAD NOVO
@@ -322,6 +323,21 @@ function buildDefaultSupervisorAnalysis() {
     resumoDiagnostico: "",
     observacoesTecnicas: [],
     analisadoEm: null
+  };
+}
+
+function buildDefaultLeadClassification() {
+  return {
+    temperaturaComercial: "nao_analisado",
+    perfilComportamentalPrincipal: "nao_analisado",
+    perfilComportamentalSecundario: "",
+    nivelConsciencia: "nao_analisado",
+    intencaoPrincipal: "nao_analisado",
+    objecaoPrincipal: "sem_objecao_detectada",
+    confiancaClassificacao: "nao_analisado",
+    sinaisObservados: [],
+    resumoPerfil: "",
+    classificadoEm: null
   };
 }
 
