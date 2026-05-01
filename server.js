@@ -892,6 +892,143 @@ O JSON deve ter exatamente esta estrutura:
 }
 `;
 
+function parseSupervisorJson(rawText = "") {
+  const fallback = buildDefaultSupervisorAnalysis();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      analisadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          houveErroSdr: true,
+          errosDetectados: ["erro_json_supervisor"],
+          descricaoErroPrincipal: "Supervisor retornou resposta sem JSON válido.",
+          riscoPerda: "nao_analisado",
+          qualidadeConducaoSdr: "nao_analisado",
+          observacoesTecnicas: ["Falha ao localizar objeto JSON na resposta do Supervisor."],
+          analisadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        analisadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        houveErroSdr: true,
+        errosDetectados: ["erro_json_supervisor"],
+        descricaoErroPrincipal: "Supervisor retornou JSON inválido.",
+        riscoPerda: "nao_analisado",
+        qualidadeConducaoSdr: "nao_analisado",
+        observacoesTecnicas: [
+          "Não foi possível interpretar a resposta do Supervisor como JSON.",
+          String(secondError.message || secondError)
+        ],
+        analisadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runSupervisor({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const supervisorPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_SUPERVISOR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: SUPERVISOR_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(supervisorPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Supervisor:", data);
+
+    return {
+      ...buildDefaultSupervisorAnalysis(),
+      houveErroSdr: true,
+      errosDetectados: ["erro_api_supervisor"],
+      descricaoErroPrincipal: "Falha ao chamar a OpenAI para análise do Supervisor.",
+      riscoPerda: "nao_analisado",
+      qualidadeConducaoSdr: "nao_analisado",
+      observacoesTecnicas: [
+        "Erro na chamada OpenAI do Supervisor.",
+        JSON.stringify(data)
+      ],
+      analisadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseSupervisorJson(rawText);
+}
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
