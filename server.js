@@ -6932,9 +6932,6 @@ if (disciplinaFunil.changed) {
      
      // 🔥 ATUALIZA ETAPAS DO FUNIL
 const etapasUpdate = { ...(currentLead?.etapas || {}) };
-     
-     // 🔥 ATUALIZA ETAPAS DO FUNIL
-const etapasUpdate = { ...(currentLead?.etapas || {}) };
 
 const respostaEtapaLower = respostaFinal.toLowerCase();
 
