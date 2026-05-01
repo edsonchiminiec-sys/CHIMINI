@@ -256,6 +256,34 @@ async function saveSupervisorAnalysis(user, supervisorData = {}) {
   );
 }
 
+async function saveLeadClassification(user, classificationData = {}) {
+  await connectMongo();
+
+  const defaultClassification = buildDefaultLeadClassification();
+
+  const safeClassificationData = {
+    ...defaultClassification,
+    ...(classificationData || {}),
+    classificadoEm: classificationData?.classificadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        classificacao: safeClassificationData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date(),
+        supervisor: buildDefaultSupervisorAnalysis()
+      }
+    },
+    { upsert: true }
+  );
+}
+
 const STATUS_OPERACIONAL_VALUES = [
   "ativo",
   "em_atendimento",
