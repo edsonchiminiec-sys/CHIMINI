@@ -5271,6 +5271,14 @@ await delay(typingTime);
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
 history.push({ role: "assistant", content: respostaFinal });
+
+runSupervisorAfterSdrReply({
+  user: from,
+  lead: currentLead,
+  history,
+  lastUserText: text,
+  lastSdrText: respostaFinal
+});
      
 await saveConversation(from, history);
 
