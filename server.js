@@ -2144,7 +2144,6 @@ function containsInternalContextLeak(text = "") {
     "consultor assistente",
     "contexto estrategico",
     "contexto interno",
-    "analise interna",
     "analise dos agentes",
     "agentes internos",
     "perfil comportamental",
@@ -4195,6 +4194,284 @@ function getCurrentFunnelStage(lead = {}) {
   if (lead.interesseReal !== true) return 7;
 
   return 8; // coleta
+}
+
+function normalizeCommercialText(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function replyMentionsInvestment(text = "") {
+  const t = normalizeCommercialText(text);
+
+  return (
+    t.includes("r$ 1.990") ||
+    t.includes("r$1.990") ||
+    t.includes("1990") ||
+    t.includes("1.990") ||
+    t.includes("taxa") ||
+    t.includes("adesao") ||
+    t.includes("adesão") ||
+    t.includes("investimento") ||
+    t.includes("parcelado") ||
+    t.includes("10x") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão")
+  );
+}
+
+function replyAsksPersonalData(text = "") {
+  const t = normalizeCommercialText(text);
+
+  return (
+    t.includes("nome completo") ||
+    t.includes("me envie seu nome") ||
+    t.includes("me manda seu nome") ||
+    t.includes("qual seu nome") ||
+    t.includes("seu cpf") ||
+    t.includes("me envie seu cpf") ||
+    t.includes("me passa seu cpf") ||
+    t.includes("telefone com ddd") ||
+    t.includes("numero com ddd") ||
+    t.includes("número com ddd") ||
+    t.includes("qual sua cidade") ||
+    t.includes("qual seu estado") ||
+    t.includes("sua cidade") ||
+    t.includes("seu estado")
+  );
+}
+
+function detectStageFromSdrReply(text = "") {
+  const t = normalizeCommercialText(text);
+
+  let detectedStage = 0;
+
+  if (
+    t.includes("programa") ||
+    t.includes("parceria") ||
+    t.includes("parceiro homologado") ||
+    t.includes("como funciona")
+  ) {
+    detectedStage = Math.max(detectedStage, 1);
+  }
+
+  if (
+    t.includes("beneficio") ||
+    t.includes("beneficios") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("materiais")
+  ) {
+    detectedStage = Math.max(detectedStage, 2);
+  }
+
+  if (
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("lote inicial") ||
+    t.includes("kit inicial") ||
+    t.includes("pronta-entrega") ||
+    t.includes("pronta entrega")
+  ) {
+    detectedStage = Math.max(detectedStage, 3);
+  }
+
+  if (
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("comunicacao correta") ||
+    t.includes("comunicação correta")
+  ) {
+    detectedStage = Math.max(detectedStage, 4);
+  }
+
+  if (replyMentionsInvestment(text)) {
+    detectedStage = Math.max(detectedStage, 5);
+  }
+
+  if (
+    t.includes("resultado depende") ||
+    t.includes("depende da sua atuacao") ||
+    t.includes("depende da sua atuação") ||
+    t.includes("atuacao nas vendas") ||
+    t.includes("atuação nas vendas")
+  ) {
+    detectedStage = Math.max(detectedStage, 6);
+  }
+
+  if (
+    t.includes("pre-analise") ||
+    t.includes("pre análise") ||
+    t.includes("pré-análise") ||
+    t.includes("pre analise") ||
+    replyAsksPersonalData(text)
+  ) {
+    detectedStage = Math.max(detectedStage, 8);
+  }
+
+  return detectedStage;
+}
+
+function getSafeCurrentPhaseResponse(lead = {}) {
+  const e = lead.etapas || {};
+
+  if (!e.programa) {
+    return {
+      message: `Vou te explicar de forma simples 😊
+
+O Programa Parceiro Homologado IQG é uma parceria comercial onde você vende produtos da indústria com suporte, orientação e uma estrutura pensada para começar de forma organizada.
+
+Antes de falar de valores ou próximos passos, preciso entender melhor seu objetivo: você busca uma renda extra ou algo mais estruturado?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.beneficios) {
+    return {
+      message: `Ótimo 😊 O próximo ponto são os benefícios.
+
+Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orientação para te ajudar a vender com mais segurança.
+
+Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
+
+Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
+      fileKey: "folder"
+    };
+  }
+
+  if (!e.estoque) {
+    return {
+      message: `Agora o próximo ponto é o estoque inicial.
+
+Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
+
+Faz sentido essa parte do comodato pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.responsabilidades) {
+    return {
+      message: `Agora preciso alinhar uma parte importante: as responsabilidades do parceiro.
+
+Como o lote fica em comodato, o parceiro fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+Isso é importante porque o resultado depende da atuação do parceiro nas vendas, combinado?
+
+Ficou claro esse ponto?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.investimento) {
+    return {
+      message: `Antes de avançarmos, quero te explicar o investimento com total transparência 😊
+
+Existe um investimento de adesão e implantação de R$ 1.990.
+
+Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
+
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+
+Ou seja, você entra com acesso a produtos, estrutura e suporte sem precisar investir esse valor em estoque.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
+
+Faz sentido pra você nesse formato?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.compromisso) {
+    return {
+      message: `Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante 😊
+
+Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+      fileKey: null
+    };
+  }
+
+  if (lead.interesseReal !== true) {
+    return {
+      message: `Perfeito 😊 Pelo que conversamos até aqui, faz sentido seguir para a pré-análise agora?`,
+      fileKey: null
+    };
+  }
+
+  return {
+    message: `Perfeito 😊 Vamos seguir então.
+
+Primeiro, pode me enviar seu nome completo?`,
+    fileKey: null
+  };
+}
+
+function enforceFunnelDiscipline({
+  respostaFinal = "",
+  currentLead = {}
+} = {}) {
+  const etapaAtual = getCurrentFunnelStage(currentLead);
+  const etapaDetectadaNaResposta = detectStageFromSdrReply(respostaFinal);
+
+  const falaDeInvestimento = replyMentionsInvestment(respostaFinal);
+  const pedeDadosPessoais = replyAsksPersonalData(respostaFinal);
+  const podeColetarDados = canStartDataCollection(currentLead);
+
+  const tentouPularFase =
+    etapaDetectadaNaResposta > 0 &&
+    etapaDetectadaNaResposta > etapaAtual;
+
+  const falouTaxaCedo =
+    falaDeInvestimento &&
+    etapaAtual < 5;
+
+  const falouTaxaSemControle =
+    falaDeInvestimento &&
+    etapaAtual === 5;
+
+  const pediuDadosCedo =
+    pedeDadosPessoais &&
+    !podeColetarDados;
+
+  if (
+    tentouPularFase ||
+    falouTaxaCedo ||
+    falouTaxaSemControle ||
+    pediuDadosCedo
+  ) {
+    const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
+    return {
+      changed: true,
+      reason: {
+        etapaAtual,
+        etapaDetectadaNaResposta,
+        tentouPularFase,
+        falouTaxaCedo,
+        falouTaxaSemControle,
+        pediuDadosCedo
+      },
+      respostaFinal: safeResponse.message,
+      fileKey: safeResponse.fileKey
+    };
+  }
+
+  return {
+    changed: false,
+    respostaFinal
+  };
 }
 
 function isRepeatedDigits(value = "") {
@@ -6308,6 +6585,39 @@ if (multiDataRequestPattern.test(respostaFinal)) {
 if (isRepeatedBotReply(respostaFinal, history)) {
   respostaFinal = getNextFunnelStepMessage(currentLead);
 }
+
+// 🚫 ANTI-LOOP FINAL — impede repetir a última resposta do bot
+if (isRepeatedBotReply(respostaFinal, history)) {
+  respostaFinal = getNextFunnelStepMessage(currentLead);
+}
+
+// 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
+// Essa trava impede a SDR de falar taxa cedo, pular fases,
+// misturar assuntos ou pedir dados antes da hora.
+const disciplinaFunil = enforceFunnelDiscipline({
+  respostaFinal,
+  currentLead
+});
+
+if (disciplinaFunil.changed) {
+  console.log("🧭 Resposta ajustada por disciplina de funil:", {
+    user: from,
+    reason: disciplinaFunil.reason
+  });
+
+  respostaFinal = disciplinaFunil.respostaFinal;
+
+  if (
+    disciplinaFunil.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(disciplinaFunil.fileKey)
+  ) {
+    actions.push(disciplinaFunil.fileKey);
+  }
+}
+     
+     // 🔥 ATUALIZA ETAPAS DO FUNIL
+const etapasUpdate = { ...(currentLead?.etapas || {}) };
      
      // 🔥 ATUALIZA ETAPAS DO FUNIL
 const etapasUpdate = { ...(currentLead?.etapas || {}) };
