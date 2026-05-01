@@ -971,6 +971,133 @@ O JSON deve ter exatamente esta estrutura:
 }
 `;
 
+function parseClassifierJson(rawText = "") {
+  const fallback = buildDefaultLeadClassification();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      classificadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          confiancaClassificacao: "baixa",
+          resumoPerfil: "Classificador retornou resposta sem JSON válido.",
+          sinaisObservados: ["erro_json_classificador"],
+          classificadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        classificadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        confiancaClassificacao: "baixa",
+        resumoPerfil: "Classificador retornou JSON inválido.",
+        sinaisObservados: [
+          "erro_json_classificador",
+          String(secondError.message || secondError)
+        ],
+        classificadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runClassifier({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {}
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const classifierPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    supervisor: supervisorAnalysis || {},
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_CLASSIFIER_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: CLASSIFIER_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(classifierPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Classificador:", data);
+
+    return {
+      ...buildDefaultLeadClassification(),
+      confiancaClassificacao: "baixa",
+      sinaisObservados: ["erro_api_classificador"],
+      resumoPerfil: "Falha ao chamar a OpenAI para classificação do lead.",
+      classificadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseClassifierJson(rawText);
+}
+
 
 const SUPERVISOR_SYSTEM_PROMPT = `
 Você é o GPT Supervisor Comercial da IQG.
