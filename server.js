@@ -1029,6 +1029,36 @@ async function runSupervisor({
   return parseSupervisorJson(rawText);
 }
 
+async function runSupervisorAfterSdrReply({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  try {
+    if (!user) return;
+
+    const supervisorAnalysis = await runSupervisor({
+      lead,
+      history,
+      lastUserText,
+      lastSdrText
+    });
+
+    await saveSupervisorAnalysis(user, supervisorAnalysis);
+
+    console.log("✅ Supervisor analisou conversa:", {
+      user,
+      riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+      pontoTrava: supervisorAnalysis?.pontoTrava || "-",
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true
+    });
+  } catch (error) {
+    console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
+  }
+}
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
