@@ -2132,6 +2132,36 @@ REGRAS PARA USO FUTURO:
 - Nunca pular fase do funil.`;
 }
 
+function containsInternalContextLeak(text = "") {
+  const normalized = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const forbiddenTerms = [
+    "supervisor",
+    "classificador",
+    "consultor assistente",
+    "contexto estrategico",
+    "contexto interno",
+    "analise interna",
+    "analise dos agentes",
+    "agentes internos",
+    "perfil comportamental",
+    "risco de perda",
+    "prioridade comercial",
+    "estrategia recomendada",
+    "proxima melhor acao",
+    "ponto de trava",
+    "necessita humano",
+    "qualidade da conducao",
+    "classificacao do lead",
+    "diagnostico interno"
+  ];
+
+  return forbiddenTerms.some(term => normalized.includes(term));
+}
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
@@ -6337,6 +6367,21 @@ if (
 await saveLeadProfile(from, {
   etapas: etapasUpdate
 });
+
+     await saveLeadProfile(from, {
+  etapas: etapasUpdate
+});
+
+if (containsInternalContextLeak(respostaFinal)) {
+  console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
+    user: from
+  });
+
+  respostaFinal = "Perfeito 😊 Vou te orientar de forma simples e direta.\n\nMe conta: qual ponto você quer entender melhor agora sobre o programa?";
+}
+     
+// 🔥 Mostra "digitando..." real no WhatsApp
+await sendTypingIndicator(messageId);
      
 // 🔥 Mostra "digitando..." real no WhatsApp
 await sendTypingIndicator(messageId);
