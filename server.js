@@ -1098,6 +1098,39 @@ async function runClassifier({
   return parseClassifierJson(rawText);
 }
 
+async function runClassifierAfterSupervisor({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {}
+} = {}) {
+  try {
+    if (!user) return;
+
+    const classification = await runClassifier({
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis
+    });
+
+    await saveLeadClassification(user, classification);
+
+    console.log("✅ Classificador analisou lead:", {
+      user,
+      temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
+      perfil: classification?.perfilComportamentalPrincipal || "nao_analisado",
+      intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado",
+      objecaoPrincipal: classification?.objecaoPrincipal || "sem_objecao_detectada",
+      confianca: classification?.confiancaClassificacao || "nao_analisado"
+    });
+  } catch (error) {
+    console.error("⚠️ Classificador falhou, mas atendimento continua:", error.message);
+  }
+}
 
 const SUPERVISOR_SYSTEM_PROMPT = `
 Você é o GPT Supervisor Comercial da IQG.
