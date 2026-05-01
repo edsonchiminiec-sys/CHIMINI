@@ -4474,6 +4474,284 @@ function enforceFunnelDiscipline({
   };
 }
 
+function getLastAssistantMessage(history = []) {
+  if (!Array.isArray(history)) return "";
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]?.role === "assistant") {
+      return history[i]?.content || "";
+    }
+  }
+
+  return "";
+}
+
+function isShortNeutralLeadReply(text = "") {
+  const t = normalizeCommercialText(text);
+
+  if (!t) return false;
+  if (t.length > 45) return false;
+
+  const neutralPatterns = [
+    /^ok$/,
+    /^ok obrigado$/,
+    /^ok obrigada$/,
+    /^sim$/,
+    /^s$/,
+    /^certo$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^entendi$/,
+    /^entendi sim$/,
+    /^legal$/,
+    /^show$/,
+    /^show de bola$/,
+    /^beleza$/,
+    /^blz$/,
+    /^perfeito$/,
+    /^top$/,
+    /^aham$/,
+    /^uhum$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^para mim faz sentido$/,
+    /^pra mim faz sentido$/,
+    /^combinado$/,
+    /^tranquilo$/,
+    /^ta bom$/,
+    /^tá bom$/
+  ];
+
+  return neutralPatterns.some(pattern => pattern.test(t));
+}
+
+function detectReplyMainTheme(text = "") {
+  const t = normalizeCommercialText(text);
+
+  if (!t) return "";
+
+  if (
+    t.includes("afiliado") ||
+    t.includes("link exclusivo") ||
+    t.includes("divulgar por link") ||
+    t.includes("comissao online") ||
+    t.includes("comissão online")
+  ) {
+    return "afiliado";
+  }
+
+  if (
+    replyAsksPersonalData(text) ||
+    t.includes("pre-analise") ||
+    t.includes("pre analise") ||
+    t.includes("pré-análise") ||
+    t.includes("preanalise")
+  ) {
+    return "coleta";
+  }
+
+  if (
+    t.includes("resultado depende") ||
+    t.includes("depende da sua atuacao") ||
+    t.includes("depende da sua atuação") ||
+    t.includes("atuacao nas vendas") ||
+    t.includes("atuação nas vendas")
+  ) {
+    return "compromisso";
+  }
+
+  if (replyMentionsInvestment(text)) {
+    return "investimento";
+  }
+
+  if (
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("comunicacao correta") ||
+    t.includes("comunicação correta")
+  ) {
+    return "responsabilidades";
+  }
+
+  if (
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("lote inicial") ||
+    t.includes("kit inicial") ||
+    t.includes("pronta-entrega") ||
+    t.includes("pronta entrega")
+  ) {
+    return "estoque";
+  }
+
+  if (
+    t.includes("beneficio") ||
+    t.includes("benefícios") ||
+    t.includes("beneficios") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("materiais")
+  ) {
+    return "beneficios";
+  }
+
+  if (
+    t.includes("programa") ||
+    t.includes("parceria") ||
+    t.includes("parceiro homologado") ||
+    t.includes("como funciona")
+  ) {
+    return "programa";
+  }
+
+  return "";
+}
+
+function buildContinuationAfterRepeatedTheme({
+  lastTheme = "",
+  currentLead = {}
+} = {}) {
+  if (lastTheme === "programa") {
+    return {
+      message: `Ótimo 😊 O próximo ponto são os benefícios.
+
+Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orientação para te ajudar a vender com mais segurança.
+
+Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
+
+Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
+      fileKey: "folder"
+    };
+  }
+
+  if (lastTheme === "beneficios") {
+    return {
+      message: `Perfeito 😊 Agora o próximo ponto é o estoque inicial.
+
+Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
+
+Faz sentido essa parte do comodato pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "estoque") {
+    return {
+      message: `Show 😊 Agora preciso alinhar a parte das responsabilidades.
+
+Como o lote fica em comodato, o parceiro fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+Esse ponto é importante porque o resultado depende da atuação do parceiro nas vendas.
+
+Ficou claro pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "responsabilidades") {
+    return {
+      message: `Perfeito 😊 Agora sim posso te explicar o investimento com transparência.
+
+Existe um investimento de adesão e implantação de R$ 1.990.
+
+Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
+
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
+
+Faz sentido pra você nesse formato?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "investimento") {
+    return {
+      message: `Perfeito 😊 Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante:
+
+Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "compromisso") {
+    return {
+      message: `Perfeito 😊 Então faz sentido seguirmos para a pré-análise agora?`,
+      fileKey: null
+    };
+  }
+
+  return getSafeCurrentPhaseResponse(currentLead);
+}
+
+function applyAntiRepetitionGuard({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {},
+  history = []
+} = {}) {
+  const lastAssistantMessage = getLastAssistantMessage(history);
+
+  if (!lastAssistantMessage) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const leadReplyWasShort = isShortNeutralLeadReply(leadText);
+
+  if (!leadReplyWasShort) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const lastTheme = detectReplyMainTheme(lastAssistantMessage);
+  const currentTheme = detectReplyMainTheme(respostaFinal);
+
+  if (!lastTheme || !currentTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const repeatedSameTheme = lastTheme === currentTheme;
+
+  if (!repeatedSameTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const continuation = buildContinuationAfterRepeatedTheme({
+    lastTheme,
+    currentLead
+  });
+
+  return {
+    changed: true,
+    reason: {
+      leadReplyWasShort,
+      lastTheme,
+      currentTheme,
+      repeatedSameTheme
+    },
+    respostaFinal: continuation.message,
+    fileKey: continuation.fileKey
+  };
+}
+
 function isRepeatedDigits(value = "") {
   return /^(\d)\1+$/.test(value);
 }
@@ -6581,14 +6859,50 @@ if (multiDataRequestPattern.test(respostaFinal)) {
   respostaFinal = "Show! Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
-// 🚫 ANTI-LOOP FINAL — impede repetir a última resposta do bot
+// 🚫 ANTI-LOOP EXATO — impede repetir a última resposta do bot
 if (isRepeatedBotReply(respostaFinal, history)) {
-  respostaFinal = getNextFunnelStepMessage(currentLead);
+  const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
+  console.log("🚫 Resposta repetida bloqueada:", {
+    user: from
+  });
+
+  respostaFinal = safeResponse.message;
+
+  if (
+    safeResponse.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(safeResponse.fileKey)
+  ) {
+    actions.push(safeResponse.fileKey);
+  }
 }
 
-// 🚫 ANTI-LOOP FINAL — impede repetir a última resposta do bot
-if (isRepeatedBotReply(respostaFinal, history)) {
-  respostaFinal = getNextFunnelStepMessage(currentLead);
+// 🚫 ANTI-REPETIÇÃO POR TEMA
+// Se o lead respondeu algo curto e a SDR tentou repetir o mesmo assunto,
+// o backend força uma continuação natural.
+const antiRepetition = applyAntiRepetitionGuard({
+  leadText: text,
+  respostaFinal,
+  currentLead,
+  history
+});
+
+if (antiRepetition.changed) {
+  console.log("🚫 Resposta ajustada por repetição de tema:", {
+    user: from,
+    reason: antiRepetition.reason
+  });
+
+  respostaFinal = antiRepetition.respostaFinal;
+
+  if (
+    antiRepetition.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(antiRepetition.fileKey)
+  ) {
+    actions.push(antiRepetition.fileKey);
+  }
 }
 
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
