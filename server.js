@@ -1531,12 +1531,22 @@ async function runSupervisorAfterSdrReply({
       });
     }
 
+    runClassifierAfterSupervisor({
+      user,
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis
+    });
+
     console.log("✅ Supervisor analisou conversa:", {
       user,
       riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
       pontoTrava: supervisorAnalysis?.pontoTrava || "-",
       necessitaHumano: supervisorAnalysis?.necessitaHumano === true,
-      alertaEnviado: deveEnviarAlertaSupervisor
+      alertaEnviado: deveEnviarAlertaSupervisor,
+      classificadorAcionado: true
     });
   } catch (error) {
     console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
