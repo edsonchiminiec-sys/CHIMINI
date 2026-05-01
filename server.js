@@ -1048,16 +1048,115 @@ async function runSupervisorAfterSdrReply({
 
     await saveSupervisorAnalysis(user, supervisorAnalysis);
 
+    const deveEnviarAlertaSupervisor =
+      ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda) ||
+      supervisorAnalysis?.necessitaHumano === true;
+
+    if (deveEnviarAlertaSupervisor) {
+      await sendSupervisorInternalAlert({
+        lead: {
+          ...(lead || {}),
+          user
+        },
+        supervisorAnalysis
+      });
+    }
+
     console.log("✅ Supervisor analisou conversa:", {
       user,
       riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
       pontoTrava: supervisorAnalysis?.pontoTrava || "-",
-      necessitaHumano: supervisorAnalysis?.necessitaHumano === true
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true,
+      alertaEnviado: deveEnviarAlertaSupervisor
     });
   } catch (error) {
     console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
   }
 }
+
+function buildSupervisorInternalAlertMessage({
+  lead = {},
+  supervisorAnalysis = {}
+} = {}) {
+  const leadName = lead.nome || lead.nomeWhatsApp || "Lead sem nome";
+  const leadPhone = lead.telefoneWhatsApp || lead.user || lead.telefone || "-";
+  const whatsappLink = leadPhone !== "-" ? `https://wa.me/${leadPhone}` : "-";
+
+  const risco = supervisorAnalysis.riscoPerda || "nao_analisado";
+  const pontoTrava = supervisorAnalysis.pontoTrava || "-";
+  const necessitaHumano = supervisorAnalysis.necessitaHumano === true ? "sim" : "não";
+  const prioridadeHumana = supervisorAnalysis.prioridadeHumana || "nao_analisado";
+  const qualidade = supervisorAnalysis.qualidadeConducaoSdr || "nao_analisado";
+  const nota = supervisorAnalysis.notaConducaoSdr ?? "-";
+  const resumo = supervisorAnalysis.resumoDiagnostico || "-";
+  const motivoRisco = supervisorAnalysis.motivoRisco || "-";
+  const erroPrincipal = supervisorAnalysis.descricaoErroPrincipal || "-";
+
+  const errosDetectados = Array.isArray(supervisorAnalysis.errosDetectados)
+    ? supervisorAnalysis.errosDetectados.join(", ")
+    : "-";
+
+  return `🧠 Relatório Supervisor IQG
+
+Lead: ${leadName}
+Telefone: ${leadPhone}
+WhatsApp: ${whatsappLink}
+
+Status antigo: ${lead.status || "-"}
+Fase antiga: ${lead.faseQualificacao || "-"}
+Operacional: ${lead.statusOperacional || "-"}
+Funil: ${lead.faseFunil || "-"}
+Temperatura: ${lead.temperaturaComercial || "-"}
+Rota: ${lead.rotaComercial || lead.origemConversao || "-"}
+
+Risco: ${risco}
+Ponto de trava: ${pontoTrava}
+Humano necessário: ${necessitaHumano}
+Prioridade humana: ${prioridadeHumana}
+
+Qualidade SDR: ${qualidade}
+Nota SDR: ${nota}
+
+Erros detectados:
+${errosDetectados}
+
+Erro principal:
+${erroPrincipal}
+
+Motivo do risco:
+${motivoRisco}
+
+Resumo:
+${resumo}`;
+}
+
+async function sendSupervisorInternalAlert({
+  lead = {},
+  supervisorAnalysis = {}
+} = {}) {
+  try {
+    if (!process.env.CONSULTANT_PHONE) {
+      console.log("ℹ️ Alerta Supervisor não enviado: CONSULTANT_PHONE não configurado.");
+      return;
+    }
+
+    const message = buildSupervisorInternalAlertMessage({
+      lead,
+      supervisorAnalysis
+    });
+
+    await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
+
+    console.log("📣 Alerta interno do Supervisor enviado:", {
+      user: lead.user || lead.telefoneWhatsApp || "-",
+      riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true
+    });
+  } catch (error) {
+    console.error("⚠️ Falha ao enviar alerta interno do Supervisor:", error.message);
+  }
+}
+
 
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
