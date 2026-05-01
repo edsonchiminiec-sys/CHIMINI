@@ -5979,9 +5979,13 @@ if (
   role: "user",
   content: message.audio?.id ? `[Áudio transcrito]: ${text}` : text
 });
-    history = history.slice(-20);
+history = history.slice(-20);
 
-    const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
+  lead: currentLead
+});
+
+const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -5991,6 +5995,10 @@ body: JSON.stringify({
   model: "gpt-4o-mini",
   messages: [
   { role: "system", content: SYSTEM_PROMPT },
+  {
+    role: "system",
+    content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
+  },
   {
     role: "system",
     content: `DADOS DE CONTEXTO DO LEAD:
