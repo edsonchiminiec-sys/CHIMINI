@@ -5937,6 +5937,44 @@ function isPreCrmBlockingObjection(text = "") {
   );
 }
 
+function isClearAffiliateFallbackIntent(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    // intenção direta de afiliado
+    isAffiliateIntent(text) ||
+
+    // quer modelo sem estoque / sem taxa / por link
+    t.includes("quero algo sem estoque") ||
+    t.includes("tem algo sem estoque") ||
+    t.includes("tem opcao sem estoque") ||
+    t.includes("tem opção sem estoque") ||
+    t.includes("quero vender por link") ||
+    t.includes("quero divulgar por link") ||
+    t.includes("quero so divulgar") ||
+    t.includes("quero só divulgar") ||
+    t.includes("quero ganhar por indicacao") ||
+    t.includes("quero ganhar por indicação") ||
+    t.includes("posso indicar e ganhar") ||
+
+    // rejeição clara do modelo físico
+    t.includes("nao quero estoque") ||
+    t.includes("não quero estoque") ||
+    t.includes("nao quero produto fisico") ||
+    t.includes("não quero produto físico") ||
+    t.includes("nao quero mexer com estoque") ||
+    t.includes("não quero mexer com estoque") ||
+
+    // rejeição clara da taxa, não apenas objeção leve
+    t.includes("nao quero pagar taxa") ||
+    t.includes("não quero pagar taxa") ||
+    t.includes("nao quero pagar adesao") ||
+    t.includes("não quero pagar adesão") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão")
+  );
+}
+
 function buildAffiliateRecoveryResponse() {
   return `Entendo totalmente 😊
 
@@ -7339,7 +7377,7 @@ if (podeConfirmarInteresseRealAgora) {
 }
 
      const leadTravouAntesDoCrm =
-  isPreCrmBlockingObjection(text) &&
+    isClearAffiliateFallbackIntent(text) &&
   currentLead?.dadosConfirmadosPeloLead !== true &&
   currentLead?.crmEnviado !== true &&
   currentLead?.statusOperacional !== "enviado_crm" &&
