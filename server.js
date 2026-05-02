@@ -825,7 +825,7 @@ Lead:
 "Esse estoque vai ser sempre assim?"
 
 Orientação correta:
-"Responder diretamente sobre o estoque/comodato. Explicar que o modelo trabalha com lote em comodato e que os produtos continuam sendo da IQG. Depois conduzir para responsabilidades. Não falar taxa agora."
+"Responder diretamente sobre estoque, comodato e reposição. Explicar que o estoque sempre é cedido em comodato, que o parceiro não compra o estoque, que os produtos continuam sendo da IQG e que, quando vender, poderá solicitar reposição também em comodato. Explicar que estoques maiores podem ser avaliados conforme desempenho comercial e evolução do parceiro. Depois conduzir para responsabilidades. Não falar taxa agora."
 
 Lead:
 "Você já explicou"
@@ -2989,7 +2989,27 @@ Se o lead aceitar o PDF do kit, envie:
 
 [ACTION:SEND_KIT]"
 
-Se o lead perguntar se o estoque sempre será em comodato, responda que sim!
+Se o lead perguntar se o estoque sempre será em comodato, responda que sim.
+
+REGRA OBRIGATÓRIA SOBRE COMODATO E REPOSIÇÃO:
+
+O estoque do Parceiro Homologado IQG sempre será cedido em comodato.
+O parceiro não compra o estoque da IQG.
+O parceiro recebe o lote para operar, demonstrar e vender, mas os produtos continuam sendo da IQG até a venda ao consumidor final.
+
+Quando o parceiro vender os produtos, ele poderá solicitar a reposição também em comodato.
+Ou seja: vendeu, comunica corretamente a venda, e poderá pedir reposição conforme operação, disponibilidade, análise e alinhamento com a equipe IQG.
+
+A IA deve deixar claro que o parceiro nunca precisa comprar estoque para repor produtos vendidos.
+
+Também deve explicar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final, mas esse valor pode aumentar com o tempo.
+
+Estoques maiores podem ser liberados conforme desempenho comercial do parceiro.
+Quanto mais o parceiro vender e demonstrar boa atuação, maior poderá ser o estoque cedido em comodato pela IQG.
+
+Para volumes maiores, a IA deve dizer que isso é tratado diretamente com a equipe IQG conforme evolução do parceiro dentro do programa.
+
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 5 — COMPROMETIMENTO (morno)
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -5268,7 +5288,7 @@ function getNextFunnelStepMessage(lead = {}) {
   }
 
   if (!e.estoque) {
-    return "Vamos falar do estoque inicial.\n\nVocê começa com um lote estratégico de produtos em comodato, ou seja, ele fica com você para operação e demonstração, mas continua sendo da IQG.";
+    return "Vamos falar do estoque inicial.\n\nVocê começa com um lote estratégico de produtos em comodato. Isso significa que você não compra esse estoque: ele continua sendo da IQG, mas fica com você para operação, demonstração e venda.\n\nE um ponto importante: quando você vender os produtos, poderá solicitar reposição também em comodato. Ou seja, você não precisa comprar estoque para repor. Conforme suas vendas crescerem, a IQG pode avaliar aumentar o volume de produtos cedidos em comodato.";
   }
 
   if (!e.responsabilidades) {
@@ -5479,11 +5499,18 @@ Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvid
 
   if (!e.estoque) {
     return {
-      message: `Agora o próximo ponto é o estoque inicial.
+     message: `Agora o próximo ponto é o estoque inicial.
 
-Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
+Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega, demonstração e venda.
 
-Faz sentido essa parte do comodato pra você?`,
+Quando você vender os produtos, poderá solicitar reposição também em comodato. Então você não precisa comprar estoque para repor os itens vendidos.
+
+O lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final, e esse volume pode aumentar com o tempo conforme suas vendas e sua evolução no programa.
+
+Estoques maiores são tratados com a equipe IQG conforme o desempenho comercial do parceiro.
+
+Faz sentido essa parte do comodato e da reposição pra você?`,
+       
       fileKey: null
     };
   }
