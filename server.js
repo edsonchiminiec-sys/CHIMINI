@@ -4231,6 +4231,152 @@ function isExplicitPreAnalysisIntent(text = "") {
   return explicitPatterns.some(pattern => t.includes(pattern));
 }
 
+function mentionsPaymentIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    t.includes("pagamento") ||
+    t.includes("pagar") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("boleto") ||
+    t.includes("transferencia") ||
+    t.includes("transferência") ||
+    t.includes("como pago") ||
+    t.includes("quero pagar") ||
+    t.includes("ja quero pagar") ||
+    t.includes("já quero pagar")
+  );
+}
+
+function enforcePreSdrConsultantHardLimits({
+  advice = {},
+  lead = {},
+  lastUserText = ""
+} = {}) {
+  const safeAdvice = {
+    ...buildDefaultConsultantAdvice(),
+    ...(advice || {})
+  };
+
+  const missingSteps = getMissingFunnelStepLabels(lead);
+  const canStartCollectionNow = canStartDataCollection(lead);
+  const hasPaymentIntent = mentionsPaymentIntent(lastUserText);
+
+  const adviceText = [
+    safeAdvice.estrategiaRecomendada,
+    safeAdvice.proximaMelhorAcao,
+    safeAdvice.abordagemSugerida,
+    safeAdvice.argumentoPrincipal,
+    safeAdvice.cuidadoPrincipal,
+    safeAdvice.resumoConsultivo
+  ]
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const consultantSuggestedPreAnalysis =
+    safeAdvice.estrategiaRecomendada === "avancar_pre_analise" ||
+    adviceText.includes("pre-analise") ||
+    adviceText.includes("pre analise") ||
+    adviceText.includes("pré-analise") ||
+    adviceText.includes("pré análise") ||
+    adviceText.includes("preanalise");
+
+  const consultantSuggestedPayment =
+    adviceText.includes("pagamento") ||
+    adviceText.includes("pagar") ||
+    adviceText.includes("pix") ||
+    adviceText.includes("cartao") ||
+    adviceText.includes("cartão");
+
+  if (hasPaymentIntent) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: `Responder que pagamento não acontece agora. Antes, a SDR deve conduzir a etapa correta do funil. Etapas ainda pendentes: ${missingSteps.join(", ") || "nenhuma"}.`,
+      abordagemSugerida: "Tom calmo, seguro e direto. Validar o interesse do lead sem acelerar o processo.",
+      argumentoPrincipal: "O pagamento só acontece depois da análise interna e da assinatura do contrato.",
+      cuidadoPrincipal: "Não conduzir pagamento. Não pedir pagamento. Não enviar dados de pagamento. Não avançar para pré-análise se ainda faltarem etapas obrigatórias.",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: `O lead mencionou pagamento. Isso deve ser tratado como tema sensível. A SDR deve frear com segurança, explicar que pagamento só ocorre após análise interna e contrato, e continuar a fase correta do funil. Etapas pendentes: ${missingSteps.join(", ") || "nenhuma"}.`
+    };
+  }
+
+  if (consultantSuggestedPreAnalysis && !canStartCollectionNow) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: `Não avançar para pré-análise. Continuar a próxima etapa obrigatória do funil. Etapas ainda pendentes: ${missingSteps.join(", ") || "nenhuma"}.`,
+      abordagemSugerida: "Tom consultivo e objetivo. Reconhecer o interesse do lead, mas explicar que ainda falta alinhar pontos obrigatórios antes da pré-análise.",
+      argumentoPrincipal: "A pré-análise só deve acontecer depois que programa, benefícios, estoque, responsabilidades, investimento, compromisso e interesse real estiverem validados.",
+      cuidadoPrincipal: "Não pedir dados. Não falar como se o lead já estivesse pronto. Não avançar para pré-análise apenas porque o lead pediu.",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: `O Consultor tentou orientar pré-análise, mas o backend bloqueou porque ainda faltam etapas obrigatórias: ${missingSteps.join(", ") || "nenhuma"}. A SDR deve seguir a fase atual.`
+    };
+  }
+
+  if (consultantSuggestedPayment) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: "Remover qualquer condução de pagamento da orientação. Focar apenas na fase atual do funil.",
+      abordagemSugerida: "Tom seguro e sem pressão.",
+      argumentoPrincipal: "Pagamento só ocorre após análise interna e contrato.",
+      cuidadoPrincipal: "Não conduzir pagamento.",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: "A orientação do Consultor mencionou pagamento. O backend corrigiu para impedir condução indevida de pagamento."
+    };
+  }
+
+  return safeAdvice;
+}
+
+function getMissingFunnelStepLabels(lead = {}) {
+  const e = lead?.etapas || {};
+  const missing = [];
+
+  if (!e.programa) {
+    missing.push("programa");
+  }
+
+  if (!e.beneficios) {
+    missing.push("benefícios");
+  }
+
+  if (!e.estoque) {
+    missing.push("estoque em comodato");
+  }
+
+  if (!e.responsabilidades) {
+    missing.push("responsabilidades");
+  }
+
+  if (!e.investimento) {
+    missing.push("investimento");
+  }
+
+  if (!e.compromisso) {
+    missing.push("compromisso de atuação");
+  }
+
+  if (lead?.interesseReal !== true) {
+    missing.push("interesse real explícito");
+  }
+
+  return missing;
+}
+
 function normalizeUF(value = "") {
   const text = String(value).trim().toUpperCase();
 
@@ -6757,16 +6903,40 @@ const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
 let preSdrConsultantAdvice = null;
 
 try {
-  preSdrConsultantAdvice = await runConsultantAssistant({
-    lead: currentLead || {},
-    history,
-    lastUserText: text,
-    lastSdrText: "",
-    supervisorAnalysis: currentLead?.supervisor || {},
-    classification: currentLead?.classificacao || {}
-  });
+ preSdrConsultantAdvice = await runConsultantAssistant({
+  lead: currentLead || {},
+  history,
+  lastUserText: text,
+  lastSdrText: "",
+  supervisorAnalysis: currentLead?.supervisor || {},
+  classification: currentLead?.classificacao || {}
+});
 
-  await saveConsultantAdvice(from, preSdrConsultantAdvice);
+const originalPreSdrConsultantAdvice = preSdrConsultantAdvice;
+
+preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
+  advice: preSdrConsultantAdvice,
+  lead: currentLead || {},
+  lastUserText: text
+});
+
+if (
+  originalPreSdrConsultantAdvice?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
+  originalPreSdrConsultantAdvice?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
+  originalPreSdrConsultantAdvice?.cuidadoPrincipal !== preSdrConsultantAdvice?.cuidadoPrincipal
+) {
+  console.log("🛡️ Consultor PRÉ-SDR corrigido por trava dura:", {
+    user: from,
+    estrategiaOriginal: originalPreSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    estrategiaCorrigida: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    proximaMelhorAcaoOriginal: originalPreSdrConsultantAdvice?.proximaMelhorAcao || "-",
+    proximaMelhorAcaoCorrigida: preSdrConsultantAdvice?.proximaMelhorAcao || "-",
+    cuidadoOriginal: originalPreSdrConsultantAdvice?.cuidadoPrincipal || "-",
+    cuidadoCorrigido: preSdrConsultantAdvice?.cuidadoPrincipal || "-"
+  });
+}
+
+await saveConsultantAdvice(from, preSdrConsultantAdvice);
 
  console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
   user: from,
