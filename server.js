@@ -4816,8 +4816,28 @@ function getNextFunnelStepMessage(lead = {}) {
   }
 
   if (!e.investimento) {
-    return "Show! Agora falta explicar o investimento com transparência.\n\nExiste uma adesão de R$ 1.990 para ativação no programa, suporte, treinamento e liberação do lote inicial em comodato. Pode ser parcelado em até 10x de R$ 199 no cartão.";
-  }
+  return `Show! Agora falta explicar o investimento com transparência 😊
+
+Existe uma taxa de adesão e implantação de R$ 1.990,00.
+
+Mas é importante entender que esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele faz parte da ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato.
+
+Pra você ter uma referência prática: só o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+
+Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, a margem é de 40%.
+
+E se vender com ágio, acima do preço sugerido, essa diferença fica com o parceiro, então a margem pode ser maior.
+
+As primeiras vendas podem ajudar a recuperar esse investimento inicial, mas isso depende da sua atuação comercial e das vendas realizadas.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato.
+
+Faz sentido pra você nesse formato?`;
+}
 
   if (!e.compromisso) {
     return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
