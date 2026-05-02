@@ -4380,57 +4380,102 @@ function isValidPhone(value = "") {
 }
 
 function isPositiveConfirmation(text = "") {
-  const t = text
+  const rawText = String(text || "").trim();
+
+  const t = rawText
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 
-const positivePatterns = [
-  /^sim$/,
-  /^s$/,
-  /^isso$/,
-  /^correto$/,
-  /^certo$/,
-  /^ta certo$/,
-  /^esta certo$/,
-  /^pode seguir$/,
-  /^pode$/,
-  /^pode continuar$/,
-  /^confirmo$/,
-  /^confirmado$/,
-  /^perfeito$/,
-  /^ok$/,
-  /^exato$/,
-  /^tudo certo$/,
-  /^esta tudo correto$/,
+  // Confirmações por emoji comuns no WhatsApp.
+  // Exemplo: 👍, 👍🏻, ✅, 👌
+  const positiveEmojiPatterns = [
+    /^👍$/,
+    /^👍🏻$/,
+    /^👍🏼$/,
+    /^👍🏽$/,
+    /^👍🏾$/,
+    /^👍🏿$/,
+    /^✅$/,
+    /^👌$/,
+    /^👌🏻$/,
+    /^👌🏼$/,
+    /^👌🏽$/,
+    /^👌🏾$/,
+    /^👌🏿$/
+  ];
 
-  // confirmações naturais
-  /^faz sim$/,
-  /^faz sentido$/,
-  /^fez sentido$/,
-  /^pra mim faz sentido$/,
-  /^para mim faz sentido$/,
-  /^gostei$/,
-  /^top$/,
-  /^top demais$/,
-  /^beleza$/,
-  /^blz$/,
-  /^show$/,
-  /^show de bola$/,
-  /^entendi sim$/,
-  /^entendi perfeitamente$/,
-  /^estou de acordo$/,
-  /^to de acordo$/,
-  /^tô de acordo$/,
-  /^concordo$/,
-  /^vamos seguir$/,
-  /^podemos seguir$/,
-  /^bora$/,
-  /^bora seguir$/,
-  /^quero seguir$/,
-  /^quero continuar$/
-];
+  if (positiveEmojiPatterns.some(pattern => pattern.test(rawText))) {
+    return true;
+  }
+
+  const positivePatterns = [
+    /^sim$/,
+    /^s$/,
+    /^isso$/,
+    /^isso mesmo$/,
+    /^isso ai$/,
+    /^isso aí$/,
+    /^correto$/,
+    /^correto sim$/,
+    /^certo$/,
+    /^certo sim$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^esta certo$/,
+    /^está certo$/,
+    /^esta correto$/,
+    /^está correto$/,
+    /^ta correto$/,
+    /^tá correto$/,
+    /^esta$/,
+    /^está$/,
+    /^ta$/,
+    /^tá$/,
+    /^pode seguir$/,
+    /^pode$/,
+    /^pode continuar$/,
+    /^confirmo$/,
+    /^confirmado$/,
+    /^perfeito$/,
+    /^ok$/,
+    /^exato$/,
+    /^tudo certo$/,
+    /^esta tudo correto$/,
+    /^está tudo correto$/,
+
+    // confirmações naturais
+    /^claro$/,
+    /^claro que sim$/,
+    /^com certeza$/,
+    /^certeza$/,
+    /^faz sim$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^pra mim faz sentido$/,
+    /^para mim faz sentido$/,
+    /^gostei$/,
+    /^top$/,
+    /^top demais$/,
+    /^beleza$/,
+    /^blz$/,
+    /^show$/,
+    /^show de bola$/,
+    /^entendi sim$/,
+    /^entendi perfeitamente$/,
+    /^estou de acordo$/,
+    /^to de acordo$/,
+    /^tô de acordo$/,
+    /^concordo$/,
+    /^vamos seguir$/,
+    /^podemos seguir$/,
+    /^bora$/,
+    /^bora seguir$/,
+    /^quero seguir$/,
+    /^quero continuar$/
+  ];
 
   return positivePatterns.some(pattern => pattern.test(t));
 }
@@ -4903,45 +4948,71 @@ function isExplicitPreAnalysisIntent(text = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[.,!?]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  const explicitPatterns = [
-    "quero seguir",
-    "vamos seguir",
-    "pode seguir",
-    "podemos seguir",
-    "quero avancar",
-    "quero avançar",
-    "pode avancar",
-    "pode avançar",
-    "vamos avancar",
-    "vamos avançar",
-    "quero entrar",
-    "quero participar",
-    "quero comecar",
-    "quero começar",
-    "pode iniciar",
-    "vamos iniciar",
-    "bora iniciar",
-    "bora seguir",
-    "seguir para pre analise",
-    "seguir para pré análise",
-    "seguir para pre-analise",
-    "seguir para pré-análise",
-    "vamos para pre analise",
-    "vamos para pré análise",
-    "vamos pra pre analise",
-    "vamos pra pré análise",
-    "pode fazer a pre analise",
-    "pode fazer a pré análise",
-    "tenho interesse em seguir",
-    "tenho interesse em avancar",
-    "tenho interesse em avançar"
+  const patterns = [
+    /^quero seguir$/,
+    /^quero continuar$/,
+    /^quero avancar$/,
+    /^quero avançar$/,
+    /^podemos seguir$/,
+    /^podemos avancar$/,
+    /^podemos avançar$/,
+    /^pode seguir$/,
+    /^pode continuar$/,
+    /^pode avancar$/,
+    /^pode avançar$/,
+    /^vamos seguir$/,
+    /^vamos avancar$/,
+    /^vamos avançar$/,
+    /^bora seguir$/,
+    /^bora$/,
+    /^bora la$/,
+    /^bora lá$/,
+    /^sim, pode seguir$/,
+    /^sim pode seguir$/,
+    /^sim, vamos seguir$/,
+    /^sim vamos seguir$/,
+    /^claro$/,
+    /^claro que sim$/,
+    /^com certeza$/,
+    /^tenho interesse$/,
+    /^tenho interesse sim$/,
+    /^quero participar$/,
+    /^quero entrar$/,
+    /^quero fazer a pre analise$/,
+    /^quero fazer a pré análise$/,
+    /^quero fazer a pre-analise$/,
+    /^quero fazer a pré-análise$/,
+    /^pode iniciar$/,
+    /^inicia$/,
+    /^iniciar$/,
+    /^vamos nessa$/,
+
+    // expressões naturais de WhatsApp
+    /^mete bala$/,
+    /^manda ver$/,
+    /^manda bala$/,
+    /^demorou$/,
+    /^fechou$/,
+    /^fechado$/,
+    /^toca ficha$/,
+    /^segue$/,
+    /^segue ai$/,
+    /^segue aí$/,
+    /^vai em frente$/,
+    /^pode tocar$/,
+    /^pode mandar$/,
+    /^manda$/,
+    /^partiu$/,
+    /^show, pode seguir$/,
+    /^show pode seguir$/,
+    /^top, pode seguir$/,
+    /^top pode seguir$/
   ];
 
-  return explicitPatterns.some(pattern => t.includes(pattern));
+  return patterns.some(pattern => pattern.test(t));
 }
 
 function mentionsPaymentIntent(text = "") {
@@ -7415,7 +7486,18 @@ Está correto?`;
     estado: "estado"
   };
 
- respostaConfirmacaoCampo = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+ const labelConfirmado =
+  campo === "cidade" && currentLead?.estadoPendente
+    ? "cidade/estado confirmados"
+    : campo === "estado" && currentLead?.cidadePendente
+      ? "cidade/estado confirmados"
+      : campo === "cidade"
+        ? "cidade confirmada"
+        : campo === "estado"
+          ? "estado confirmado"
+          : `${labels[campo] || campo} confirmado`;
+
+respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
 
  if (missingFields.length > 0) {
   const nextField = missingFields[0];
@@ -7543,25 +7625,55 @@ const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
      // 🧠 CLASSIFICADOR SEMÂNTICO — MODO OBSERVAÇÃO
-// Nesta etapa ele NÃO muda fluxo, NÃO salva status e NÃO envia mensagem.
-// Ele apenas registra no log como interpretou a última mensagem do lead.
-const semanticIntent = await runLeadSemanticIntentClassifier({
-  lead: currentLead || {},
-  history,
-  lastUserText: text,
-  lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
-});
+// Não roda durante coleta/confirmação de dados, porque nesse momento
+// mensagens como nome, CPF, telefone, cidade e UF não são intenção comercial.
+const fasesDeColetaOuConfirmacao = [
+  "coletando_dados",
+  "dados_parciais",
+  "aguardando_dados",
+  "aguardando_confirmacao_campo",
+  "aguardando_confirmacao_dados",
+  "corrigir_dado",
+  "corrigir_dado_final",
+  "aguardando_valor_correcao_final"
+];
 
-console.log("🧠 Intenção semântica observada:", {
-  user: from,
-  ultimaMensagemLead: text,
-  statusAtual: currentLead?.status || "-",
-  faseAtual: currentLead?.faseQualificacao || "-",
-  faseFunilAtual: currentLead?.faseFunil || "-",
-  etapas: currentLead?.etapas || {},
-  semanticIntent
-});
+const estaEmColetaOuConfirmacao =
+  fasesDeColetaOuConfirmacao.includes(currentLead?.faseQualificacao) ||
+  currentLead?.faseFunil === "coleta_dados" ||
+  currentLead?.faseFunil === "confirmacao_dados" ||
+  currentLead?.aguardandoConfirmacaoCampo === true ||
+  currentLead?.aguardandoConfirmacao === true;
 
+let semanticIntent = null;
+
+if (estaEmColetaOuConfirmacao) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação:", {
+    user: from,
+    ultimaMensagemLead: text,
+    statusAtual: currentLead?.status || "-",
+    faseAtual: currentLead?.faseQualificacao || "-",
+    faseFunilAtual: currentLead?.faseFunil || "-",
+    motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
+  });
+} else {
+  semanticIntent = await runLeadSemanticIntentClassifier({
+    lead: currentLead || {},
+    history,
+    lastUserText: text,
+    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
+  });
+
+  console.log("🧠 Intenção semântica observada:", {
+    user: from,
+    ultimaMensagemLead: text,
+    statusAtual: currentLead?.status || "-",
+    faseAtual: currentLead?.faseQualificacao || "-",
+    faseFunilAtual: currentLead?.faseFunil || "-",
+    etapas: currentLead?.etapas || {},
+    semanticIntent
+  });
+}
      const podeConfirmarInteresseRealAgora =
   canAskForRealInterest(currentLead || {}) &&
   isPositiveConfirmation(text) &&
@@ -8074,7 +8186,8 @@ REGRAS OBRIGATÓRIAS PARA A SDR:
 - Não falar taxa antes da fase correta.
 - Não pedir dados antes da fase correta.
 - Não repetir explicação que o lead já disse ter entendido.
-- "ok", "sim", "sei sim", "entendi", "fez sentido", "foi explicativo", "show", "top", "bora" e "ficou claro" indicam apenas entendimento, não autorização para pré-análise.
+- "ok", "sim", "sei sim", "entendi", "fez sentido", "foi explicativo", "show", "top" e "ficou claro" indicam apenas entendimento quando não houver pedido claro de avanço.
+- Expressões como "bora", "mete bala", "manda ver", "demorou", "toca ficha", "pode seguir", "vamos nessa" e equivalentes indicam intenção explícita de avançar, mas a SDR só pode conduzir para pré-análise se o backend/fase atual permitir.
 - Responder de forma natural, curta e consultiva.
 - Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
 
