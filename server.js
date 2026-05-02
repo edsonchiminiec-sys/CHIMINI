@@ -485,9 +485,9 @@ function getLeadLifecycleFields(data = {}) {
       result.faseFunil = "coleta_dados";
     } else if (etapas?.compromisso) {
       result.faseFunil = "compromisso";
-    } else if (etapas?.investimento || statusOuFase === "qualificando") {
-      result.faseFunil = "investimento";
-    } else if (etapas?.responsabilidades) {
+    } else if (etapas?.investimento) {
+  result.faseFunil = "investimento";
+} else if (etapas?.responsabilidades) {
       result.faseFunil = "responsabilidades";
     } else if (etapas?.estoque) {
       result.faseFunil = "estoque";
