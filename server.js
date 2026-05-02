@@ -2044,14 +2044,44 @@ async function runSupervisorAfterSdrReply({
   try {
     if (!user) return;
 
-    const supervisorAnalysis = await runSupervisor({
-      lead,
-      history,
-      lastUserText,
-      lastSdrText
-    });
+    let supervisorAnalysis = await runSupervisor({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText
+});
 
-    await saveSupervisorAnalysis(user, supervisorAnalysis);
+const originalSupervisorAnalysis = supervisorAnalysis;
+
+supervisorAnalysis = enforceSupervisorHardLimits({
+  supervisorAnalysis,
+  lead,
+  lastUserText,
+  lastSdrText
+});
+
+if (
+  originalSupervisorAnalysis?.riscoPerda !== supervisorAnalysis?.riscoPerda ||
+  originalSupervisorAnalysis?.pontoTrava !== supervisorAnalysis?.pontoTrava ||
+  originalSupervisorAnalysis?.necessitaHumano !== supervisorAnalysis?.necessitaHumano ||
+  originalSupervisorAnalysis?.prioridadeHumana !== supervisorAnalysis?.prioridadeHumana
+) {
+  console.log("🛡️ Supervisor corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    ultimaRespostaSdr: lastSdrText,
+    riscoOriginal: originalSupervisorAnalysis?.riscoPerda || "nao_analisado",
+    riscoCorrigido: supervisorAnalysis?.riscoPerda || "nao_analisado",
+    travaOriginal: originalSupervisorAnalysis?.pontoTrava || "-",
+    travaCorrigida: supervisorAnalysis?.pontoTrava || "-",
+    humanoOriginal: originalSupervisorAnalysis?.necessitaHumano === true,
+    humanoCorrigido: supervisorAnalysis?.necessitaHumano === true,
+    prioridadeOriginal: originalSupervisorAnalysis?.prioridadeHumana || "nao_analisado",
+    prioridadeCorrigida: supervisorAnalysis?.prioridadeHumana || "nao_analisado"
+  });
+}
+
+await saveSupervisorAnalysis(user, supervisorAnalysis);
 
     const deveEnviarAlertaSupervisor =
       ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda) ||
@@ -4243,6 +4273,93 @@ function enforceClassifierHardLimits({
   }
 
   return safeClassification;
+}
+
+function enforceSupervisorHardLimits({
+  supervisorAnalysis = {},
+  lead = {},
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const safeSupervisor = {
+    ...buildDefaultSupervisorAnalysis(),
+    ...(supervisorAnalysis || {})
+  };
+
+  const etapas = lead?.etapas || {};
+
+  const nenhumaEtapaConcluida =
+    etapas.programa !== true &&
+    etapas.beneficios !== true &&
+    etapas.estoque !== true &&
+    etapas.responsabilidades !== true &&
+    etapas.investimento !== true &&
+    etapas.compromisso !== true;
+
+  const etapaAtual = getCurrentFunnelStage(lead || {});
+  const mensagemEhCumprimentoSimples = isSimpleGreetingOnly(lastUserText);
+
+  const sdrFalouAlgoPerigoso =
+    /pre[-\s]?analise|pré[-\s]?análise/i.test(lastSdrText) ||
+    replyMentionsInvestment(lastSdrText) ||
+    replyAsksPersonalData(lastSdrText) ||
+    mentionsPaymentIntent(lastSdrText);
+
+  if (
+    mensagemEhCumprimentoSimples &&
+    nenhumaEtapaConcluida &&
+    etapaAtual <= 1 &&
+    !sdrFalouAlgoPerigoso
+  ) {
+    return {
+      ...safeSupervisor,
+      houveErroSdr: false,
+      errosDetectados: ["nenhum_erro_detectado"],
+      sdrPulouFase: false,
+      fasePulada: "",
+      descricaoErroPrincipal: "",
+      riscoPerda: "baixo",
+      motivoRisco: "Lead enviou apenas um cumprimento inicial e a SDR não avançou para tema sensível.",
+      pontoTrava: "sem_trava_detectada",
+      leadEsfriou: false,
+      motivoEsfriamento: "",
+      necessitaHumano: false,
+      prioridadeHumana: "nenhuma",
+      qualidadeConducaoSdr: "boa",
+      notaConducaoSdr: 8,
+      resumoDiagnostico: "Conversa inicial sem sinal de risco. Não há motivo para acionar humano neste momento.",
+      observacoesTecnicas: ["supervisor_corrigido_por_cumprimento_inicial"],
+      analisadoEm: new Date()
+    };
+  }
+
+  if (
+    safeSupervisor.necessitaHumano === true &&
+    safeSupervisor.riscoPerda === "medio" &&
+    !mentionsPaymentIntent(lastUserText) &&
+    !mentionsPaymentIntent(lastSdrText) &&
+    !/contrato|juridico|jurídico|humano|atendente|consultor|vendedor/i.test(lastUserText)
+  ) {
+    return {
+      ...safeSupervisor,
+      necessitaHumano: false,
+      prioridadeHumana:
+        safeSupervisor.prioridadeHumana === "urgente" || safeSupervisor.prioridadeHumana === "alta"
+          ? "media"
+          : safeSupervisor.prioridadeHumana || "media",
+      observacoesTecnicas: [
+        ...(Array.isArray(safeSupervisor.observacoesTecnicas)
+          ? safeSupervisor.observacoesTecnicas
+          : []),
+        "necessita_humano_reduzido_por_risco_medio_sem_gatilho_critico"
+      ],
+      resumoDiagnostico:
+        safeSupervisor.resumoDiagnostico ||
+        "Risco médio identificado, mas sem gatilho crítico para acionar humano automaticamente."
+    };
+  }
+
+  return safeSupervisor;
 }
 
 function isCommercialProgressConfirmation(text = "") {
