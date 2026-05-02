@@ -6768,12 +6768,25 @@ try {
 
   await saveConsultantAdvice(from, preSdrConsultantAdvice);
 
-  console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
-    user: from,
-    estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
-    ofertaMaisAdequada: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
-    prioridadeComercial: preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado"
-  });
+ console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
+  user: from,
+  ultimaMensagemLead: text,
+  statusAtual: currentLead?.status || "-",
+  faseAtual: currentLead?.faseQualificacao || "-",
+  faseFunilAtual: currentLead?.faseFunil || "-",
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  etapas: currentLead?.etapas || {},
+
+  estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+  proximaMelhorAcao: preSdrConsultantAdvice?.proximaMelhorAcao || "-",
+  abordagemSugerida: preSdrConsultantAdvice?.abordagemSugerida || "-",
+  argumentoPrincipal: preSdrConsultantAdvice?.argumentoPrincipal || "-",
+  cuidadoPrincipal: preSdrConsultantAdvice?.cuidadoPrincipal || "-",
+  ofertaMaisAdequada: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+  momentoIdealHumano: preSdrConsultantAdvice?.momentoIdealHumano || "nao_analisado",
+  prioridadeComercial: preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado",
+  resumoConsultivo: preSdrConsultantAdvice?.resumoConsultivo || "-"
+});
 } catch (error) {
   console.error("❌ Consultor PRÉ-SDR falhou. SDR não responderá sem orientação:", error.message);
 
