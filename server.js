@@ -2777,41 +2777,45 @@ Nesta fase, é obrigatório:
 
 Mensagem obrigatória base:
 
-"Antes de avançarmos, quero te explicar um ponto importante com total transparência 😊
+Mensagem obrigatória base:
 
-Existe um investimento de adesão e implantação de R$ 1.990.
+"Antes de avançarmos, quero te explicar o investimento com total transparência 😊
 
-Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+Existe uma taxa de adesão e implantação de R$ 1.990,00.
 
-Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar."
+Mas é importante entender o contexto: esse valor não é compra de mercadoria, não é caução e não é garantia.
 
-Agora entra a PARTE MAIS IMPORTANTE (ancoragem de valor):
+Ele faz parte da *ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato* para você começar a operar.
 
-"Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
 
-Ou seja, você entra com acesso a produtos, estrutura e suporte sem precisar investir esse valor em estoque."
+Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, *a margem é de 40%*.
 
-Agora entra o PARCELAMENTO (obrigatório):
+E *se você vender com ágio, acima do preço sugerido, essa diferença fica com você* — então a margem pode ser maior.
 
-"Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento."
+Na prática, as primeiras vendas podem ajudar a recuperar esse investimento inicial, mas isso depende da sua atuação comercial, da sua prospecção e das vendas realizadas.
 
-Agora reforço de segurança:
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
 
-"E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?"
+E um ponto importante de segurança: o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
 
-Agora validação (obrigatória):
+Podemos seguir para próxima etapa?"
 
-"Faz sentido pra você nesse formato?"
-
-━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ REGRAS IMPORTANTES DA TAXA
-━━━━━━━━━━━━━━━━━━━━━━━
 
-- SEMPRE mencionar o valor: R$ 1.990
+- SEMPRE mencionar o valor: R$ 1.990,00
 - SEMPRE mencionar que NÃO é compra de mercadoria
-- SEMPRE mencionar o estoque > R$ 5.000
-- SEMPRE mencionar parcelamento
-- SEMPRE validar entendimento
+- SEMPRE mencionar que NÃO é caução
+- SEMPRE mencionar que NÃO é garantia
+- SEMPRE mencionar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final
+- SEMPRE mencionar a margem média estimada de 40% quando o parceiro vende seguindo o preço sugerido ao consumidor
+- SEMPRE explicar que, se o parceiro vender com ágio acima do preço sugerido, essa diferença fica com ele
+- SEMPRE deixar claro que isso NÃO é promessa de ganho
+- SEMPRE dizer que o resultado depende da atuação comercial do parceiro
+- SEMPRE mencionar parcelamento no cartão
+- PODE mencionar PIX
+- NUNCA mencionar boleto
+- SEMPRE mencionar que o pagamento só ocorre após análise interna e contrato
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 ❌ ERROS PROIBIDOS
@@ -2823,20 +2827,24 @@ Nunca:
 - pedir dados logo após falar o valor
 - pressionar o lead
 - parecer cobrança
-
 ━━━━━━━━━━━━━━━━━━━━━━━
 💡 SE O LEAD HESITAR
 ━━━━━━━━━━━━━━━━━━━━━━━
-
 Use reforço leve:
 
-"Te explico isso com calma justamente pra você entrar com segurança e clareza.
+"Entendo totalmente sua análise 😊
 
-O modelo faz mais sentido pra quem quer estruturar uma operação de vendas com suporte e produto em mãos."
+Eu te explico isso com calma justamente porque não é só olhar para a taxa isolada.
+
+O ponto é comparar o investimento com o que você recebe: estrutura, suporte, treinamento, lote inicial acima de R$ 5.000,00 em preço de venda e uma margem de 40% quando vender no preço sugerido.
+
+As primeiras vendas podem ajudar a recuperar esse investimento rapidamente.
+
+Por isso o modelo faz mais sentido para quem quer vender de forma ativa, com produto em mãos e suporte da indústria."
 
 Depois:
 
-"Você quer avaliar melhor algum ponto ou podemos seguir?"
+"Você quer que eu te explique melhor essa parte da margem ou prefere avaliar com calma?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 7 — COLETA (coletando_dados)
