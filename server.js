@@ -6325,7 +6325,7 @@ if (
   return null;
 }
 async function sendFileOnce(from, key) {
-  if (!FILES[key]) return;
+  if (!FILES[key]) return false;
 
   await connectMongo();
 
@@ -6334,11 +6334,12 @@ async function sendFileOnce(from, key) {
   const lead = await db.collection("leads").findOne({ user: from });
 
   if (lead?.sentFiles?.[key]) {
-    await sendWhatsAppMessage(
-      from,
-      "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se fez sentido pra você."
-    );
-    return;
+    console.log("📎 Arquivo não reenviado porque já foi enviado:", {
+      user: from,
+      arquivo: key
+    });
+
+    return false;
   }
 
   await db.collection("leads").updateOne(
@@ -6354,7 +6355,10 @@ async function sendFileOnce(from, key) {
 
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
+
+  return true;
 }
+
 function getBrazilNow() {
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -8424,166 +8428,101 @@ if (disciplinaFunil.changed) {
   }
 }
      
-     // 🔥 ATUALIZA ETAPAS DO FUNIL
+     // 🔥 ATUALIZA ETAPAS DO FUNIL — VERSÃO MAIS SEGURA
 const etapasUpdate = { ...(currentLead?.etapas || {}) };
 
-const respostaEtapaLower = respostaFinal.toLowerCase();
+const respostaEtapaLower = String(respostaFinal || "")
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
-     const explicouProgramaDeVerdade =
+const explicouPrograma =
+  respostaEtapaLower.includes("parceria comercial") ||
+  respostaEtapaLower.includes("programa parceiro homologado") ||
+  respostaEtapaLower.includes("voce vende produtos da iqg") ||
+  respostaEtapaLower.includes("vender produtos da iqg") ||
+  respostaEtapaLower.includes("suporte da industria");
+
+const explicouBeneficios =
+  respostaEtapaLower.includes("suporte") &&
   (
-    respostaEtapaLower.includes("parceria comercial") ||
-    respostaEtapaLower.includes("parceria onde você vende") ||
-    respostaEtapaLower.includes("parceria onde voce vende") ||
-    respostaEtapaLower.includes("você vende produtos") ||
-    respostaEtapaLower.includes("voce vende produtos") ||
-    respostaEtapaLower.includes("vende produtos da iqg") ||
-    respostaEtapaLower.includes("direto da indústria") ||
-    respostaEtapaLower.includes("direto da industria") ||
-    respostaEtapaLower.includes("com suporte da indústria") ||
-    respostaEtapaLower.includes("com suporte da industria")
+    respostaEtapaLower.includes("treinamento") ||
+    respostaEtapaLower.includes("materiais") ||
+    respostaEtapaLower.includes("nao comeca sozinho") ||
+    respostaEtapaLower.includes("nao começa sozinho")
   );
 
-if (explicouProgramaDeVerdade) {
+const explicouEstoque =
+  respostaEtapaLower.includes("comodato") ||
+  (
+    respostaEtapaLower.includes("lote inicial") &&
+    respostaEtapaLower.includes("produtos")
+  ) ||
+  (
+    respostaEtapaLower.includes("estoque") &&
+    respostaEtapaLower.includes("iqg")
+  );
+
+const explicouResponsabilidades =
+  respostaEtapaLower.includes("responsavel pela guarda") ||
+  respostaEtapaLower.includes("responsavel pela conservacao") ||
+  respostaEtapaLower.includes("responsavel pela conservação") ||
+  respostaEtapaLower.includes("comunicacao correta das vendas") ||
+  respostaEtapaLower.includes("comunicação correta das vendas") ||
+  (
+    respostaEtapaLower.includes("responsabilidades") &&
+    respostaEtapaLower.includes("parceiro")
+  );
+
+const explicouInvestimento =
+  (
+    respostaEtapaLower.includes("r$ 1.990") ||
+    respostaEtapaLower.includes("1.990") ||
+    respostaEtapaLower.includes("1990")
+  ) &&
+  (
+    respostaEtapaLower.includes("nao e compra de mercadoria") ||
+    respostaEtapaLower.includes("não é compra de mercadoria") ||
+    respostaEtapaLower.includes("nao e caucao") ||
+    respostaEtapaLower.includes("não é caução") ||
+    respostaEtapaLower.includes("parcelado") ||
+    respostaEtapaLower.includes("10x") ||
+    respostaEtapaLower.includes("lote inicial")
+  );
+
+const explicouCompromisso =
+  respostaEtapaLower.includes("resultado depende da sua atuacao") ||
+  respostaEtapaLower.includes("resultado depende da sua atuação") ||
+  respostaEtapaLower.includes("depende da sua atuacao nas vendas") ||
+  respostaEtapaLower.includes("depende da sua atuação nas vendas");
+
+if (explicouPrograma) {
   etapasUpdate.programa = true;
 }
 
-const explicouBeneficiosDeVerdade =
-  (
-    respostaEtapaLower.includes("você não começa sozinho") ||
-    respostaEtapaLower.includes("voce nao comeca sozinho") ||
-    respostaEtapaLower.includes("recebe suporte") ||
-    respostaEtapaLower.includes("suporte da indústria") ||
-    respostaEtapaLower.includes("suporte da industria") ||
-    respostaEtapaLower.includes("materiais") ||
-    respostaEtapaLower.includes("treinamento") ||
-    respostaEtapaLower.includes("orientação para vender") ||
-    respostaEtapaLower.includes("orientacao para vender") ||
-    respostaEtapaLower.includes("vender com mais segurança") ||
-    respostaEtapaLower.includes("vender com mais seguranca") ||
-    respostaEtapaLower.includes("facilita muito porque você pode focar") ||
-    respostaEtapaLower.includes("facilita muito porque voce pode focar")
-  );
-
-if (explicouBeneficiosDeVerdade) {
+if (explicouBeneficios) {
   etapasUpdate.beneficios = true;
 }
-const explicouEstoqueDeVerdade =
-  (
-    respostaEtapaLower.includes("lote estratégico") ||
-    respostaEtapaLower.includes("lote estrategico") ||
-    respostaEtapaLower.includes("lote inicial") ||
-    respostaEtapaLower.includes("produtos em comodato") ||
-    respostaEtapaLower.includes("estoque é cedido em comodato") ||
-    respostaEtapaLower.includes("estoque e cedido em comodato") ||
-    respostaEtapaLower.includes("fica com você para operação") ||
-    respostaEtapaLower.includes("fica com voce para operacao") ||
-    respostaEtapaLower.includes("continua sendo da iqg") ||
-    respostaEtapaLower.includes("continua sendo propriedade da iqg") ||
-    respostaEtapaLower.includes("pronta-entrega") ||
-    respostaEtapaLower.includes("demonstração") ||
-    respostaEtapaLower.includes("demonstracao") ||
-    respostaEtapaLower.includes("você não compra esse estoque") ||
-    respostaEtapaLower.includes("voce nao compra esse estoque") ||
-    respostaEtapaLower.includes("não compra esse estoque") ||
-    respostaEtapaLower.includes("nao compra esse estoque")
-  );
 
-if (explicouEstoqueDeVerdade) {
+if (explicouEstoque) {
   etapasUpdate.estoque = true;
 }
-const explicouResponsabilidadesDeVerdade =
-  (
-    respostaEtapaLower.includes("responsável pela guarda") ||
-    respostaEtapaLower.includes("responsavel pela guarda") ||
-    respostaEtapaLower.includes("guarda dos produtos") ||
-    respostaEtapaLower.includes("conservação dos produtos") ||
-    respostaEtapaLower.includes("conservacao dos produtos") ||
-    respostaEtapaLower.includes("comunicação correta das vendas") ||
-    respostaEtapaLower.includes("comunicacao correta das vendas") ||
-    respostaEtapaLower.includes("comunicar corretamente as vendas") ||
-    respostaEtapaLower.includes("responsável pela venda") ||
-    respostaEtapaLower.includes("responsavel pela venda") ||
-    respostaEtapaLower.includes("atuação nas vendas") ||
-    respostaEtapaLower.includes("atuacao nas vendas") ||
-    respostaEtapaLower.includes("resultado depende da sua atuação") ||
-    respostaEtapaLower.includes("resultado depende da sua atuacao") ||
-    respostaEtapaLower.includes("depende da sua atuação nas vendas") ||
-    respostaEtapaLower.includes("depende da sua atuacao nas vendas")
-  );
 
-if (explicouResponsabilidadesDeVerdade) {
+if (explicouResponsabilidades) {
   etapasUpdate.responsabilidades = true;
 }
 
-const explicouInvestimentoDeVerdade =
-  (
-    (
-      respostaEtapaLower.includes("r$ 1.990") ||
-      respostaEtapaLower.includes("1.990") ||
-      respostaEtapaLower.includes("1990")
-    ) &&
-    (
-      respostaEtapaLower.includes("não é compra de mercadoria") ||
-      respostaEtapaLower.includes("nao e compra de mercadoria") ||
-      respostaEtapaLower.includes("não é caução") ||
-      respostaEtapaLower.includes("nao e caucao") ||
-      respostaEtapaLower.includes("não é garantia") ||
-      respostaEtapaLower.includes("nao e garantia") ||
-      respostaEtapaLower.includes("ativação no programa") ||
-      respostaEtapaLower.includes("ativacao no programa") ||
-      respostaEtapaLower.includes("adesão e implantação") ||
-      respostaEtapaLower.includes("adesao e implantacao")
-    ) &&
-    (
-      respostaEtapaLower.includes("mais de r$ 5.000") ||
-      respostaEtapaLower.includes("mais de 5.000") ||
-      respostaEtapaLower.includes("mais de r$5.000") ||
-      respostaEtapaLower.includes("mais de 5000") ||
-      respostaEtapaLower.includes("lote inicial representa")
-    ) &&
-    (
-      respostaEtapaLower.includes("parcelado") ||
-      respostaEtapaLower.includes("10x") ||
-      respostaEtapaLower.includes("r$ 199") ||
-      respostaEtapaLower.includes("199 no cartão") ||
-      respostaEtapaLower.includes("199 no cartao") ||
-      respostaEtapaLower.includes("pix")
-    ) &&
-    (
-      respostaEtapaLower.includes("pagamento só acontece depois") ||
-      respostaEtapaLower.includes("pagamento so acontece depois") ||
-      respostaEtapaLower.includes("depois da análise interna") ||
-      respostaEtapaLower.includes("depois da analise interna") ||
-      respostaEtapaLower.includes("assinatura do contrato") ||
-      respostaEtapaLower.includes("após análise interna") ||
-      respostaEtapaLower.includes("apos analise interna")
-    )
-  );
-
-if (explicouInvestimentoDeVerdade) {
+if (explicouInvestimento) {
   etapasUpdate.investimento = true;
 }
 
-const perguntouCompromissoDeAtuacao =
-  (
-    respostaEtapaLower.includes("resultado depende da sua atuação") ||
-    respostaEtapaLower.includes("resultado depende da sua atuacao") ||
-    respostaEtapaLower.includes("depende da sua atuação nas vendas") ||
-    respostaEtapaLower.includes("depende da sua atuacao nas vendas") ||
-    respostaEtapaLower.includes("você está de acordo que o resultado depende") ||
-    respostaEtapaLower.includes("voce esta de acordo que o resultado depende") ||
-    respostaEtapaLower.includes("está de acordo que o resultado depende") ||
-    respostaEtapaLower.includes("esta de acordo que o resultado depende")
-  );
-
-if (perguntouCompromissoDeAtuacao) {
-  etapasUpdate.compromissoPerguntado = true;
+if (explicouCompromisso) {
+  etapasUpdate.compromisso = true;
 }
 
 await saveLeadProfile(from, {
   etapas: etapasUpdate
 });
-
 if (containsInternalContextLeak(respostaFinal)) {
   console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
     user: from
