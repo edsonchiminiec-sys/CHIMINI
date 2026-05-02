@@ -4075,42 +4075,102 @@ const positivePatterns = [
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+function isCommitmentConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const commitmentPatterns = [
+    /^sim estou de acordo$/,
+    /^sim eu estou de acordo$/,
+    /^estou de acordo$/,
+    /^to de acordo$/,
+    /^tô de acordo$/,
+    /^concordo$/,
+    /^sim concordo$/,
+    /^entendo e concordo$/,
+    /^sim entendo$/,
+    /^sim entendi$/,
+    /^sim entendo que depende de mim$/,
+    /^entendo que depende de mim$/,
+    /^sim entendo que depende da minha atuacao$/,
+    /^sim entendo que depende da minha atuação$/,
+    /^entendo que depende da minha atuacao$/,
+    /^entendo que depende da minha atuação$/,
+    /^sim o resultado depende da minha atuacao$/,
+    /^sim o resultado depende da minha atuação$/,
+    /^o resultado depende da minha atuacao$/,
+    /^o resultado depende da minha atuação$/,
+    /^sei que depende da minha atuacao$/,
+    /^sei que depende da minha atuação$/,
+    /^sim sei que depende da minha atuacao$/,
+    /^sim sei que depende da minha atuação$/,
+    /^combinado$/,
+    /^combinado entendi$/,
+    /^combinado estou de acordo$/
+  ];
+
+  return commitmentPatterns.some(pattern => pattern.test(t));
+}
+
 function isCommercialProgressConfirmation(text = "") {
   const t = String(text || "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
+  // Confirmações fracas indicam entendimento, não avanço comercial.
+  // Exemplos: "ok", "sim", "entendi", "fez sentido".
+  if (isSoftUnderstandingConfirmation(text)) {
+    return false;
+  }
+
   const commercialPatterns = [
-    /^faz sentido$/,
-    /^faz sim$/,
-    /^fez sentido$/,
-    /^pra mim faz sentido$/,
-    /^para mim faz sentido$/,
-    /^estou de acordo$/,
-    /^to de acordo$/,
-    /^tou de acordo$/,
-    /^concordo$/,
-    /^podemos seguir$/,
-    /^vamos seguir$/,
-    /^bora seguir$/,
     /^quero seguir$/,
     /^quero continuar$/,
+    /^quero avancar$/,
+    /^quero avançar$/,
+    /^podemos seguir$/,
+    /^podemos avancar$/,
+    /^podemos avançar$/,
+    /^vamos seguir$/,
+    /^vamos avancar$/,
+    /^vamos avançar$/,
+    /^bora seguir$/,
+    /^bora avancar$/,
+    /^bora avançar$/,
+    /^pode seguir$/,
     /^pode continuar$/,
     /^pode avancar$/,
-    /^quero avancar$/,
-    /^faz sentido, podemos seguir$/,
+    /^pode avançar$/,
+    /^pode iniciar$/,
+    /^quero iniciar$/,
+    /^vamos iniciar$/,
+    /^quero entrar$/,
+    /^quero participar$/,
+    /^quero aderir$/,
+    /^tenho interesse em seguir$/,
+    /^tenho interesse em avancar$/,
+    /^tenho interesse em avançar$/,
+    /^tenho interesse em entrar$/,
     /^faz sentido podemos seguir$/,
-    /^estou de acordo, vamos seguir$/,
+    /^faz sentido pode seguir$/,
+    /^faz sentido quero seguir$/,
+    /^faz sentido vamos seguir$/,
+    /^estou de acordo podemos seguir$/,
     /^estou de acordo vamos seguir$/,
-    /^podemos avancar$/
+    /^estou de acordo pode seguir$/
   ];
 
   return commercialPatterns.some(pattern => pattern.test(t));
 }
-
 function isStrongBuyIntent(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -6609,7 +6669,7 @@ const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confi
 if (
   currentLead?.etapas?.compromissoPerguntado === true &&
   currentLead?.etapas?.compromisso !== true &&
-  isPositiveConfirmation(text) &&
+    isCommitmentConfirmation(text) &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
 ) {
