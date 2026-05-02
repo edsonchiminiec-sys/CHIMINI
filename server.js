@@ -5640,15 +5640,12 @@ if (message.text?.body) {
   text = buffered.text;
 
 } else if (message.audio?.id) {
-  await sendWhatsAppMessage(from, "Vou ouvir seu áudio rapidinho e já te respondo 😊");
-
-} else if (message.audio?.id) {
   const mediaUrl = await getWhatsAppMediaUrl(message.audio.id);
   const audioBuffer = await downloadWhatsAppMedia(mediaUrl);
 
   text = await transcribeAudioBuffer(audioBuffer, "audio.ogg");
 
-  if (!text) {
+  if (!text || !String(text).trim()) {
     await sendWhatsAppMessage(
       from,
       "Não consegui entender bem o áudio. Pode me enviar novamente ou escrever sua dúvida?"
@@ -5656,7 +5653,9 @@ if (message.text?.body) {
 
     return;
   }
-}else {
+
+  text = String(text).trim();
+} else {
   await sendWhatsAppMessage(
     from,
     "No momento consigo te atender melhor por texto ou áudio 😊 Pode me enviar sua dúvida?"
