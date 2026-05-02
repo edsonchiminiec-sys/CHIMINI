@@ -5642,6 +5642,7 @@ if (message.text?.body) {
 } else if (message.audio?.id) {
   await sendWhatsAppMessage(from, "Vou ouvir seu áudio rapidinho e já te respondo 😊");
 
+} else if (message.audio?.id) {
   const mediaUrl = await getWhatsAppMediaUrl(message.audio.id);
   const audioBuffer = await downloadWhatsAppMedia(mediaUrl);
 
@@ -5655,7 +5656,7 @@ if (message.text?.body) {
 
     return;
   }
-} else {
+}else {
   await sendWhatsAppMessage(
     from,
     "No momento consigo te atender melhor por texto ou áudio 😊 Pode me enviar sua dúvida?"
