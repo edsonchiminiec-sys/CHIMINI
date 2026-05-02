@@ -3815,6 +3815,59 @@ function detectRequestedFile(text = "") {
   return null;
 }
 
+function hasExplicitFileRequest(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    // pedidos genéricos claros
+    t.includes("me manda o material") ||
+    t.includes("me mande o material") ||
+    t.includes("pode mandar o material") ||
+    t.includes("pode me mandar o material") ||
+    t.includes("quero o material") ||
+    t.includes("tem material") ||
+    t.includes("tem algum material") ||
+    t.includes("tem pdf") ||
+    t.includes("tem algum pdf") ||
+    t.includes("me manda o pdf") ||
+    t.includes("me mande o pdf") ||
+    t.includes("pode mandar o pdf") ||
+    t.includes("me envia o material") ||
+    t.includes("me envie o material") ||
+    t.includes("pode enviar o material") ||
+
+    // pedidos específicos
+    t.includes("me manda o folder") ||
+    t.includes("me mande o folder") ||
+    t.includes("quero o folder") ||
+    t.includes("me manda o catalogo") ||
+    t.includes("me mande o catalogo") ||
+    t.includes("quero o catalogo") ||
+    t.includes("me manda o contrato") ||
+    t.includes("me mande o contrato") ||
+    t.includes("quero o contrato") ||
+    t.includes("me manda o kit") ||
+    t.includes("me mande o kit") ||
+    t.includes("quero o kit") ||
+    t.includes("me manda o manual") ||
+    t.includes("me mande o manual") ||
+    t.includes("quero o manual") ||
+
+    // formas naturais
+    t.includes("tem uma apresentacao") ||
+    t.includes("tem apresentação") ||
+    t.includes("quero ver a lista") ||
+    t.includes("me mostra a lista") ||
+    t.includes("manda a lista dos produtos") ||
+    t.includes("mande a lista dos produtos")
+  );
+}
+
 function extractActions(reply = "") {
   const actions = [];
 
@@ -4467,6 +4520,58 @@ function enforceClassifierHardLimits({
     safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
     !canStartDataCollection(lead || {})
   ) {
+     const mensagemTemObjeçãoDePreço =
+  isPreCrmBlockingObjection(lastUserText) &&
+  !isClearAffiliateFallbackIntent(lastUserText);
+
+const classificadorForcouAfiliadoSemPedidoClaro =
+  mensagemTemObjeçãoDePreço &&
+  (
+    safeClassification.perfilComportamentalPrincipal === "afiliado_digital" ||
+    safeClassification.intencaoPrincipal === "buscar_afiliado" ||
+    safeClassification.temperaturaComercial === "afiliado"
+  );
+
+if (classificadorForcouAfiliadoSemPedidoClaro) {
+  return {
+    ...safeClassification,
+    temperaturaComercial:
+      safeClassification.temperaturaComercial === "afiliado"
+        ? "travado"
+        : safeClassification.temperaturaComercial === "quente"
+          ? "travado"
+          : safeClassification.temperaturaComercial,
+
+    perfilComportamentalPrincipal:
+      safeClassification.perfilComportamentalPrincipal === "afiliado_digital"
+        ? "sensivel_preco"
+        : safeClassification.perfilComportamentalPrincipal,
+
+    intencaoPrincipal:
+      safeClassification.intencaoPrincipal === "buscar_afiliado"
+        ? "avaliar_investimento"
+        : safeClassification.intencaoPrincipal,
+
+    objecaoPrincipal: "preco_taxa_adesao",
+
+    confiancaClassificacao:
+      safeClassification.confiancaClassificacao === "alta"
+        ? "media"
+        : safeClassification.confiancaClassificacao,
+
+    sinaisObservados: [
+      ...(Array.isArray(safeClassification.sinaisObservados)
+        ? safeClassification.sinaisObservados
+        : []),
+      "afiliado_bloqueado_por_objecao_de_preco_sem_pedido_claro"
+    ],
+
+    resumoPerfil:
+      "O Classificador tentou interpretar objeção de preço como intenção de Afiliado, mas o backend corrigiu porque o lead não pediu claramente link, afiliado, venda sem estoque ou alternativa sem taxa. A leitura correta é objeção de investimento no Homologado.",
+
+    classificadoEm: new Date()
+  };
+}
     return {
       ...safeClassification,
       temperaturaComercial:
@@ -8102,12 +8207,15 @@ if (isBadResponse(respostaFinal)) {
   }
 }
      
-     // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
+// 🚫 BLOQUEIO SEGURO: só falar "material já enviado" se o LEAD pediu material de novo
+const leadPediuMaterialAgora = hasExplicitFileRequest(text);
+
 if (
+  leadPediuMaterialAgora &&
   currentLead?.sentFiles?.folder &&
-  /material|folder|te mandar|mandar o material|enviar o material|te enviar/i.test(respostaFinal)
+  /material|folder|pdf|catalogo|catálogo|kit|manual|contrato|lista/i.test(respostaFinal)
 ) {
-  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Fez sentido pra você ou quer que eu te explique os pontos principais?";
+  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Se quiser, posso te resumir os pontos principais por aqui.";
 }
      
 const mencionouPreAnalise =
