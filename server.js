@@ -7466,12 +7466,44 @@ await delay(800);
 // tempo proporcional ao tamanho da resposta
 await delay(typingTime);
 
+console.log("📤 SDR vai enviar resposta final:", {
+  user: from,
+  ultimaMensagemLead: text,
+  respostaFinal,
+  statusAtual: currentLead?.status || "-",
+  faseAtual: currentLead?.faseQualificacao || "-",
+  faseFunilAtual: currentLead?.faseFunil || "-",
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  etapas: currentLead?.etapas || {},
+  mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
+  mencionouInvestimento: replyMentionsInvestment(respostaFinal),
+  pediuDados: replyAsksPersonalData(respostaFinal)
+});
+
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
+     
 history.push({ role: "assistant", content: respostaFinal });
 
 const leadAtualizadoParaAgentes = await loadLeadProfile(from);
 
+console.log("🧾 Contexto enviado aos agentes pós-SDR:", {
+  user: from,
+  ultimaMensagemLead: text,
+  ultimaRespostaSdr: respostaFinal,
+  totalMensagensHistorico: Array.isArray(history) ? history.length : 0,
+  ultimasMensagensHistorico: Array.isArray(history) ? history.slice(-6) : [],
+  leadParaAgentes: {
+    status: leadAtualizadoParaAgentes?.status || "-",
+    faseQualificacao: leadAtualizadoParaAgentes?.faseQualificacao || "-",
+    statusOperacional: leadAtualizadoParaAgentes?.statusOperacional || "-",
+    faseFunil: leadAtualizadoParaAgentes?.faseFunil || "-",
+    temperaturaComercial: leadAtualizadoParaAgentes?.temperaturaComercial || "-",
+    rotaComercial: leadAtualizadoParaAgentes?.rotaComercial || "-",
+    etapas: leadAtualizadoParaAgentes?.etapas || {}
+  }
+});
+     
 runSupervisorAfterSdrReply({
   user: from,
   lead: leadAtualizadoParaAgentes || currentLead,
