@@ -6498,34 +6498,65 @@ if (
   });
 }
      
+// 🔒 BLOQUEIO DE PRÉ-ANÁLISE PREMATURA
+// Mesmo que o classificador diga "pre_analise",
+// o backend só aceita se o lead tiver intenção explícita
+// e todas as etapas obrigatórias estiverem concluídas.
+const podeAceitarPreAnaliseAgora = Boolean(
+  leadDeuIntencaoExplicitaPreAnalise &&
+  canStartDataCollection({
+    ...(currentLead || {}),
+    interesseReal: true
+  })
+);
+
+let leadStatusSeguro = leadStatus;
+
+if (leadStatus === "pre_analise" && !podeAceitarPreAnaliseAgora) {
+  console.log("🚫 Pré-análise bloqueada pelo backend:", {
+    user: from,
+    leadStatus,
+    leadDeuIntencaoExplicitaPreAnalise,
+    etapas: currentLead?.etapas || {},
+    motivo: "Lead ainda não cumpriu intenção explícita + etapas obrigatórias."
+  });
+
+  leadStatusSeguro = null;
+}
+
 if (
-  leadStatus &&
+  leadStatusSeguro &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-  
-const statusMap = {
-  frio: "perdido",
-  morno: "morno",
-  qualificando: "qualificando",
-  pre_analise: "pre_analise",
-  afiliado: "afiliado"
-};
+  const statusMap = {
+    frio: "perdido",
+    morno: "morno",
+    qualificando: "qualificando",
+    pre_analise: "pre_analise",
+    afiliado: "afiliado"
+  };
 
-const faseMap = {
-  frio: "perdido",
-  morno: "morno",
-  qualificando: "qualificando",
-  pre_analise: "pre_analise",
-  afiliado: "afiliado"
-};
+  const faseMap = {
+    frio: "perdido",
+    morno: "morno",
+    qualificando: "qualificando",
+    pre_analise: "pre_analise",
+    afiliado: "afiliado"
+  };
 
- await saveLeadProfile(from, {
-  status: statusMap[leadStatus] || leadStatus,
-  faseQualificacao: faseMap[leadStatus] || leadStatus,
-  origemConversao: leadStatus === "afiliado" ? "afiliado" : "homologado"
-});
+  const statusUpdateData = {
+    status: statusMap[leadStatusSeguro] || leadStatusSeguro,
+    faseQualificacao: faseMap[leadStatusSeguro] || leadStatusSeguro,
+    origemConversao: leadStatusSeguro === "afiliado" ? "afiliado" : "homologado"
+  };
+
+  if (leadStatusSeguro === "pre_analise") {
+    statusUpdateData.interesseReal = true;
+  }
+
+  await saveLeadProfile(from, statusUpdateData);
 
   currentLead = await loadLeadProfile(from);
 }
