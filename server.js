@@ -4795,6 +4795,20 @@ function canStartDataCollection(lead = {}) {
   );
 }
 
+function canAskForRealInterest(lead = {}) {
+  const e = lead.etapas || {};
+
+  return Boolean(
+    e.programa === true &&
+    e.beneficios === true &&
+    e.estoque === true &&
+    e.responsabilidades === true &&
+    e.investimento === true &&
+    e.compromisso === true &&
+    lead.interesseReal !== true
+  );
+}
+
 // 👇 COLE AQUI EMBAIXO 👇
 function getNextFunnelStepMessage(lead = {}) {
   const e = lead.etapas || {};
@@ -4843,9 +4857,11 @@ Faz sentido pra você nesse formato?`;
     return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   }
 
-  if (lead.interesseReal !== true) {
-    return "Faz sentido pra você seguir para a pré-análise agora?";
-  }
+ if (lead.interesseReal !== true) {
+  return `Com esses pontos claros, você tem interesse em seguir para a pré-análise agora? 😊
+
+Só reforçando: essa etapa ainda não é aprovação automática e não envolve pagamento neste momento. É apenas para a equipe IQG avaliar seus dados e orientar o próximo passo com segurança.`;
+}
 
   return "Perfeito! Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
@@ -7082,6 +7098,40 @@ const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
 const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
+     const podeConfirmarInteresseRealAgora =
+  canAskForRealInterest(currentLead || {}) &&
+  isPositiveConfirmation(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
+
+if (podeConfirmarInteresseRealAgora) {
+  await saveLeadProfile(from, {
+    interesseReal: true,
+    faseQualificacao: "coletando_dados",
+    status: "coletando_dados",
+    campoEsperado: "nome",
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: false,
+    dadosConfirmadosPeloLead: false
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  const msg = "Perfeito 😊 Vamos seguir com a pré-análise então.\n\nPrimeiro, pode me enviar seu nome completo?";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
 
      const leadTravouAntesDoCrm =
   isPreCrmBlockingObjection(text) &&
