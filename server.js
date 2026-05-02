@@ -6024,6 +6024,57 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+function getFinalFollowupMessage(lead = {}) {
+  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+  const prefixo = nome ? `${nome}, ` : "";
+
+  const jaVirouParceiroConfirmado =
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.status === "enviado_crm";
+
+  const jaEstaEmAfiliado =
+    lead?.interesseAfiliado === true ||
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado";
+
+  if (jaVirouParceiroConfirmado) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Sua pré-análise já ficou encaminhada para a equipe comercial da IQG.
+
+Se surgir alguma dúvida, fico à disposição.`;
+  }
+
+  if (jaEstaEmAfiliado) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Só reforçando: para o Programa de Afiliados IQG, você pode acessar o cadastro por aqui:
+https://minhaiqg.com.br/
+
+No afiliado, você divulga por link, não precisa ter estoque e não tem a taxa de adesão do Parceiro Homologado.
+
+Qualquer dúvida, fico à disposição.`;
+  }
+
+  return `${prefixo}vou encerrar por aqui 😊
+
+Se o modelo de Parceiro Homologado não fizer sentido para você agora, existe também o Programa de Afiliados IQG.
+
+Ele é mais simples para começar: você não precisa ter estoque, não precisa receber lote em comodato e não tem a taxa de adesão do Parceiro Homologado.
+
+Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Se depois quiser algo mais estruturado, com produtos em mãos, suporte e lote em comodato, aí sim podemos retomar o Parceiro Homologado.`;
+}
+
   function shouldStopBotByLifecycle(lead = {}) {
   lead = lead || {};
 
@@ -6098,12 +6149,12 @@ function scheduleLeadFollowups(from) {
       message: "Quer que eu siga com sua pré-análise?",
       businessOnly: true
     },
-    {
-      delay: 30 * 60 * 60 * 1000,
-      message: "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!",
-      businessOnly: true,
-      closeAfter: true
-    }
+   {
+  delay: 30 * 60 * 60 * 1000,
+  getMessage: (lead) => getFinalFollowupMessage(lead),
+  businessOnly: true,
+  closeAfter: true
+}
   ];
 
   for (const followup of followups) {
@@ -6138,7 +6189,12 @@ if (shouldStopBotByLifecycle(latestLead)) {
   return;
 }
 
-await sendWhatsAppMessage(from, followup.message);
+const businessMessageToSend = followup.getMessage
+  ? followup.getMessage(latestLead)
+  : followup.message;
+
+await sendWhatsAppMessage(from, businessMessageToSend);
+               
               if (followup.closeAfter) {
                 latestState.closed = true;
                 clearTimers(from);
