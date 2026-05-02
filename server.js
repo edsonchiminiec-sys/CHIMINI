@@ -1017,7 +1017,6 @@ O JSON deve ter exatamente esta estrutura:
   "prioridadeComercial": "nao_analisado",
   "resumoConsultivo": ""
 }
-`;
 
 Como preencher:
 
@@ -1040,6 +1039,7 @@ Exemplo: "Não falar taxa nesta resposta. Não pedir CPF. Não avançar para pr�
 "resumoConsultivo":
 Resuma claramente a orientação para a resposta atual.
 Exemplo: "O lead perguntou sobre continuidade do estoque. A SDR deve responder diretamente sobre comodato, sem falar de taxa, e conduzir para responsabilidades."
+`;
 
 function parseConsultantAdviceJson(rawText = "") {
   const fallback = buildDefaultConsultantAdvice();
@@ -6448,7 +6448,9 @@ if (changedConfirmedData) {
 }
 
 const leadStatus = classifyLead(text, extractedData, history);
-     const strongIntent = isStrongBuyIntent(text);
+const strongIntent = isStrongBuyIntent(text);
+const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
+const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
@@ -6946,9 +6948,6 @@ if (
 }
 
 let respostaFinal = resposta;
-
-const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
-const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
      
      // 🚫 BLOQUEIO DE REGRESSÃO DE FASE
 const etapaAtual = getCurrentFunnelStage(currentLead);
