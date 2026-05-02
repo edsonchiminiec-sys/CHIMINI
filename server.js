@@ -2044,7 +2044,7 @@ async function runSupervisorAfterSdrReply({
   try {
     if (!user) return;
 
-    let supervisorAnalysis = await runSupervisor({
+   let supervisorAnalysis = await runSupervisor({
   lead,
   history,
   lastUserText,
