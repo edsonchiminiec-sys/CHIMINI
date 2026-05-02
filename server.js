@@ -1607,15 +1607,43 @@ async function runClassifierAfterSupervisor({
   try {
     if (!user) return;
 
-    const classification = await runClassifier({
-      lead,
-      history,
-      lastUserText,
-      lastSdrText,
-      supervisorAnalysis
-    });
+   let classification = await runClassifier({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText,
+  supervisorAnalysis
+});
 
-    await saveLeadClassification(user, classification);
+const originalClassification = classification;
+
+classification = enforceClassifierHardLimits({
+  classification,
+  lead,
+  lastUserText
+});
+
+if (
+  originalClassification?.temperaturaComercial !== classification?.temperaturaComercial ||
+  originalClassification?.perfilComportamentalPrincipal !== classification?.perfilComportamentalPrincipal ||
+  originalClassification?.intencaoPrincipal !== classification?.intencaoPrincipal ||
+  originalClassification?.confiancaClassificacao !== classification?.confiancaClassificacao
+) {
+  console.log("🛡️ Classificador corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    temperaturaOriginal: originalClassification?.temperaturaComercial || "nao_analisado",
+    temperaturaCorrigida: classification?.temperaturaComercial || "nao_analisado",
+    perfilOriginal: originalClassification?.perfilComportamentalPrincipal || "nao_analisado",
+    perfilCorrigido: classification?.perfilComportamentalPrincipal || "nao_analisado",
+    intencaoOriginal: originalClassification?.intencaoPrincipal || "nao_analisado",
+    intencaoCorrigida: classification?.intencaoPrincipal || "nao_analisado",
+    confiancaOriginal: originalClassification?.confiancaClassificacao || "nao_analisado",
+    confiancaCorrigida: classification?.confiancaClassificacao || "nao_analisado"
+  });
+}
+
+await saveLeadClassification(user, classification);
 
     runConsultantAfterClassifier({
       user,
@@ -4115,6 +4143,106 @@ function isCommitmentConfirmation(text = "") {
   ];
 
   return commitmentPatterns.some(pattern => pattern.test(t));
+}
+
+function isSimpleGreetingOnly(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const greetingPatterns = [
+    /^oi$/,
+    /^ola$/,
+    /^olá$/,
+    /^opa$/,
+    /^e ai$/,
+    /^eai$/,
+    /^bom dia$/,
+    /^boa tarde$/,
+    /^boa noite$/,
+    /^tudo bem$/,
+    /^oi tudo bem$/,
+    /^ola tudo bem$/,
+    /^olá tudo bem$/,
+    /^bom dia tudo bem$/,
+    /^boa tarde tudo bem$/,
+    /^boa noite tudo bem$/
+  ];
+
+  return greetingPatterns.some(pattern => pattern.test(t));
+}
+
+function enforceClassifierHardLimits({
+  classification = {},
+  lead = {},
+  lastUserText = ""
+} = {}) {
+  const safeClassification = {
+    ...buildDefaultLeadClassification(),
+    ...(classification || {})
+  };
+
+  const etapas = lead?.etapas || {};
+
+  const nenhumaEtapaConcluida =
+    etapas.programa !== true &&
+    etapas.beneficios !== true &&
+    etapas.estoque !== true &&
+    etapas.responsabilidades !== true &&
+    etapas.investimento !== true &&
+    etapas.compromisso !== true;
+
+  const etapaAtual = getCurrentFunnelStage(lead || {});
+  const mensagemEhCumprimentoSimples = isSimpleGreetingOnly(lastUserText);
+
+  if (mensagemEhCumprimentoSimples && nenhumaEtapaConcluida && etapaAtual <= 1) {
+    return {
+      ...safeClassification,
+      temperaturaComercial: "nao_analisado",
+      perfilComportamentalPrincipal: "nao_analisado",
+      perfilComportamentalSecundario: "",
+      nivelConsciencia: "baixo",
+      intencaoPrincipal: "sem_intencao_clara",
+      objecaoPrincipal: "sem_objecao_detectada",
+      confiancaClassificacao: "baixa",
+      sinaisObservados: ["cumprimento_inicial_sem_sinal_comercial"],
+      resumoPerfil: "Lead enviou apenas um cumprimento inicial. Não há sinal suficiente para classificar como quente, qualificado ou pronto para pré-análise.",
+      classificadoEm: new Date()
+    };
+  }
+
+  if (
+    safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
+    !canStartDataCollection(lead || {})
+  ) {
+    return {
+      ...safeClassification,
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "quente"
+          ? "morno"
+          : safeClassification.temperaturaComercial,
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "qualificado_pronto"
+          ? "curioso_morno"
+          : safeClassification.perfilComportamentalPrincipal,
+      intencaoPrincipal: "tirar_duvida",
+      confiancaClassificacao: "baixa",
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "pre_analise_bloqueada_por_etapas_incompletas"
+      ],
+      resumoPerfil: "O Classificador indicou avanço para pré-análise, mas o backend bloqueou porque ainda faltam etapas obrigatórias do funil. A intenção do lead deve ser tratada com cautela.",
+      classificadoEm: new Date()
+    };
+  }
+
+  return safeClassification;
 }
 
 function isCommercialProgressConfirmation(text = "") {
