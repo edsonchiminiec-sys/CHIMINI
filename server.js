@@ -7063,6 +7063,43 @@ const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
+     const leadTravouAntesDoCrm =
+  isPreCrmBlockingObjection(text) &&
+  currentLead?.dadosConfirmadosPeloLead !== true &&
+  currentLead?.crmEnviado !== true &&
+  currentLead?.statusOperacional !== "enviado_crm" &&
+  currentLead?.faseFunil !== "crm" &&
+  currentLead?.faseQualificacao !== "enviado_crm" &&
+  currentLead?.status !== "enviado_crm" &&
+  currentLead?.aguardandoConfirmacaoCampo !== true &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
+
+     if (leadTravouAntesDoCrm) {
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    interesseAfiliado: true,
+    origemConversao: "recuperado_objecao",
+    ultimaMensagem: text
+  });
+
+  const affiliateRecoveryMsg = buildAffiliateRecoveryResponse();
+
+  await sendWhatsAppMessage(from, affiliateRecoveryMsg);
+  await saveHistoryStep(from, history, text, affiliateRecoveryMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
      // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
 // Só marca compromisso como concluído quando:
 // 1. a SDR já perguntou sobre o resultado depender da atuação;
