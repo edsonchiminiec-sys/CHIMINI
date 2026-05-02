@@ -4143,6 +4143,94 @@ const VALID_UFS = [
   "RS", "RO", "RR", "SC", "SP", "SE", "TO"
 ];
 
+function isSoftUnderstandingConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const softPatterns = [
+    /^ok$/,
+    /^ok obrigado$/,
+    /^ok obrigada$/,
+    /^sim$/,
+    /^s$/,
+    /^sei sim$/,
+    /^entendi$/,
+    /^entendi sim$/,
+    /^certo$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^legal$/,
+    /^show$/,
+    /^beleza$/,
+    /^blz$/,
+    /^perfeito$/,
+    /^top$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^fez sentido sim$/,
+    /^faz sentido sim$/,
+    /^foi bem explicativo$/,
+    /^foi bem explicado$/,
+    /^ficou claro$/,
+    /^ficou claro sim$/,
+    /^esta claro$/,
+    /^está claro$/
+  ];
+
+  return softPatterns.some(pattern => pattern.test(t));
+}
+
+function isExplicitPreAnalysisIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const explicitPatterns = [
+    "quero seguir",
+    "vamos seguir",
+    "pode seguir",
+    "podemos seguir",
+    "quero avancar",
+    "quero avançar",
+    "pode avancar",
+    "pode avançar",
+    "vamos avancar",
+    "vamos avançar",
+    "quero entrar",
+    "quero participar",
+    "quero comecar",
+    "quero começar",
+    "pode iniciar",
+    "vamos iniciar",
+    "bora iniciar",
+    "bora seguir",
+    "seguir para pre analise",
+    "seguir para pré análise",
+    "seguir para pre-analise",
+    "seguir para pré-análise",
+    "vamos para pre analise",
+    "vamos para pré análise",
+    "vamos pra pre analise",
+    "vamos pra pré análise",
+    "pode fazer a pre analise",
+    "pode fazer a pré análise",
+    "tenho interesse em seguir",
+    "tenho interesse em avancar",
+    "tenho interesse em avançar"
+  ];
+
+  return explicitPatterns.some(pattern => t.includes(pattern));
+}
+
 function normalizeUF(value = "") {
   const text = String(value).trim().toUpperCase();
 
@@ -6396,6 +6484,7 @@ await saveLeadProfile(from, {
      // 🔥 PRIORIDADE: LEAD QUENTE (INTENÇÃO FORTE)
 if (
   strongIntent &&
+  !leadDeuApenasConfirmacaoFraca &&
   currentLead?.faseQualificacao !== "coletando_dados" &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
@@ -6702,6 +6791,9 @@ Resumo consultivo:
 ${preSdrConsultantAdvice?.resumoConsultivo || "-"}
 
 REGRAS OBRIGATÓRIAS PARA A SDR:
+
+- A SDR só pode conduzir para pré-análise se o lead demonstrar intenção explícita, como "quero seguir", "vamos seguir", "pode iniciar", "quero entrar" ou equivalente.
+- Se o lead apenas confirmou entendimento, a SDR deve avançar para a próxima explicação necessária do funil, não para coleta de dados.
 - Responder primeiro a manifestação real do lead.
 - Se o lead fez pergunta, responder a pergunta antes de conduzir.
 - Se o lead mandou áudio, considerar a transcrição como a mensagem principal.
@@ -6710,6 +6802,7 @@ REGRAS OBRIGATÓRIAS PARA A SDR:
 - Não falar taxa antes da fase correta.
 - Não pedir dados antes da fase correta.
 - Não repetir explicação que o lead já disse ter entendido.
+- "ok", "sim", "sei sim", "entendi", "fez sentido", "foi explicativo", "show", "top", "bora" e "ficou claro" indicam apenas entendimento, não autorização para pré-análise.
 - Responder de forma natural, curta e consultiva.
 - Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
 
@@ -6854,6 +6947,9 @@ if (
 
 let respostaFinal = resposta;
 
+const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
+const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
+     
      // 🚫 BLOQUEIO DE REGRESSÃO DE FASE
 const etapaAtual = getCurrentFunnelStage(currentLead);
 const respostaLowerCheck = respostaFinal.toLowerCase();
@@ -6970,18 +7066,20 @@ if (
   respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Fez sentido pra você ou quer que eu te explique os pontos principais?";
 }
      
-     const mencionouPreAnalise =
+const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
-    respostaFinal = "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
+  if (leadDeuApenasConfirmacaoFraca) {
+    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
+  } else if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
+    respostaFinal =
+      "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
   } else {
-    respostaFinal = state.sentFiles.folder
-      ? "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nComo o material já está logo acima, posso te resumir os pontos principais por aqui. Quer que eu resuma?"
-      : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
   }
 }
+     
 // 🚨 BLOQUEIO DE COLETA PREMATURA — COM AVANÇO CONTROLADO E SEM LOOP
 if (startedDataCollection && !podeIniciarColeta) {
   const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
