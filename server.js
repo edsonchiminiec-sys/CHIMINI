@@ -166,14 +166,20 @@ async function saveLeadProfile(user, data = {}) {
   const currentLead = await db.collection("leads").findOne({ user });
 
   // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
-  const {
+   const {
     _id,
     createdAt,
     crmEnviado,
     crmEnviadoEm,
+
+    // Estes campos são gerenciados por funções próprias.
+    // Se entrarem aqui junto com $setOnInsert, causam conflito no Mongo.
+    supervisor,
+    classificacao,
+    consultoria,
+
     ...safeData
   } = data || {};
-
   // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
    
  const insertData = {
