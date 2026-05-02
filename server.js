@@ -6552,6 +6552,91 @@ const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
   lead: currentLead
 });
 
+// 🧠 CONSULTOR PRÉ-SDR
+// A SDR não responde sozinha.
+// Antes da SDR responder, o Consultor Assistente analisa a mensagem do lead
+// e orienta o que responder e como responder.
+let preSdrConsultantAdvice = null;
+
+try {
+  preSdrConsultantAdvice = await runConsultantAssistant({
+    lead: currentLead || {},
+    history,
+    lastUserText: text,
+    lastSdrText: "",
+    supervisorAnalysis: currentLead?.supervisor || {},
+    classification: currentLead?.classificacao || {}
+  });
+
+  await saveConsultantAdvice(from, preSdrConsultantAdvice);
+
+  console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
+    user: from,
+    estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    ofertaMaisAdequada: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    prioridadeComercial: preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado"
+  });
+} catch (error) {
+  console.error("❌ Consultor PRÉ-SDR falhou. SDR não responderá sem orientação:", error.message);
+
+  const consultantErrorMsg = `Tive uma instabilidade rápida para analisar sua mensagem com segurança 😊
+
+Pode me mandar novamente o ponto principal da sua dúvida? Assim eu te respondo certinho.`;
+
+  await sendWhatsAppMessage(from, consultantErrorMsg);
+  await saveHistoryStep(from, history, text, consultantErrorMsg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+const preSdrConsultantContext = `ORIENTAÇÃO OBRIGATÓRIA DO CONSULTOR ASSISTENTE — USO INTERNO DA SDR
+
+Esta orientação veio ANTES da resposta da SDR.
+A SDR deve usar isso para decidir o que responder agora.
+
+Estratégia recomendada:
+${preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado"}
+
+Próxima melhor ação:
+${preSdrConsultantAdvice?.proximaMelhorAcao || "-"}
+
+Abordagem sugerida:
+${preSdrConsultantAdvice?.abordagemSugerida || "-"}
+
+Argumento principal:
+${preSdrConsultantAdvice?.argumentoPrincipal || "-"}
+
+Cuidado principal:
+${preSdrConsultantAdvice?.cuidadoPrincipal || "-"}
+
+Oferta mais adequada:
+${preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado"}
+
+Momento ideal para humano:
+${preSdrConsultantAdvice?.momentoIdealHumano || "nao_analisado"}
+
+Prioridade comercial:
+${preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado"}
+
+Resumo consultivo:
+${preSdrConsultantAdvice?.resumoConsultivo || "-"}
+
+REGRAS OBRIGATÓRIAS PARA A SDR:
+- Responder primeiro a manifestação real do lead.
+- Se o lead fez pergunta, responder a pergunta antes de conduzir.
+- Se o lead mandou áudio, considerar a transcrição como a mensagem principal.
+- Não ignorar objeção, dúvida, reclamação ou correção do lead.
+- Não seguir roteiro se o lead perguntou outra coisa.
+- Não falar taxa antes da fase correta.
+- Não pedir dados antes da fase correta.
+- Não repetir explicação que o lead já disse ter entendido.
+- Responder de forma natural, curta e consultiva.
+- Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
+
 const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -6562,6 +6647,10 @@ body: JSON.stringify({
   model: "gpt-4o-mini",
   messages: [
   { role: "system", content: SYSTEM_PROMPT },
+  {
+    role: "system",
+    content: preSdrConsultantContext
+  },
   {
     role: "system",
     content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
