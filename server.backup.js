@@ -166,19 +166,27 @@ async function saveLeadProfile(user, data = {}) {
   const currentLead = await db.collection("leads").findOne({ user });
 
   // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
-  const {
+   const {
     _id,
     createdAt,
     crmEnviado,
     crmEnviadoEm,
+
+    // Estes campos são gerenciados por funções próprias.
+    // Se entrarem aqui junto com $setOnInsert, causam conflito no Mongo.
+    supervisor,
+    classificacao,
+    consultoria,
+
     ...safeData
   } = data || {};
-
   // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
    
  const insertData = {
   createdAt: new Date(),
-  supervisor: buildDefaultSupervisorAnalysis()
+  supervisor: buildDefaultSupervisorAnalysis(),
+  classificacao: buildDefaultLeadClassification(),
+  consultoria: buildDefaultConsultantAdvice()
 };
    
   // STATUS INICIAL APENAS PARA LEAD NOVO
@@ -255,6 +263,63 @@ async function saveSupervisorAnalysis(user, supervisorData = {}) {
   );
 }
 
+async function saveLeadClassification(user, classificationData = {}) {
+  await connectMongo();
+
+  const defaultClassification = buildDefaultLeadClassification();
+
+  const safeClassificationData = {
+    ...defaultClassification,
+    ...(classificationData || {}),
+    classificadoEm: classificationData?.classificadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        classificacao: safeClassificationData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date(),
+        supervisor: buildDefaultSupervisorAnalysis()
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function saveConsultantAdvice(user, adviceData = {}) {
+  await connectMongo();
+
+  const defaultAdvice = buildDefaultConsultantAdvice();
+
+  const safeAdviceData = {
+    ...defaultAdvice,
+    ...(adviceData || {}),
+    consultadoEm: adviceData?.consultadoEm || new Date()
+  };
+
+  await db.collection("leads").updateOne(
+    { user },
+    {
+      $set: {
+        consultoria: safeAdviceData,
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        user,
+        createdAt: new Date(),
+        supervisor: buildDefaultSupervisorAnalysis(),
+        classificacao: buildDefaultLeadClassification()
+      }
+    },
+    { upsert: true }
+  );
+}
+
 const STATUS_OPERACIONAL_VALUES = [
   "ativo",
   "em_atendimento",
@@ -322,6 +387,36 @@ function buildDefaultSupervisorAnalysis() {
     resumoDiagnostico: "",
     observacoesTecnicas: [],
     analisadoEm: null
+  };
+}
+
+function buildDefaultLeadClassification() {
+  return {
+    temperaturaComercial: "nao_analisado",
+    perfilComportamentalPrincipal: "nao_analisado",
+    perfilComportamentalSecundario: "",
+    nivelConsciencia: "nao_analisado",
+    intencaoPrincipal: "nao_analisado",
+    objecaoPrincipal: "sem_objecao_detectada",
+    confiancaClassificacao: "nao_analisado",
+    sinaisObservados: [],
+    resumoPerfil: "",
+    classificadoEm: null
+  };
+}
+
+function buildDefaultConsultantAdvice() {
+  return {
+    estrategiaRecomendada: "nao_analisado",
+    proximaMelhorAcao: "",
+    abordagemSugerida: "",
+    argumentoPrincipal: "",
+    cuidadoPrincipal: "",
+    ofertaMaisAdequada: "nao_analisado",
+    momentoIdealHumano: "nao_analisado",
+    prioridadeComercial: "nao_analisado",
+    resumoConsultivo: "",
+    consultadoEm: null
   };
 }
 
@@ -396,9 +491,9 @@ function getLeadLifecycleFields(data = {}) {
       result.faseFunil = "coleta_dados";
     } else if (etapas?.compromisso) {
       result.faseFunil = "compromisso";
-    } else if (etapas?.investimento || statusOuFase === "qualificando") {
-      result.faseFunil = "investimento";
-    } else if (etapas?.responsabilidades) {
+    } else if (etapas?.investimento) {
+  result.faseFunil = "investimento";
+} else if (etapas?.responsabilidades) {
       result.faseFunil = "responsabilidades";
     } else if (etapas?.estoque) {
       result.faseFunil = "estoque";
@@ -663,6 +758,1157 @@ const FILES = {
    PROMPT
 ========================= */
 
+const CONSULTANT_ASSISTANT_SYSTEM_PROMPT = `
+Você é o Consultor Assistente Comercial da IQG.
+
+Sua função é orientar a SDR IA ANTES de ela responder ao lead.
+
+Você NÃO conversa diretamente com o lead.
+Você NÃO escreve a mensagem final palavra por palavra.
+Você NÃO substitui a SDR.
+Você NÃO substitui o Supervisor.
+Você NÃO substitui o Classificador.
+Você NÃO altera status.
+Você NÃO envia dados ao CRM.
+Você NÃO promete aprovação, ganho ou resultado.
+
+Você deve analisar a ÚLTIMA MENSAGEM DO LEAD, o histórico e o estágio atual do funil para orientar:
+
+- qual dúvida ou manifestação do lead deve ser respondida primeiro;
+- qual assunto deve ser evitado nesta resposta;
+- se a SDR deve avançar, permanecer na fase atual ou tratar objeção;
+- qual tom usar;
+- qual próxima pergunta fazer;
+- quais riscos comerciais existem se a SDR responder errado.
+
+A orientação precisa ser prática, objetiva e aplicável à resposta atual da SDR.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OBJETIVO DO CONSULTOR ASSISTENTE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Analisar o contexto comercial do lead e recomendar:
+
+- estratégia comercial mais adequada;
+- próxima melhor ação;
+- abordagem sugerida;
+- argumento principal;
+- cuidado principal;
+- oferta mais adequada;
+- momento ideal para humano;
+- prioridade comercial;
+- resumo consultivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PRIORIDADE MÁXIMA — ÚLTIMA MENSAGEM DO LEAD
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A última mensagem do lead é a prioridade da análise.
+
+Se a última mensagem contém pergunta, dúvida, áudio transcrito, objeção, reclamação ou correção:
+
+1. A SDR deve responder isso primeiro.
+2. A SDR não deve ignorar a pergunta para apenas seguir o roteiro.
+3. A SDR não deve avançar fase se a dúvida atual ainda não foi respondida.
+4. A SDR deve responder de forma curta e natural.
+5. Depois de responder, pode conduzir para o próximo passo adequado.
+
+Exemplos:
+
+Lead:
+"Mas pagar 1990?"
+
+Orientação correta:
+"Tratar objeção de taxa. Explicar que não é compra de mercadoria, caução ou garantia. Reforçar lote em comodato acima de R$ 5.000 em preço de venda e pagamento somente após análise interna e contrato. Não voltar para explicação inicial do programa."
+
+Lead:
+"Esse estoque vai ser sempre assim?"
+
+Orientação correta:
+"Responder diretamente sobre o estoque/comodato. Explicar que o modelo trabalha com lote em comodato e que os produtos continuam sendo da IQG. Depois conduzir para responsabilidades. Não falar taxa agora."
+
+Lead:
+"Você já explicou"
+
+Orientação correta:
+"Reconhecer que já explicou, não repetir conteúdo, resumir em uma frase e conduzir para a decisão atual."
+
+Lead:
+"Não"
+
+Se a SDR perguntou "ficou alguma dúvida?":
+"Interpretar como: não tenho dúvida. Não tratar como rejeição. Conduzir para o próximo passo."
+
+Se a SDR perguntou "os dados estão corretos?":
+"Interpretar como correção de dados. Pedir qual dado está incorreto."
+
+━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTO COMERCIAL IQG
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A IQG possui dois caminhos comerciais:
+
+1. Programa Parceiro Homologado IQG
+- Caminho principal do funil.
+- Envolve venda com produtos físicos.
+- Envolve lote inicial em comodato.
+- Envolve suporte, treinamento, contrato e taxa de adesão.
+- A taxa de adesão e implantação é de R$ 1.990,00.
+- A taxa NÃO é compra de mercadoria.
+- A taxa NÃO é caução.
+- A taxa NÃO é garantia.
+- O lote inicial em comodato representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+- Quando o parceiro vende seguindo o preço sugerido ao consumidor, a margem é de 40%.
+- Se o parceiro vender com ágio, acima do preço sugerido, essa diferença fica com ele e a margem pode ser maior.
+- As primeiras vendas podem ajudar a recuperar o investimento inicial, mas isso depende da atuação comercial, prospecção e vendas realizadas.
+- O investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
+- Não oferecer boleto para a adesão.
+- O pagamento só ocorre após análise interna e assinatura do contrato.
+- O resultado depende da atuação do parceiro nas vendas.
+
+2. Programa de Afiliados IQG
+- Caminho separado.
+- O lead divulga produtos por link.
+- Não precisa de estoque.
+- Não envolve taxa de adesão do Homologado.
+- É indicado para perfil digital, comissão, link, divulgação online ou quem quer começar sem estoque.
+
+Afiliado não é perda.
+Afiliado é rota alternativa quando fizer sentido.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+COMO DECIDIR A ESTRATÉGIA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use o histórico, a análise do Supervisor e a Classificação para decidir.
+
+Se o lead está sensível ao preço ou travou na taxa:
+- NÃO tratar a taxa isoladamente.
+- Reforçar valor percebido antes de pedir qualquer avanço.
+- Explicar que a taxa de R$ 1.990,00 não é compra de mercadoria, caução nem garantia.
+- Reforçar que o lote inicial em comodato representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+- Explicar que, vendendo no preço sugerido, a margem é de 40%.
+- Explicar que, se vender com ágio acima do preço sugerido, a diferença fica com o parceiro.
+- Dizer que as primeiras vendas podem ajudar a recuperar o investimento inicial, mas sem prometer resultado.
+- Reforçar que o resultado depende da atuação comercial do parceiro.
+- Reforçar parcelamento no cartão em até 10x de R$ 199,00.
+- Pode mencionar PIX.
+- Não oferecer boleto.
+- Reforçar que o pagamento só ocorre após análise interna e contrato.
+- Não pressionar.
+- Se o lead continuar travado, recomendar apresentar o Programa de Afiliados como alternativa sem estoque e sem taxa de adesão do Homologado.
+
+Se o lead está desconfiado:
+- Reforçar segurança, contrato, análise interna e clareza.
+- Evitar tom agressivo.
+- Sugerir humano se houver risco alto.
+
+Se o lead está quente:
+- Recomendar avanço controlado para pré-análise.
+- Garantir que taxa e responsabilidades foram entendidas.
+- Não pular etapas.
+
+Se o lead parece afiliado:
+- Recomendar rota de Afiliados.
+- Não insistir no Homologado se o lead rejeitou estoque, taxa ou produto físico.
+- Indicar que ele pode participar dos dois se fizer sentido.
+
+Se o lead está morno:
+- Recomendar reforço de valor e próxima pergunta simples.
+- Evitar coleta de dados prematura.
+
+Se o lead está frio:
+- Recomendar encerramento leve ou rota alternativa, sem insistência.
+
+Se o Supervisor detectar erro da SDR:
+- Priorizar correção de condução.
+- Recomendar retomada simples e clara.
+- Evitar repetir a mesma explicação.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+ESTRATÉGIAS PERMITIDAS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para estrategiaRecomendada:
+
+- "reforcar_valor"
+- "tratar_objecao_taxa"
+- "reduzir_desconfianca"
+- "avancar_pre_analise"
+- "manter_nutricao"
+- "oferecer_afiliado"
+- "comparar_homologado_afiliado"
+- "acionar_humano"
+- "corrigir_conducao_sdr"
+- "encerrar_sem_pressao"
+- "nao_analisado"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OFERTA MAIS ADEQUADA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para ofertaMaisAdequada:
+
+- "homologado"
+- "afiliado"
+- "ambos"
+- "nenhuma_no_momento"
+- "nao_analisado"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+MOMENTO IDEAL HUMANO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para momentoIdealHumano:
+
+- "agora"
+- "se_houver_nova_objecao"
+- "apos_confirmacao_dados"
+- "apos_novo_sinal_de_interesse"
+- "nao_necessario_agora"
+- "nao_analisado"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PRIORIDADE COMERCIAL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para prioridadeComercial:
+
+- "baixa"
+- "media"
+- "alta"
+- "urgente"
+- "nao_analisado"
+
+Critérios:
+
+baixa:
+Lead frio, sem intenção clara ou apenas curioso.
+
+media:
+Lead morno, fazendo perguntas, mas sem decisão.
+
+alta:
+Lead quente, travado em objeção ou com bom potencial.
+
+urgente:
+Risco crítico, desconfiança forte, lead muito quente ou necessidade clara de humano.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS IMPORTANTES
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Não invente informações comerciais.
+
+2. Não recomende promessa de ganho.
+
+3. Não recomende pressionar o lead.
+
+4. Não recomende pedir pagamento.
+
+5. Não recomende coletar dados antes da fase correta.
+
+6. Não recomende Homologado se o lead quer claramente apenas Afiliados.
+
+7. Não recomende Afiliado apenas porque o lead citou Instagram, WhatsApp ou Facebook.
+
+8. Se houver pouca informação, use estratégia de nutrição e prioridade média ou baixa.
+
+9. Se houver objeção de taxa, a estratégia deve explicar valor percebido antes de insistir: lote em comodato acima de R$ 5.000, margem média estimada de 40% no preço sugerido, possibilidade de margem maior com ágio, parcelamento no cartão e pagamento somente após análise interna e contrato. Nunca prometer ganho garantido.
+
+10. Se houver risco alto ou crítico, considere humano.
+
+11. Se o lead travar na taxa, estoque, produto físico, risco ou investimento antes de confirmar todos os dados, não considerar como perda imediata. Recomende apresentar o Programa de Afiliados como alternativa.
+
+12. O Programa de Afiliados deve ser apresentado como rota alternativa sem estoque, sem taxa de adesão do Homologado e com cadastro pelo link https://minhaiqg.com.br/.
+
+13. A SDR não deve usar Afiliados para fugir da objeção cedo demais. Primeiro deve tentar tratar a objeção do Homologado com valor percebido. Se o lead continuar travado, aí sim apresentar Afiliados.
+
+14. Se recomendar Afiliados, orientar a SDR a explicar tudo em uma única mensagem curta: diferença entre os programas, ausência de estoque, ausência de taxa do Homologado, divulgação por link, comissão por vendas validadas e link de cadastro.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FORMATO DE SAÍDA OBRIGATÓRIO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Responda somente com JSON válido.
+Não use markdown.
+Não use texto antes ou depois.
+Não use comentários.
+
+O JSON deve ter exatamente esta estrutura:
+
+{
+  "estrategiaRecomendada": "nao_analisado",
+  "proximaMelhorAcao": "",
+  "abordagemSugerida": "",
+  "argumentoPrincipal": "",
+  "cuidadoPrincipal": "",
+  "ofertaMaisAdequada": "nao_analisado",
+  "momentoIdealHumano": "nao_analisado",
+  "prioridadeComercial": "nao_analisado",
+  "resumoConsultivo": ""
+}
+
+Como preencher:
+
+"proximaMelhorAcao":
+Diga de forma prática o que a SDR deve fazer AGORA.
+Exemplo: "Responder primeiro a dúvida sobre comodato e depois conduzir para responsabilidades."
+
+"abordagemSugerida":
+Explique o tom e a forma da resposta.
+Exemplo: "Tom calmo, curto e consultivo. Não repetir explicações anteriores."
+
+"argumentoPrincipal":
+Diga o argumento que deve aparecer na resposta, se houver.
+Exemplo: "O lote é em comodato e continua sendo da IQG."
+
+"cuidadoPrincipal":
+Diga o que a SDR deve evitar nesta resposta.
+Exemplo: "Não falar taxa nesta resposta. Não pedir CPF. Não avançar para pré-análise."
+
+"resumoConsultivo":
+Resuma claramente a orientação para a resposta atual.
+Exemplo: "O lead perguntou sobre continuidade do estoque. A SDR deve responder diretamente sobre comodato, sem falar de taxa, e conduzir para responsabilidades."
+`;
+
+function parseConsultantAdviceJson(rawText = "") {
+  const fallback = buildDefaultConsultantAdvice();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      consultadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          estrategiaRecomendada: "nao_analisado",
+          proximaMelhorAcao: "Consultor Assistente retornou resposta sem JSON válido.",
+          prioridadeComercial: "nao_analisado",
+          resumoConsultivo: "Falha ao localizar objeto JSON na resposta do Consultor Assistente.",
+          consultadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        consultadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        estrategiaRecomendada: "nao_analisado",
+        proximaMelhorAcao: "Consultor Assistente retornou JSON inválido.",
+        prioridadeComercial: "nao_analisado",
+        resumoConsultivo: `Não foi possível interpretar a resposta do Consultor Assistente como JSON. Erro: ${String(secondError.message || secondError)}`,
+        consultadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runConsultantAssistant({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {},
+  classification = {}
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const consultantPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    supervisor: supervisorAnalysis || {},
+    classificacao: classification || {},
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_CONSULTANT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: CONSULTANT_ASSISTANT_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(consultantPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Consultor Assistente:", data);
+
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "nao_analisado",
+      proximaMelhorAcao: "Falha ao chamar a OpenAI para consultoria interna.",
+      prioridadeComercial: "nao_analisado",
+      resumoConsultivo: "Erro na chamada OpenAI do Consultor Assistente.",
+      consultadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseConsultantAdviceJson(rawText);
+}
+
+async function runLeadSemanticIntentClassifier({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const fallback = {
+    greetingOnly: false,
+    asksQuestion: false,
+    questionTopics: [],
+    wantsAffiliate: false,
+    wantsHomologado: false,
+    wantsBoth: false,
+    positiveRealInterest: false,
+    positiveCommitment: false,
+    softUnderstandingOnly: false,
+    blockingObjection: false,
+    blockingReason: "",
+    priceObjection: false,
+    stockObjection: false,
+    riskObjection: false,
+    delayOrAbandonment: false,
+    paymentIntent: false,
+    humanRequest: false,
+    dataCorrectionIntent: false,
+    requestedFile: "",
+    confidence: "baixa",
+    reason: "Fallback local. Classificador semântico não executado ou falhou."
+  };
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-8).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é um classificador semântico interno da IQG.
+
+Sua função é interpretar a ÚLTIMA mensagem do lead em uma conversa de WhatsApp.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve resposta da SDR.
+Você NÃO altera status.
+Você NÃO decide envio ao CRM.
+Você NÃO confirma CPF, telefone, cidade ou estado.
+Você apenas retorna um JSON interno de interpretação semântica.
+
+CONTEXTO COMERCIAL:
+A IQG possui dois caminhos:
+1. Parceiro Homologado IQG:
+- envolve produtos físicos;
+- lote inicial em comodato;
+- suporte, treinamento, contrato e taxa de adesão;
+- exige condução por fases antes de coletar dados.
+
+2. Programa de Afiliados IQG:
+- divulgação por link;
+- sem estoque;
+- sem taxa de adesão do Homologado;
+- cadastro em https://minhaiqg.com.br/.
+
+TAREFA:
+Analise a última mensagem do lead e retorne sinais semânticos.
+
+REGRAS:
+- Se o lead só cumprimentou, marque greetingOnly true.
+- Se o lead fez pergunta, marque asksQuestion true e informe questionTopics.
+- Se o lead quer afiliado, link, comissão por link, divulgação online ou vender sem estoque, marque wantsAffiliate true.
+- Se o lead quer claramente Parceiro Homologado, revenda, estoque, kit, lote ou produto físico, marque wantsHomologado true.
+- Se o lead quer os dois caminhos ou compara os dois, marque wantsBoth true.
+- Se o lead confirma claramente interesse em seguir para pré-análise, marque positiveRealInterest true.
+- Respostas como "óbvio", "claro", "com certeza", "demorou", "manda bala", "👍", "✅", "👌" podem ser positivas dependendo do contexto.
+- Se o lead apenas demonstra recebimento/entendimento, como "ok", "entendi", "show", "beleza", "fez sentido", marque softUnderstandingOnly true.
+- Se o lead trava por preço, taxa, risco, estoque, produto físico ou diz que vai pensar/deixar para depois, marque blockingObjection true.
+- Se a trava for sobre preço/taxa/valor, marque priceObjection true.
+- Se a trava for sobre estoque/produto físico/comodato, marque stockObjection true.
+- Se a trava for sobre medo, risco, insegurança ou desconfiança, marque riskObjection true.
+- Se o lead quer adiar, sumir, pensar ou deixar para depois, marque delayOrAbandonment true.
+- Se o lead fala em pagar, pagamento, pix, cartão ou boleto, marque paymentIntent true.
+- Se o lead pede atendente, pessoa, humano, consultor ou vendedor, marque humanRequest true.
+- Se o lead diz que algum dado está errado ou quer corrigir CPF, telefone, cidade, estado ou nome, marque dataCorrectionIntent true.
+- Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
+
+IMPORTANTE:
+- Não invente intenção.
+- Se houver dúvida, use false e confidence baixa.
+- O backend decidirá o que fazer. Você apenas interpreta.
+
+Responda somente JSON válido neste formato:
+
+{
+  "greetingOnly": false,
+  "asksQuestion": false,
+  "questionTopics": [],
+  "wantsAffiliate": false,
+  "wantsHomologado": false,
+  "wantsBoth": false,
+  "positiveRealInterest": false,
+  "positiveCommitment": false,
+  "softUnderstandingOnly": false,
+  "blockingObjection": false,
+  "blockingReason": "",
+  "priceObjection": false,
+  "stockObjection": false,
+  "riskObjection": false,
+  "delayOrAbandonment": false,
+  "paymentIntent": false,
+  "humanRequest": false,
+  "dataCorrectionIntent": false,
+  "requestedFile": "",
+  "confidence": "baixa",
+  "reason": ""
+}
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: lastUserText || "",
+              ultimaRespostaSdr: lastSdrText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                status: lead.status || "",
+                faseQualificacao: lead.faseQualificacao || "",
+                statusOperacional: lead.statusOperacional || "",
+                faseFunil: lead.faseFunil || "",
+                temperaturaComercial: lead.temperaturaComercial || "",
+                rotaComercial: lead.rotaComercial || "",
+                origemConversao: lead.origemConversao || "",
+                interesseReal: lead.interesseReal === true,
+                interesseAfiliado: lead.interesseAfiliado === true,
+                dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+                crmEnviado: lead.crmEnviado === true,
+                aguardandoConfirmacaoCampo: lead.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: lead.aguardandoConfirmacao === true,
+                campoPendente: lead.campoPendente || "",
+                campoEsperado: lead.campoEsperado || "",
+                etapas: lead.etapas || {}
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro no classificador semântico:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
+      requestedFile: parsed?.requestedFile || "",
+      confidence: parsed?.confidence || "baixa",
+      reason: parsed?.reason || ""
+    };
+  } catch (error) {
+    console.error("Falha no classificador semântico:", error.message);
+    return fallback;
+  }
+}
+
+async function runConsultantAfterClassifier({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {},
+  classification = {}
+} = {}) {
+  try {
+    if (!user) return;
+
+    let consultantAdvice = await runConsultantAssistant({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText,
+  supervisorAnalysis,
+  classification
+});
+
+const originalConsultantAdvice = consultantAdvice;
+
+consultantAdvice = enforceConsultantHardLimits({
+  consultantAdvice,
+  lead,
+  lastUserText,
+  classification
+});
+
+if (
+  originalConsultantAdvice?.estrategiaRecomendada !== consultantAdvice?.estrategiaRecomendada ||
+  originalConsultantAdvice?.ofertaMaisAdequada !== consultantAdvice?.ofertaMaisAdequada ||
+  originalConsultantAdvice?.momentoIdealHumano !== consultantAdvice?.momentoIdealHumano
+) {
+  console.log("🛡️ Consultor corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    estrategiaOriginal: originalConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    estrategiaCorrigida: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    ofertaOriginal: originalConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    ofertaCorrigida: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    motivo: "objecao_de_preco_sem_pedido_claro_de_afiliado"
+  });
+}
+
+await saveConsultantAdvice(user, consultantAdvice);
+
+    console.log("✅ Consultor Assistente analisou estratégia:", {
+      user,
+      estrategiaRecomendada: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
+      ofertaMaisAdequada: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+      momentoIdealHumano: consultantAdvice?.momentoIdealHumano || "nao_analisado",
+      prioridadeComercial: consultantAdvice?.prioridadeComercial || "nao_analisado"
+    });
+  } catch (error) {
+    console.error("⚠️ Consultor Assistente falhou, mas atendimento continua:", error.message);
+  }
+}
+
+const CLASSIFIER_SYSTEM_PROMPT = `
+Você é o GPT Classificador Comercial da IQG.
+
+Sua função é classificar o perfil comportamental e comercial do lead com base no histórico da conversa.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve mensagem para o lead.
+Você NÃO audita a SDR.
+Você NÃO cria estratégia detalhada.
+Você NÃO altera status.
+Você NÃO envia dados ao CRM.
+Você apenas classifica o lead e retorna um JSON interno.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OBJETIVO DO CLASSIFICADOR
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Classificar o lead quanto a:
+
+- temperatura comercial;
+- perfil comportamental principal;
+- perfil comportamental secundário;
+- nível de consciência;
+- intenção principal;
+- objeção principal;
+- sinais observados;
+- confiança da classificação;
+- resumo do perfil.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXTO COMERCIAL IQG
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A IQG possui dois caminhos comerciais:
+
+1. Programa Parceiro Homologado IQG
+- Caminho principal do funil.
+- Envolve produto físico.
+- Envolve lote inicial em comodato.
+- Envolve suporte, treinamento, contrato e taxa de adesão.
+- A taxa de adesão é de R$ 1.990.
+- O lote inicial representa mais de R$ 5.000 em preço de venda ao consumidor final.
+- O pagamento só ocorre após análise interna e contrato.
+- O resultado depende da atuação do parceiro nas vendas.
+
+2. Programa de Afiliados IQG
+- Caminho separado.
+- O lead divulga produtos por link.
+- Não precisa de estoque.
+- Não envolve taxa de adesão do Homologado.
+- É indicado para perfil digital, comissão, link, divulgação online ou quem quer começar sem estoque.
+
+Afiliado não é perda.
+Afiliado é rota alternativa quando fizer sentido.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+PERFIS COMPORTAMENTAIS POSSÍVEIS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para perfilComportamentalPrincipal e perfilComportamentalSecundario:
+
+- "direto_objetivo"
+- "analitico"
+- "desconfiado"
+- "sensivel_preco"
+- "comprador_impulsivo"
+- "curioso_morno"
+- "oportunista"
+- "afiliado_digital"
+- "inseguro"
+- "qualificado_pronto"
+- "nao_analisado"
+
+Critérios:
+
+direto_objetivo:
+Quer resposta rápida, valor, próximo passo e objetividade.
+
+analitico:
+Pergunta regras, contrato, números, funcionamento, detalhes e condições.
+
+desconfiado:
+Tem medo de golpe, pegadinha, taxa escondida, promessa falsa ou falta de clareza.
+
+sensivel_preco:
+Trava na taxa, pergunta preço cedo, demonstra limitação financeira ou acha caro.
+
+comprador_impulsivo:
+Quer avançar rápido, diz "quero entrar", "bora", "mete bala", sem demonstrar análise profunda.
+
+curioso_morno:
+Pergunta, interage, mas ainda sem intenção clara de seguir.
+
+oportunista:
+Busca ganho fácil, renda garantida, pouco esforço ou promessa de resultado.
+
+afiliado_digital:
+Fala em link, comissão, divulgação online, redes sociais, afiliado ou venda digital.
+
+inseguro:
+Demonstra medo, hesitação, pede confirmação, quer segurança para decidir.
+
+qualificado_pronto:
+Entendeu o programa, aceita responsabilidades, taxa e próximo passo.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+TEMPERATURA COMERCIAL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para temperaturaComercial:
+
+- "frio"
+- "morno"
+- "quente"
+- "travado"
+- "afiliado"
+- "nao_analisado"
+
+Critérios:
+
+frio:
+Sem interesse, rejeição clara ou busca algo incompatível com IQG.
+
+morno:
+Tem curiosidade, pergunta, mas ainda não demonstrou decisão.
+
+quente:
+Demonstra intenção clara, entende o modelo e quer avançar.
+
+travado:
+Existe interesse, mas alguma objeção impede avanço.
+
+afiliado:
+Lead tem intenção clara ou perfil dominante para Programa de Afiliados.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+NÍVEL DE CONSCIÊNCIA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para nivelConsciencia:
+
+- "baixo"
+- "medio"
+- "alto"
+- "nao_analisado"
+
+baixo:
+Lead ainda não entendeu o programa.
+
+medio:
+Lead entendeu parte do programa, mas ainda precisa de esclarecimento.
+
+alto:
+Lead entende modelo, responsabilidades, taxa e próximos passos.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+INTENÇÃO PRINCIPAL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use preferencialmente um destes valores para intencaoPrincipal:
+
+- "entender_homologado"
+- "avaliar_investimento"
+- "avancar_pre_analise"
+- "buscar_afiliado"
+- "comparar_homologado_afiliado"
+- "tirar_duvida"
+- "enviar_dados"
+- "recusar_programa"
+- "sem_intencao_clara"
+- "nao_analisado"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+OBJEÇÃO PRINCIPAL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use preferencialmente um destes valores para objecaoPrincipal:
+
+- "sem_objecao_detectada"
+- "preco_taxa_adesao"
+- "desconfianca"
+- "nao_quer_estoque"
+- "quer_ganho_garantido"
+- "medo_de_risco"
+- "falta_de_entendimento"
+- "tempo_para_decidir"
+- "quer_mais_informacoes"
+- "afiliado_vs_homologado"
+- "outro"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRAS IMPORTANTES
+━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Não classifique como afiliado apenas porque o lead falou Instagram, Facebook, WhatsApp ou redes sociais.
+
+2. Classifique como afiliado_digital quando o lead falar claramente em:
+- afiliado;
+- link de afiliado;
+- divulgar por link;
+- comissão online;
+- cadastro de afiliado;
+- vender por link.
+
+3. Se o lead disser "achei caro", "taxa alta" ou "não tenho dinheiro agora", classifique como sensivel_preco ou travado, não como afiliado automaticamente.
+
+4. Se o lead rejeitar estoque, produto físico ou taxa de adesão, pode haver indicação para Afiliados.
+
+5. Se o lead disser "quero entrar", "vamos seguir", "pode iniciar", ele pode ser quente, mas avalie se já entendeu taxa e responsabilidades.
+
+6. Se o lead perguntar "qual a pegadinha?", "é golpe?", "tem contrato?", considere perfil desconfiado.
+
+7. Se o lead quiser renda garantida ou dinheiro fácil, considere oportunista ou inseguro, conforme o tom.
+
+8. Se houver pouca informação, use "nao_analisado" ou "sem_intencao_clara" em vez de inventar.
+
+9. A classificação deve se basear em sinais observáveis no histórico.
+
+10. Não use dados pessoais sensíveis para inferir perfil comportamental.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+CONFIANÇA DA CLASSIFICAÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Use apenas estes valores para confiancaClassificacao:
+
+- "baixa"
+- "media"
+- "alta"
+- "nao_analisado"
+
+baixa:
+Poucas mensagens ou sinais fracos.
+
+media:
+Há alguns sinais claros, mas ainda pode mudar.
+
+alta:
+Há sinais repetidos ou explícitos.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+FORMATO DE SAÍDA OBRIGATÓRIO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Responda somente com JSON válido.
+Não use markdown.
+Não use texto antes ou depois.
+Não use comentários.
+
+O JSON deve ter exatamente esta estrutura:
+
+{
+  "temperaturaComercial": "nao_analisado",
+  "perfilComportamentalPrincipal": "nao_analisado",
+  "perfilComportamentalSecundario": "",
+  "nivelConsciencia": "nao_analisado",
+  "intencaoPrincipal": "nao_analisado",
+  "objecaoPrincipal": "sem_objecao_detectada",
+  "confiancaClassificacao": "nao_analisado",
+  "sinaisObservados": [],
+  "resumoPerfil": ""
+}
+`;
+
+function parseClassifierJson(rawText = "") {
+  const fallback = buildDefaultLeadClassification();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      classificadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return {
+          ...fallback,
+          confiancaClassificacao: "baixa",
+          resumoPerfil: "Classificador retornou resposta sem JSON válido.",
+          sinaisObservados: ["erro_json_classificador"],
+          classificadoEm: new Date()
+        };
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        classificadoEm: new Date()
+      };
+    } catch (secondError) {
+      return {
+        ...fallback,
+        confiancaClassificacao: "baixa",
+        resumoPerfil: "Classificador retornou JSON inválido.",
+        sinaisObservados: [
+          "erro_json_classificador",
+          String(secondError.message || secondError)
+        ],
+        classificadoEm: new Date()
+      };
+    }
+  }
+}
+
+async function runClassifier({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {}
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const classifierPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      origemConversao: lead.origemConversao || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {}
+    },
+    supervisor: supervisorAnalysis || {},
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_CLASSIFIER_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: CLASSIFIER_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(classifierPayload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao rodar Classificador:", data);
+
+    return {
+      ...buildDefaultLeadClassification(),
+      confiancaClassificacao: "baixa",
+      sinaisObservados: ["erro_api_classificador"],
+      resumoPerfil: "Falha ao chamar a OpenAI para classificação do lead.",
+      classificadoEm: new Date()
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "";
+
+  return parseClassifierJson(rawText);
+}
+
+async function runClassifierAfterSupervisor({
+  user,
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = "",
+  supervisorAnalysis = {}
+} = {}) {
+  try {
+    if (!user) return;
+
+   let classification = await runClassifier({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText,
+  supervisorAnalysis
+});
+
+const originalClassification = classification;
+
+classification = enforceClassifierHardLimits({
+  classification,
+  lead,
+  lastUserText
+});
+
+if (
+  originalClassification?.temperaturaComercial !== classification?.temperaturaComercial ||
+  originalClassification?.perfilComportamentalPrincipal !== classification?.perfilComportamentalPrincipal ||
+  originalClassification?.intencaoPrincipal !== classification?.intencaoPrincipal ||
+  originalClassification?.confiancaClassificacao !== classification?.confiancaClassificacao
+) {
+  console.log("🛡️ Classificador corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    temperaturaOriginal: originalClassification?.temperaturaComercial || "nao_analisado",
+    temperaturaCorrigida: classification?.temperaturaComercial || "nao_analisado",
+    perfilOriginal: originalClassification?.perfilComportamentalPrincipal || "nao_analisado",
+    perfilCorrigido: classification?.perfilComportamentalPrincipal || "nao_analisado",
+    intencaoOriginal: originalClassification?.intencaoPrincipal || "nao_analisado",
+    intencaoCorrigida: classification?.intencaoPrincipal || "nao_analisado",
+    confiancaOriginal: originalClassification?.confiancaClassificacao || "nao_analisado",
+    confiancaCorrigida: classification?.confiancaClassificacao || "nao_analisado"
+  });
+}
+
+await saveLeadClassification(user, classification);
+
+    runConsultantAfterClassifier({
+      user,
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis,
+      classification
+    });
+
+    console.log("✅ Classificador analisou lead:", {
+      user,
+      temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
+      perfil: classification?.perfilComportamentalPrincipal || "nao_analisado",
+      intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado",
+      objecaoPrincipal: classification?.objecaoPrincipal || "sem_objecao_detectada",
+      confianca: classification?.confiancaClassificacao || "nao_analisado",
+      consultorAcionado: true
+    });
+  } catch (error) {
+    console.error("⚠️ Classificador falhou, mas atendimento continua:", error.message);
+  }
+}
 const SUPERVISOR_SYSTEM_PROMPT = `
 Você é o GPT Supervisor Comercial da IQG.
 
@@ -1039,14 +2285,44 @@ async function runSupervisorAfterSdrReply({
   try {
     if (!user) return;
 
-    const supervisorAnalysis = await runSupervisor({
-      lead,
-      history,
-      lastUserText,
-      lastSdrText
-    });
+   let supervisorAnalysis = await runSupervisor({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText
+});
 
-    await saveSupervisorAnalysis(user, supervisorAnalysis);
+const originalSupervisorAnalysis = supervisorAnalysis;
+
+supervisorAnalysis = enforceSupervisorHardLimits({
+  supervisorAnalysis,
+  lead,
+  lastUserText,
+  lastSdrText
+});
+
+if (
+  originalSupervisorAnalysis?.riscoPerda !== supervisorAnalysis?.riscoPerda ||
+  originalSupervisorAnalysis?.pontoTrava !== supervisorAnalysis?.pontoTrava ||
+  originalSupervisorAnalysis?.necessitaHumano !== supervisorAnalysis?.necessitaHumano ||
+  originalSupervisorAnalysis?.prioridadeHumana !== supervisorAnalysis?.prioridadeHumana
+) {
+  console.log("🛡️ Supervisor corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    ultimaRespostaSdr: lastSdrText,
+    riscoOriginal: originalSupervisorAnalysis?.riscoPerda || "nao_analisado",
+    riscoCorrigido: supervisorAnalysis?.riscoPerda || "nao_analisado",
+    travaOriginal: originalSupervisorAnalysis?.pontoTrava || "-",
+    travaCorrigida: supervisorAnalysis?.pontoTrava || "-",
+    humanoOriginal: originalSupervisorAnalysis?.necessitaHumano === true,
+    humanoCorrigido: supervisorAnalysis?.necessitaHumano === true,
+    prioridadeOriginal: originalSupervisorAnalysis?.prioridadeHumana || "nao_analisado",
+    prioridadeCorrigida: supervisorAnalysis?.prioridadeHumana || "nao_analisado"
+  });
+}
+
+await saveSupervisorAnalysis(user, supervisorAnalysis);
 
     const deveEnviarAlertaSupervisor =
       ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda) ||
@@ -1062,12 +2338,22 @@ async function runSupervisorAfterSdrReply({
       });
     }
 
+    runClassifierAfterSupervisor({
+      user,
+      lead,
+      history,
+      lastUserText,
+      lastSdrText,
+      supervisorAnalysis
+    });
+
     console.log("✅ Supervisor analisou conversa:", {
       user,
       riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
       pontoTrava: supervisorAnalysis?.pontoTrava || "-",
       necessitaHumano: supervisorAnalysis?.necessitaHumano === true,
-      alertaEnviado: deveEnviarAlertaSupervisor
+      alertaEnviado: deveEnviarAlertaSupervisor,
+      classificadorAcionado: true
     });
   } catch (error) {
     console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
@@ -1157,6 +2443,98 @@ async function sendSupervisorInternalAlert({
   }
 }
 
+function buildSdrInternalStrategicContext({
+  lead = {}
+} = {}) {
+  const supervisor = lead.supervisor || {};
+  const classificacao = lead.classificacao || {};
+  const consultoria = lead.consultoria || {};
+
+  const hasSupervisor =
+    supervisor.analisadoEm ||
+    supervisor.riscoPerda ||
+    supervisor.pontoTrava ||
+    supervisor.necessitaHumano === true;
+
+  const hasClassification =
+    classificacao.classificadoEm ||
+    classificacao.perfilComportamentalPrincipal ||
+    classificacao.intencaoPrincipal ||
+    classificacao.objecaoPrincipal;
+
+  const hasConsulting =
+    consultoria.consultadoEm ||
+    consultoria.estrategiaRecomendada ||
+    consultoria.proximaMelhorAcao ||
+    consultoria.prioridadeComercial;
+
+  if (!hasSupervisor && !hasClassification && !hasConsulting) {
+    return "";
+  }
+
+  return `CONTEXTO ESTRATÉGICO INTERNO — NÃO MOSTRAR AO LEAD
+
+Supervisor:
+- Risco de perda: ${supervisor.riscoPerda || "nao_analisado"}
+- Ponto de trava: ${supervisor.pontoTrava || "sem_trava_detectada"}
+- Necessita humano: ${supervisor.necessitaHumano === true ? "sim" : "não"}
+- Qualidade da condução SDR: ${supervisor.qualidadeConducaoSdr || "nao_analisado"}
+- Resumo do Supervisor: ${supervisor.resumoDiagnostico || "-"}
+
+Classificador:
+- Perfil comportamental: ${classificacao.perfilComportamentalPrincipal || "nao_analisado"}
+- Intenção principal: ${classificacao.intencaoPrincipal || "nao_analisado"}
+- Objeção principal: ${classificacao.objecaoPrincipal || "sem_objecao_detectada"}
+- Confiança da classificação: ${classificacao.confiancaClassificacao || "nao_analisado"}
+- Resumo do perfil: ${classificacao.resumoPerfil || "-"}
+
+Consultor Assistente:
+- Estratégia recomendada: ${consultoria.estrategiaRecomendada || "nao_analisado"}
+- Próxima melhor ação: ${consultoria.proximaMelhorAcao || "-"}
+- Abordagem sugerida: ${consultoria.abordagemSugerida || "-"}
+- Argumento principal: ${consultoria.argumentoPrincipal || "-"}
+- Cuidado principal: ${consultoria.cuidadoPrincipal || "-"}
+- Oferta mais adequada: ${consultoria.ofertaMaisAdequada || "nao_analisado"}
+- Prioridade comercial: ${consultoria.prioridadeComercial || "nao_analisado"}
+
+REGRAS PARA USO FUTURO:
+- Este contexto é interno.
+- Não repetir esses rótulos para o lead.
+- Não dizer que houve análise de Supervisor, Classificador ou Consultor.
+- Usar apenas como orientação de tom, cuidado e condução.
+- Nunca prometer aprovação, ganho ou resultado.
+- Nunca pedir pagamento.
+- Nunca pular fase do funil.`;
+}
+
+function containsInternalContextLeak(text = "") {
+  const normalized = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const forbiddenTerms = [
+    "supervisor",
+    "classificador",
+    "consultor assistente",
+    "contexto estrategico",
+    "contexto interno",
+    "analise dos agentes",
+    "agentes internos",
+    "perfil comportamental",
+    "risco de perda",
+    "prioridade comercial",
+    "estrategia recomendada",
+    "proxima melhor acao",
+    "ponto de trava",
+    "necessita humano",
+    "qualidade da conducao",
+    "classificacao do lead",
+    "diagnostico interno"
+  ];
+
+  return forbiddenTerms.some(term => normalized.includes(term));
+}
 
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
@@ -1192,7 +2570,7 @@ A IQG possui DOIS projetos diferentes:
 
 1. PROGRAMA PARCEIRO HOMOLOGADO IQG
 - É uma parceria comercial estruturada.
-- Envolve venda com produtos físicos, lote inicial em comodato, suporte, treinamento, responsabilidades, análise interna, contrato e investimento de adesão.
+- Envolve venda com produtos físicos, lotes em comodato, suporte, treinamento, responsabilidades, análise interna, contrato e investimento de adesão.
 - Esse é o fluxo principal deste server.js.
 - Só use esse fluxo quando o lead falar em: parceiro homologado, homologação, revenda, vender com estoque, vender produtos físicos, kit, comodato, pronta-entrega, lote inicial ou pré-análise.
 
@@ -1424,10 +2802,6 @@ IA:
 🚫 RESPOSTAS QUE NÃO SIGNIFICAM INTERESSE
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-"ok"
-"sim"
-"entendi"
-"legal"
 "vou ver"
 
 → NÃO são avanço
@@ -1481,7 +2855,7 @@ IMPORTANTE:
 - Fazer pergunta leve
 
 Exemplo:
-"Quer entender como funciona na prática ou os ganhos?"
+"Quer entender como funciona na prática?"
 
 Se pedir material:
 oferecer → não enviar sem permissão
@@ -1509,7 +2883,7 @@ Nesta fase, é obrigatório:
 
 Você entra com suporte da indústria, materiais, treinamento e produtos em comodato para pronta-entrega e demonstração.
 
-Isso facilita muito porque você pode focar mais na venda e no relacionamento com clientes, sem precisar investir em estoque logo no início."
+Isso facilita muito porque você pode focar mais na venda e no relacionamento com clientes, sem precisar investir em estoque."
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 📄 ENVIO OBRIGATÓRIO DO FOLDER
@@ -1615,6 +2989,7 @@ Se o lead aceitar o PDF do kit, envie:
 
 [ACTION:SEND_KIT]"
 
+Se o lead perguntar se o estoque sempre será em comodato, responda que sim!
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 5 — COMPROMETIMENTO (morno)
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -1643,41 +3018,45 @@ Nesta fase, é obrigatório:
 
 Mensagem obrigatória base:
 
-"Antes de avançarmos, quero te explicar um ponto importante com total transparência 😊
+Mensagem obrigatória base:
 
-Existe um investimento de adesão e implantação de R$ 1.990.
+"Antes de avançarmos, quero te explicar o investimento com total transparência 😊
 
-Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+Existe uma taxa de adesão e implantação de R$ 1.990,00.
 
-Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar."
+Mas é importante entender o contexto: esse valor não é compra de mercadoria, não é caução e não é garantia.
 
-Agora entra a PARTE MAIS IMPORTANTE (ancoragem de valor):
+Ele faz parte da *ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato* para você começar a operar.
 
-"Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
 
-Ou seja, você entra com acesso a produtos, estrutura e suporte sem precisar investir esse valor em estoque."
+Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, *a margem é de 40%*.
 
-Agora entra o PARCELAMENTO (obrigatório):
+E *se você vender com ágio, acima do preço sugerido, essa diferença fica com você* — então a margem pode ser maior.
 
-"Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento."
+Na prática, as primeiras vendas podem ajudar a recuperar esse investimento inicial, mas isso depende da sua atuação comercial, da sua prospecção e das vendas realizadas.
 
-Agora reforço de segurança:
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
 
-"E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?"
+E um ponto importante de segurança: o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
 
-Agora validação (obrigatória):
+Podemos seguir para próxima etapa?"
 
-"Faz sentido pra você nesse formato?"
-
-━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ REGRAS IMPORTANTES DA TAXA
-━━━━━━━━━━━━━━━━━━━━━━━
 
-- SEMPRE mencionar o valor: R$ 1.990
+- SEMPRE mencionar o valor: R$ 1.990,00
 - SEMPRE mencionar que NÃO é compra de mercadoria
-- SEMPRE mencionar o estoque > R$ 5.000
-- SEMPRE mencionar parcelamento
-- SEMPRE validar entendimento
+- SEMPRE mencionar que NÃO é caução
+- SEMPRE mencionar que NÃO é garantia
+- SEMPRE mencionar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final
+- SEMPRE mencionar a margem média estimada de 40% quando o parceiro vende seguindo o preço sugerido ao consumidor
+- SEMPRE explicar que, se o parceiro vender com ágio acima do preço sugerido, essa diferença fica com ele
+- SEMPRE deixar claro que isso NÃO é promessa de ganho
+- SEMPRE dizer que o resultado depende da atuação comercial do parceiro
+- SEMPRE mencionar parcelamento no cartão
+- PODE mencionar PIX
+- NUNCA mencionar boleto
+- SEMPRE mencionar que o pagamento só ocorre após análise interna e contrato
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 ❌ ERROS PROIBIDOS
@@ -1689,20 +3068,24 @@ Nunca:
 - pedir dados logo após falar o valor
 - pressionar o lead
 - parecer cobrança
-
 ━━━━━━━━━━━━━━━━━━━━━━━
 💡 SE O LEAD HESITAR
 ━━━━━━━━━━━━━━━━━━━━━━━
-
 Use reforço leve:
 
-"Te explico isso com calma justamente pra você entrar com segurança e clareza.
+"Entendo totalmente sua análise 😊
 
-O modelo faz mais sentido pra quem quer estruturar uma operação de vendas com suporte e produto em mãos."
+Eu te explico isso com calma justamente porque não é só olhar para a taxa isolada.
+
+O ponto é comparar o investimento com o que você recebe: estrutura, suporte, treinamento, lote inicial acima de R$ 5.000,00 em preço de venda e uma margem de 40% quando vender no preço sugerido.
+
+As primeiras vendas podem ajudar a recuperar esse investimento rapidamente.
+
+Por isso o modelo faz mais sentido para quem quer vender de forma ativa, com produto em mãos e suporte da indústria."
 
 Depois:
 
-"Você quer avaliar melhor algum ponto ou faz sentido seguir?"
+"Você quer que eu te explique melhor essa parte da margem ou prefere avaliar com calma?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 7 — COLETA (coletando_dados)
@@ -1907,7 +3290,7 @@ Após benefícios:
 "Perfeito 😊 Quer que eu te explique agora como funciona o estoque inicial?"
 
 Após estoque:
-"Faz sentido pra você essa parte do comodato?"
+"Você entendeu como funciona questão do estoque ou tem alguma dúvida ainda?"
 
 Após investimento:
 "Faz sentido pra você nesse formato?"
@@ -2080,20 +3463,6 @@ Nunca:
 - repetir envio
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-🧠 EXECUÇÃO FINAL (SEMPRE)
-━━━━━━━━━━━━━━━━━━━━━━━
-
-Antes de responder:
-
-1. Ler histórico
-2. Identificar fase
-3. Identificar intenção
-4. Ver dados existentes
-5. Ver se há bloqueios
-6. Responder
-7. Conduzir próximo passo
-
-━━━━━━━━━━━━━━━━━━━━━━━
 🧠 HIERARQUIA DE DECISÃO DA IA
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2177,8 +3546,7 @@ Seu objetivo NÃO é falar mais.
 
 Seu objetivo é:
 
-CONDUZIR MELHOR  
-QUALIFICAR MELHOR  
+CONDUZIR MELHOR    
 CONVERTER MELHOR  
 
 Sem pular etapas.
@@ -2476,6 +3844,59 @@ function detectRequestedFile(text = "") {
   if (normalizedText.includes("folder")) return "folder";
 
   return null;
+}
+
+function hasExplicitFileRequest(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    // pedidos genéricos claros
+    t.includes("me manda o material") ||
+    t.includes("me mande o material") ||
+    t.includes("pode mandar o material") ||
+    t.includes("pode me mandar o material") ||
+    t.includes("quero o material") ||
+    t.includes("tem material") ||
+    t.includes("tem algum material") ||
+    t.includes("tem pdf") ||
+    t.includes("tem algum pdf") ||
+    t.includes("me manda o pdf") ||
+    t.includes("me mande o pdf") ||
+    t.includes("pode mandar o pdf") ||
+    t.includes("me envia o material") ||
+    t.includes("me envie o material") ||
+    t.includes("pode enviar o material") ||
+
+    // pedidos específicos
+    t.includes("me manda o folder") ||
+    t.includes("me mande o folder") ||
+    t.includes("quero o folder") ||
+    t.includes("me manda o catalogo") ||
+    t.includes("me mande o catalogo") ||
+    t.includes("quero o catalogo") ||
+    t.includes("me manda o contrato") ||
+    t.includes("me mande o contrato") ||
+    t.includes("quero o contrato") ||
+    t.includes("me manda o kit") ||
+    t.includes("me mande o kit") ||
+    t.includes("quero o kit") ||
+    t.includes("me manda o manual") ||
+    t.includes("me mande o manual") ||
+    t.includes("quero o manual") ||
+
+    // formas naturais
+    t.includes("tem uma apresentacao") ||
+    t.includes("tem apresentação") ||
+    t.includes("quero ver a lista") ||
+    t.includes("me mostra a lista") ||
+    t.includes("manda a lista dos produtos") ||
+    t.includes("mande a lista dos produtos")
+  );
 }
 
 function extractActions(reply = "") {
@@ -2959,59 +4380,439 @@ function isValidPhone(value = "") {
 }
 
 function isPositiveConfirmation(text = "") {
-  const t = text
+  const rawText = String(text || "").trim();
+
+  const t = rawText
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 
-const positivePatterns = [
-  /^sim$/,
-  /^s$/,
-  /^isso$/,
-  /^correto$/,
-  /^certo$/,
-  /^ta certo$/,
-  /^esta certo$/,
-  /^pode seguir$/,
-  /^pode$/,
-  /^pode continuar$/,
-  /^confirmo$/,
-  /^confirmado$/,
-  /^perfeito$/,
-  /^ok$/,
-  /^exato$/,
-  /^tudo certo$/,
-  /^esta tudo correto$/,
+  // Confirmações por emoji comuns no WhatsApp.
+  // Exemplo: 👍, 👍🏻, ✅, 👌
+  const positiveEmojiPatterns = [
+    /^👍$/,
+    /^👍🏻$/,
+    /^👍🏼$/,
+    /^👍🏽$/,
+    /^👍🏾$/,
+    /^👍🏿$/,
+    /^✅$/,
+    /^👌$/,
+    /^👌🏻$/,
+    /^👌🏼$/,
+    /^👌🏽$/,
+    /^👌🏾$/,
+    /^👌🏿$/
+  ];
 
-  // confirmações naturais
-  /^faz sim$/,
-  /^faz sentido$/,
-  /^fez sentido$/,
-  /^pra mim faz sentido$/,
-  /^para mim faz sentido$/,
-  /^gostei$/,
-  /^top$/,
-  /^top demais$/,
-  /^beleza$/,
-  /^blz$/,
-  /^show$/,
-  /^show de bola$/,
-  /^entendi sim$/,
-  /^entendi perfeitamente$/,
-  /^estou de acordo$/,
-  /^to de acordo$/,
-  /^tô de acordo$/,
-  /^concordo$/,
-  /^vamos seguir$/,
-  /^podemos seguir$/,
-  /^bora$/,
-  /^bora seguir$/,
-  /^quero seguir$/,
-  /^quero continuar$/
-];
+  if (positiveEmojiPatterns.some(pattern => pattern.test(rawText))) {
+    return true;
+  }
+
+  const positivePatterns = [
+    /^sim$/,
+    /^s$/,
+    /^isso$/,
+    /^isso mesmo$/,
+    /^isso ai$/,
+    /^isso aí$/,
+    /^correto$/,
+    /^correto sim$/,
+    /^certo$/,
+    /^certo sim$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^esta certo$/,
+    /^está certo$/,
+    /^esta correto$/,
+    /^está correto$/,
+    /^ta correto$/,
+    /^tá correto$/,
+    /^esta$/,
+    /^está$/,
+    /^ta$/,
+    /^tá$/,
+    /^pode seguir$/,
+    /^pode$/,
+    /^pode continuar$/,
+    /^confirmo$/,
+    /^confirmado$/,
+    /^perfeito$/,
+    /^ok$/,
+    /^exato$/,
+    /^tudo certo$/,
+    /^esta tudo correto$/,
+    /^está tudo correto$/,
+
+    // confirmações naturais
+    /^claro$/,
+    /^claro que sim$/,
+    /^com certeza$/,
+    /^certeza$/,
+    /^faz sim$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^pra mim faz sentido$/,
+    /^para mim faz sentido$/,
+    /^gostei$/,
+    /^top$/,
+    /^top demais$/,
+    /^beleza$/,
+    /^blz$/,
+    /^show$/,
+    /^show de bola$/,
+    /^entendi sim$/,
+    /^entendi perfeitamente$/,
+    /^estou de acordo$/,
+    /^to de acordo$/,
+    /^tô de acordo$/,
+    /^concordo$/,
+    /^vamos seguir$/,
+    /^podemos seguir$/,
+    /^bora$/,
+    /^bora seguir$/,
+    /^quero seguir$/,
+    /^quero continuar$/
+  ];
 
   return positivePatterns.some(pattern => pattern.test(t));
+}
+
+function isCommitmentConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const commitmentPatterns = [
+    /^sim estou de acordo$/,
+    /^sim eu estou de acordo$/,
+    /^estou de acordo$/,
+    /^to de acordo$/,
+    /^tô de acordo$/,
+    /^concordo$/,
+    /^sim concordo$/,
+    /^entendo e concordo$/,
+    /^sim entendo$/,
+    /^sim entendi$/,
+    /^sim entendo que depende de mim$/,
+    /^entendo que depende de mim$/,
+    /^sim entendo que depende da minha atuacao$/,
+    /^sim entendo que depende da minha atuação$/,
+    /^entendo que depende da minha atuacao$/,
+    /^entendo que depende da minha atuação$/,
+    /^sim o resultado depende da minha atuacao$/,
+    /^sim o resultado depende da minha atuação$/,
+    /^o resultado depende da minha atuacao$/,
+    /^o resultado depende da minha atuação$/,
+    /^sei que depende da minha atuacao$/,
+    /^sei que depende da minha atuação$/,
+    /^sim sei que depende da minha atuacao$/,
+    /^sim sei que depende da minha atuação$/,
+    /^combinado$/,
+    /^combinado entendi$/,
+    /^combinado estou de acordo$/
+  ];
+
+  return commitmentPatterns.some(pattern => pattern.test(t));
+}
+
+function isSimpleGreetingOnly(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const greetingPatterns = [
+    /^oi$/,
+    /^ola$/,
+    /^olá$/,
+    /^opa$/,
+    /^e ai$/,
+    /^eai$/,
+    /^bom dia$/,
+    /^boa tarde$/,
+    /^boa noite$/,
+    /^tudo bem$/,
+    /^oi tudo bem$/,
+    /^ola tudo bem$/,
+    /^olá tudo bem$/,
+    /^bom dia tudo bem$/,
+    /^boa tarde tudo bem$/,
+    /^boa noite tudo bem$/
+  ];
+
+  return greetingPatterns.some(pattern => pattern.test(t));
+}
+
+function enforceClassifierHardLimits({
+  classification = {},
+  lead = {},
+  lastUserText = ""
+} = {}) {
+  const safeClassification = {
+    ...buildDefaultLeadClassification(),
+    ...(classification || {})
+  };
+
+  const etapas = lead?.etapas || {};
+
+  const nenhumaEtapaConcluida =
+    etapas.programa !== true &&
+    etapas.beneficios !== true &&
+    etapas.estoque !== true &&
+    etapas.responsabilidades !== true &&
+    etapas.investimento !== true &&
+    etapas.compromisso !== true;
+
+  const etapaAtual = getCurrentFunnelStage(lead || {});
+  const mensagemEhCumprimentoSimples = isSimpleGreetingOnly(lastUserText);
+
+  // 1) Cumprimento simples não pode virar lead quente, pronto ou pré-análise.
+  if (mensagemEhCumprimentoSimples && nenhumaEtapaConcluida && etapaAtual <= 1) {
+    return {
+      ...safeClassification,
+      temperaturaComercial: "nao_analisado",
+      perfilComportamentalPrincipal: "nao_analisado",
+      perfilComportamentalSecundario: "",
+      nivelConsciencia: "baixo",
+      intencaoPrincipal: "sem_intencao_clara",
+      objecaoPrincipal: "sem_objecao_detectada",
+      confiancaClassificacao: "baixa",
+      sinaisObservados: ["cumprimento_inicial_sem_sinal_comercial"],
+      resumoPerfil: "Lead enviou apenas um cumprimento inicial. Não há sinal suficiente para classificar como quente, qualificado ou pronto para pré-análise.",
+      classificadoEm: new Date()
+    };
+  }
+
+  // 2) Classificador não pode liberar pré-análise se o backend ainda não permite coleta.
+  if (
+    safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
+    !canStartDataCollection(lead || {})
+  ) {
+    return {
+      ...safeClassification,
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "quente"
+          ? "morno"
+          : safeClassification.temperaturaComercial,
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "qualificado_pronto"
+          ? "curioso_morno"
+          : safeClassification.perfilComportamentalPrincipal,
+      intencaoPrincipal: "tirar_duvida",
+      confiancaClassificacao: "baixa",
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "pre_analise_bloqueada_por_etapas_incompletas"
+      ],
+      resumoPerfil: "O Classificador indicou avanço para pré-análise, mas o backend bloqueou porque ainda faltam etapas obrigatórias do funil. A intenção do lead deve ser tratada com cautela.",
+      classificadoEm: new Date()
+    };
+  }
+
+  // 3) Objeção leve de taxa/preço NÃO pode virar Afiliado sem pedido claro.
+  const mensagemTemObjeçãoDePreço =
+    isPreCrmBlockingObjection(lastUserText) &&
+    !isClearAffiliateFallbackIntent(lastUserText);
+
+  const classificadorForcouAfiliadoSemPedidoClaro =
+    mensagemTemObjeçãoDePreço &&
+    (
+      safeClassification.perfilComportamentalPrincipal === "afiliado_digital" ||
+      safeClassification.intencaoPrincipal === "buscar_afiliado" ||
+      safeClassification.temperaturaComercial === "afiliado"
+    );
+
+  if (classificadorForcouAfiliadoSemPedidoClaro) {
+    return {
+      ...safeClassification,
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "afiliado"
+          ? "travado"
+          : safeClassification.temperaturaComercial === "quente"
+            ? "travado"
+            : safeClassification.temperaturaComercial,
+
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "afiliado_digital"
+          ? "sensivel_preco"
+          : safeClassification.perfilComportamentalPrincipal,
+
+      intencaoPrincipal:
+        safeClassification.intencaoPrincipal === "buscar_afiliado"
+          ? "avaliar_investimento"
+          : safeClassification.intencaoPrincipal,
+
+      objecaoPrincipal: "preco_taxa_adesao",
+
+      confiancaClassificacao:
+        safeClassification.confiancaClassificacao === "alta"
+          ? "media"
+          : safeClassification.confiancaClassificacao,
+
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "afiliado_bloqueado_por_objecao_de_preco_sem_pedido_claro"
+      ],
+
+      resumoPerfil:
+        "O Classificador tentou interpretar objeção de preço como intenção de Afiliado, mas o backend corrigiu porque o lead não pediu claramente link, afiliado, venda sem estoque ou alternativa sem taxa. A leitura correta é objeção de investimento no Homologado.",
+
+      classificadoEm: new Date()
+    };
+  }
+
+  return safeClassification;
+}
+
+function enforceConsultantHardLimits({
+  consultantAdvice = {},
+  lead = {},
+  lastUserText = "",
+  classification = {}
+} = {}) {
+  const safeAdvice = {
+    ...buildDefaultConsultantAdvice(),
+    ...(consultantAdvice || {})
+  };
+
+  const mensagemTemObjeçãoDePreço =
+    isPreCrmBlockingObjection(lastUserText) &&
+    !isClearAffiliateFallbackIntent(lastUserText);
+
+  const consultorForcouAfiliadoSemPedidoClaro =
+    mensagemTemObjeçãoDePreço &&
+    (
+      safeAdvice.estrategiaRecomendada === "oferecer_afiliado" ||
+      safeAdvice.ofertaMaisAdequada === "afiliado" ||
+      classification?.intencaoPrincipal === "buscar_afiliado" ||
+      classification?.perfilComportamentalPrincipal === "afiliado_digital"
+    );
+
+  if (consultorForcouAfiliadoSemPedidoClaro) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "tratar_objecao_taxa",
+      ofertaMaisAdequada: "homologado",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial:
+        safeAdvice.prioridadeComercial === "urgente"
+          ? "alta"
+          : safeAdvice.prioridadeComercial || "alta",
+      proximaMelhorAcao:
+        "Tratar a objeção de taxa antes de oferecer Afiliados. A SDR deve reforçar valor percebido: lote inicial acima de R$ 5.000,00 em preço de venda, margem é de 40% no preço sugerido, possibilidade de margem maior com ágio, parcelamento no cartão e pagamento somente após análise interna e contrato.",
+      abordagemSugerida:
+        "Tom acolhedor e consultivo. Validar que o valor merece análise, mas não tratar a taxa isoladamente. Não pressionar e não oferecer Afiliados ainda, pois o lead não pediu claramente link, venda sem estoque ou alternativa sem taxa.",
+      argumentoPrincipal:
+        "A taxa de R$ 1.990,00 deve ser comparada com a estrutura recebida, suporte, treinamento, lote em comodato acima de R$ 5.000,00 em preço de venda e margem é de 40% quando vende no preço sugerido.",
+      cuidadoPrincipal:
+        "Não transformar objeção de preço em intenção de Afiliado. Só apresentar Afiliados se o lead rejeitar claramente taxa, estoque, produto físico ou pedir uma alternativa por link/sem estoque.",
+      resumoConsultivo:
+        "O Consultor tentou orientar Afiliados diante de objeção de preço, mas o backend corrigiu porque o lead ainda não pediu claramente Afiliado. A próxima resposta deve tratar a objeção de taxa com proposta de valor do Parceiro Homologado."
+    };
+  }
+
+  return safeAdvice;
+}
+
+function enforceSupervisorHardLimits({
+  supervisorAnalysis = {},
+  lead = {},
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const safeSupervisor = {
+    ...buildDefaultSupervisorAnalysis(),
+    ...(supervisorAnalysis || {})
+  };
+
+  const etapas = lead?.etapas || {};
+
+  const nenhumaEtapaConcluida =
+    etapas.programa !== true &&
+    etapas.beneficios !== true &&
+    etapas.estoque !== true &&
+    etapas.responsabilidades !== true &&
+    etapas.investimento !== true &&
+    etapas.compromisso !== true;
+
+  const etapaAtual = getCurrentFunnelStage(lead || {});
+  const mensagemEhCumprimentoSimples = isSimpleGreetingOnly(lastUserText);
+
+  const sdrFalouAlgoPerigoso =
+    /pre[-\s]?analise|pré[-\s]?análise/i.test(lastSdrText) ||
+    replyMentionsInvestment(lastSdrText) ||
+    replyAsksPersonalData(lastSdrText) ||
+    mentionsPaymentIntent(lastSdrText);
+
+  if (
+    mensagemEhCumprimentoSimples &&
+    nenhumaEtapaConcluida &&
+    etapaAtual <= 1 &&
+    !sdrFalouAlgoPerigoso
+  ) {
+    return {
+      ...safeSupervisor,
+      houveErroSdr: false,
+      errosDetectados: ["nenhum_erro_detectado"],
+      sdrPulouFase: false,
+      fasePulada: "",
+      descricaoErroPrincipal: "",
+      riscoPerda: "baixo",
+      motivoRisco: "Lead enviou apenas um cumprimento inicial e a SDR não avançou para tema sensível.",
+      pontoTrava: "sem_trava_detectada",
+      leadEsfriou: false,
+      motivoEsfriamento: "",
+      necessitaHumano: false,
+      prioridadeHumana: "nenhuma",
+      qualidadeConducaoSdr: "boa",
+      notaConducaoSdr: 8,
+      resumoDiagnostico: "Conversa inicial sem sinal de risco. Não há motivo para acionar humano neste momento.",
+      observacoesTecnicas: ["supervisor_corrigido_por_cumprimento_inicial"],
+      analisadoEm: new Date()
+    };
+  }
+
+  if (
+    safeSupervisor.necessitaHumano === true &&
+    safeSupervisor.riscoPerda === "medio" &&
+    !mentionsPaymentIntent(lastUserText) &&
+    !mentionsPaymentIntent(lastSdrText) &&
+    !/contrato|juridico|jurídico|humano|atendente|consultor|vendedor/i.test(lastUserText)
+  ) {
+    return {
+      ...safeSupervisor,
+      necessitaHumano: false,
+      prioridadeHumana:
+        safeSupervisor.prioridadeHumana === "urgente" || safeSupervisor.prioridadeHumana === "alta"
+          ? "media"
+          : safeSupervisor.prioridadeHumana || "media",
+      observacoesTecnicas: [
+        ...(Array.isArray(safeSupervisor.observacoesTecnicas)
+          ? safeSupervisor.observacoesTecnicas
+          : []),
+        "necessita_humano_reduzido_por_risco_medio_sem_gatilho_critico"
+      ],
+      resumoDiagnostico:
+        safeSupervisor.resumoDiagnostico ||
+        "Risco médio identificado, mas sem gatilho crítico para acionar humano automaticamente."
+    };
+  }
+
+  return safeSupervisor;
 }
 
 function isCommercialProgressConfirmation(text = "") {
@@ -3019,37 +4820,55 @@ function isCommercialProgressConfirmation(text = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
+  // Confirmações fracas indicam entendimento, não avanço comercial.
+  // Exemplos: "ok", "sim", "entendi", "fez sentido".
+  if (isSoftUnderstandingConfirmation(text)) {
+    return false;
+  }
+
   const commercialPatterns = [
-    /^faz sentido$/,
-    /^faz sim$/,
-    /^fez sentido$/,
-    /^pra mim faz sentido$/,
-    /^para mim faz sentido$/,
-    /^estou de acordo$/,
-    /^to de acordo$/,
-    /^tou de acordo$/,
-    /^concordo$/,
-    /^podemos seguir$/,
-    /^vamos seguir$/,
-    /^bora seguir$/,
     /^quero seguir$/,
     /^quero continuar$/,
+    /^quero avancar$/,
+    /^quero avançar$/,
+    /^podemos seguir$/,
+    /^podemos avancar$/,
+    /^podemos avançar$/,
+    /^vamos seguir$/,
+    /^vamos avancar$/,
+    /^vamos avançar$/,
+    /^bora seguir$/,
+    /^bora avancar$/,
+    /^bora avançar$/,
+    /^pode seguir$/,
     /^pode continuar$/,
     /^pode avancar$/,
-    /^quero avancar$/,
-    /^faz sentido, podemos seguir$/,
+    /^pode avançar$/,
+    /^pode iniciar$/,
+    /^quero iniciar$/,
+    /^vamos iniciar$/,
+    /^quero entrar$/,
+    /^quero participar$/,
+    /^quero aderir$/,
+    /^tenho interesse em seguir$/,
+    /^tenho interesse em avancar$/,
+    /^tenho interesse em avançar$/,
+    /^tenho interesse em entrar$/,
     /^faz sentido podemos seguir$/,
-    /^estou de acordo, vamos seguir$/,
+    /^faz sentido pode seguir$/,
+    /^faz sentido quero seguir$/,
+    /^faz sentido vamos seguir$/,
+    /^estou de acordo podemos seguir$/,
     /^estou de acordo vamos seguir$/,
-    /^podemos avancar$/
+    /^estou de acordo pode seguir$/
   ];
 
   return commercialPatterns.some(pattern => pattern.test(t));
 }
-
 function isStrongBuyIntent(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -3081,6 +4900,266 @@ const VALID_UFS = [
   "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
   "RS", "RO", "RR", "SC", "SP", "SE", "TO"
 ];
+
+function isSoftUnderstandingConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const softPatterns = [
+    /^ok$/,
+    /^ok obrigado$/,
+    /^ok obrigada$/,
+    /^sim$/,
+    /^s$/,
+    /^sei sim$/,
+    /^entendi$/,
+    /^entendi sim$/,
+    /^certo$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^legal$/,
+    /^show$/,
+    /^beleza$/,
+    /^blz$/,
+    /^perfeito$/,
+    /^top$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^fez sentido sim$/,
+    /^faz sentido sim$/,
+    /^foi bem explicativo$/,
+    /^foi bem explicado$/,
+    /^ficou claro$/,
+    /^ficou claro sim$/,
+    /^esta claro$/,
+    /^está claro$/
+  ];
+
+  return softPatterns.some(pattern => pattern.test(t));
+}
+
+function isExplicitPreAnalysisIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const patterns = [
+    /^quero seguir$/,
+    /^quero continuar$/,
+    /^quero avancar$/,
+    /^quero avançar$/,
+    /^podemos seguir$/,
+    /^podemos avancar$/,
+    /^podemos avançar$/,
+    /^pode seguir$/,
+    /^pode continuar$/,
+    /^pode avancar$/,
+    /^pode avançar$/,
+    /^vamos seguir$/,
+    /^vamos avancar$/,
+    /^vamos avançar$/,
+    /^bora seguir$/,
+    /^bora$/,
+    /^bora la$/,
+    /^bora lá$/,
+    /^sim, pode seguir$/,
+    /^sim pode seguir$/,
+    /^sim, vamos seguir$/,
+    /^sim vamos seguir$/,
+    /^claro$/,
+    /^claro que sim$/,
+    /^com certeza$/,
+    /^tenho interesse$/,
+    /^tenho interesse sim$/,
+    /^quero participar$/,
+    /^quero entrar$/,
+    /^quero fazer a pre analise$/,
+    /^quero fazer a pré análise$/,
+    /^quero fazer a pre-analise$/,
+    /^quero fazer a pré-análise$/,
+    /^pode iniciar$/,
+    /^inicia$/,
+    /^iniciar$/,
+    /^vamos nessa$/,
+
+    // expressões naturais de WhatsApp
+    /^mete bala$/,
+    /^manda ver$/,
+    /^manda bala$/,
+    /^demorou$/,
+    /^fechou$/,
+    /^fechado$/,
+    /^toca ficha$/,
+    /^segue$/,
+    /^segue ai$/,
+    /^segue aí$/,
+    /^vai em frente$/,
+    /^pode tocar$/,
+    /^pode mandar$/,
+    /^manda$/,
+    /^partiu$/,
+    /^show, pode seguir$/,
+    /^show pode seguir$/,
+    /^top, pode seguir$/,
+    /^top pode seguir$/
+  ];
+
+  return patterns.some(pattern => pattern.test(t));
+}
+
+function mentionsPaymentIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    t.includes("pagamento") ||
+    t.includes("pagar") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("boleto") ||
+    t.includes("transferencia") ||
+    t.includes("transferência") ||
+    t.includes("como pago") ||
+    t.includes("quero pagar") ||
+    t.includes("ja quero pagar") ||
+    t.includes("já quero pagar")
+  );
+}
+
+function enforcePreSdrConsultantHardLimits({
+  advice = {},
+  lead = {},
+  lastUserText = ""
+} = {}) {
+  const safeAdvice = {
+    ...buildDefaultConsultantAdvice(),
+    ...(advice || {})
+  };
+
+  const missingSteps = getMissingFunnelStepLabels(lead);
+  const canStartCollectionNow = canStartDataCollection(lead);
+  const hasPaymentIntent = mentionsPaymentIntent(lastUserText);
+
+  const adviceText = [
+    safeAdvice.estrategiaRecomendada,
+    safeAdvice.proximaMelhorAcao,
+    safeAdvice.abordagemSugerida,
+    safeAdvice.argumentoPrincipal,
+    safeAdvice.cuidadoPrincipal,
+    safeAdvice.resumoConsultivo
+  ]
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const consultantSuggestedPreAnalysis =
+    safeAdvice.estrategiaRecomendada === "avancar_pre_analise" ||
+    adviceText.includes("pre-analise") ||
+    adviceText.includes("pre analise") ||
+    adviceText.includes("pré-analise") ||
+    adviceText.includes("pré análise") ||
+    adviceText.includes("preanalise");
+
+  const consultantSuggestedPayment =
+    adviceText.includes("pagamento") ||
+    adviceText.includes("pagar") ||
+    adviceText.includes("pix") ||
+    adviceText.includes("cartao") ||
+    adviceText.includes("cartão");
+
+  if (hasPaymentIntent) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: `Responder que pagamento não acontece agora. Antes, a SDR deve conduzir a etapa correta do funil. Etapas ainda pendentes: ${missingSteps.join(", ") || "nenhuma"}.`,
+      abordagemSugerida: "Tom calmo, seguro e direto. Validar o interesse do lead sem acelerar o processo.",
+      argumentoPrincipal: "O pagamento só acontece depois da análise interna e da assinatura do contrato.",
+      cuidadoPrincipal: "Não conduzir pagamento. Não pedir pagamento. Não enviar dados de pagamento. Não avançar para pré-análise se ainda faltarem etapas obrigatórias.",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: `O lead mencionou pagamento. Isso deve ser tratado como tema sensível. A SDR deve frear com segurança, explicar que pagamento só ocorre após análise interna e contrato, e continuar a fase correta do funil. Etapas pendentes: ${missingSteps.join(", ") || "nenhuma"}.`
+    };
+  }
+
+  if (consultantSuggestedPreAnalysis && !canStartCollectionNow) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: `Não avançar para pré-análise. Continuar a próxima etapa obrigatória do funil. Etapas ainda pendentes: ${missingSteps.join(", ") || "nenhuma"}.`,
+      abordagemSugerida: "Tom consultivo e objetivo. Reconhecer o interesse do lead, mas explicar que ainda falta alinhar pontos obrigatórios antes da pré-análise.",
+      argumentoPrincipal: "A pré-análise só deve acontecer depois que programa, benefícios, estoque, responsabilidades, investimento, compromisso e interesse real estiverem validados.",
+      cuidadoPrincipal: "Não pedir dados. Não falar como se o lead já estivesse pronto. Não avançar para pré-análise apenas porque o lead pediu.",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: `O Consultor tentou orientar pré-análise, mas o backend bloqueou porque ainda faltam etapas obrigatórias: ${missingSteps.join(", ") || "nenhuma"}. A SDR deve seguir a fase atual.`
+    };
+  }
+
+  if (consultantSuggestedPayment) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: "Remover qualquer condução de pagamento da orientação. Focar apenas na fase atual do funil.",
+      abordagemSugerida: "Tom seguro e sem pressão.",
+      argumentoPrincipal: "Pagamento só ocorre após análise interna e contrato.",
+      cuidadoPrincipal: "Não conduzir pagamento.",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: "A orientação do Consultor mencionou pagamento. O backend corrigiu para impedir condução indevida de pagamento."
+    };
+  }
+
+  return safeAdvice;
+}
+
+function getMissingFunnelStepLabels(lead = {}) {
+  const e = lead?.etapas || {};
+  const missing = [];
+
+  if (!e.programa) {
+    missing.push("programa");
+  }
+
+  if (!e.beneficios) {
+    missing.push("benefícios");
+  }
+
+  if (!e.estoque) {
+    missing.push("estoque em comodato");
+  }
+
+  if (!e.responsabilidades) {
+    missing.push("responsabilidades");
+  }
+
+  if (!e.investimento) {
+    missing.push("investimento");
+  }
+
+  if (!e.compromisso) {
+    missing.push("compromisso de atuação");
+  }
+
+  if (lead?.interesseReal !== true) {
+    missing.push("interesse real explícito");
+  }
+
+  return missing;
+}
 
 function normalizeUF(value = "") {
   const text = String(value).trim().toUpperCase();
@@ -3162,6 +5241,20 @@ function canStartDataCollection(lead = {}) {
   );
 }
 
+function canAskForRealInterest(lead = {}) {
+  const e = lead.etapas || {};
+
+  return Boolean(
+    e.programa === true &&
+    e.beneficios === true &&
+    e.estoque === true &&
+    e.responsabilidades === true &&
+    e.investimento === true &&
+    e.compromisso === true &&
+    lead.interesseReal !== true
+  );
+}
+
 // 👇 COLE AQUI EMBAIXO 👇
 function getNextFunnelStepMessage(lead = {}) {
   const e = lead.etapas || {};
@@ -3183,16 +5276,38 @@ function getNextFunnelStepMessage(lead = {}) {
   }
 
   if (!e.investimento) {
-    return "Show! Agora falta explicar o investimento com transparência.\n\nExiste uma adesão de R$ 1.990 para ativação no programa, suporte, treinamento e liberação do lote inicial em comodato. Pode ser parcelado em até 10x de R$ 199 no cartão.";
-  }
+  return `Show! Agora falta explicar o investimento com transparência 😊
+
+Existe uma taxa de adesão e implantação de R$ 1.990,00.
+
+Mas é importante entender que esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele faz parte da ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato.
+
+Pra você ter uma referência prática: só o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+
+Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, a margem é de 40%.
+
+E se vender com ágio, acima do preço sugerido, essa diferença fica com o parceiro, então a margem pode ser maior.
+
+As primeiras vendas podem ajudar a recuperar esse investimento inicial, mas isso depende da sua atuação comercial e das vendas realizadas.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato.
+
+Faz sentido pra você nesse formato?`;
+}
 
   if (!e.compromisso) {
     return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   }
 
-  if (lead.interesseReal !== true) {
-    return "Faz sentido pra você seguir para a pré-análise agora?";
-  }
+ if (lead.interesseReal !== true) {
+  return `Com esses pontos claros, você tem interesse em seguir para a pré-análise agora? 😊
+
+Só reforçando: essa etapa ainda não é aprovação automática e não envolve pagamento neste momento. É apenas para a equipe IQG avaliar seus dados e orientar o próximo passo com segurança.`;
+}
 
   return "Perfeito! Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
@@ -3209,6 +5324,562 @@ function getCurrentFunnelStage(lead = {}) {
   if (lead.interesseReal !== true) return 7;
 
   return 8; // coleta
+}
+
+function normalizeCommercialText(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function replyMentionsInvestment(text = "") {
+  const t = normalizeCommercialText(text);
+
+  return (
+    t.includes("r$ 1.990") ||
+    t.includes("r$1.990") ||
+    t.includes("1990") ||
+    t.includes("1.990") ||
+    t.includes("taxa") ||
+    t.includes("adesao") ||
+    t.includes("adesão") ||
+    t.includes("investimento") ||
+    t.includes("parcelado") ||
+    t.includes("10x") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão")
+  );
+}
+
+function replyAsksPersonalData(text = "") {
+  const t = normalizeCommercialText(text);
+
+  return (
+    t.includes("nome completo") ||
+    t.includes("me envie seu nome") ||
+    t.includes("me manda seu nome") ||
+    t.includes("qual seu nome") ||
+    t.includes("seu cpf") ||
+    t.includes("me envie seu cpf") ||
+    t.includes("me passa seu cpf") ||
+    t.includes("telefone com ddd") ||
+    t.includes("numero com ddd") ||
+    t.includes("número com ddd") ||
+    t.includes("qual sua cidade") ||
+    t.includes("qual seu estado") ||
+    t.includes("sua cidade") ||
+    t.includes("seu estado")
+  );
+}
+
+function detectStageFromSdrReply(text = "") {
+  const t = normalizeCommercialText(text);
+
+  let detectedStage = 0;
+
+  if (
+    t.includes("programa") ||
+    t.includes("parceria") ||
+    t.includes("parceiro homologado") ||
+    t.includes("como funciona")
+  ) {
+    detectedStage = Math.max(detectedStage, 1);
+  }
+
+  if (
+    t.includes("beneficio") ||
+    t.includes("beneficios") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("materiais")
+  ) {
+    detectedStage = Math.max(detectedStage, 2);
+  }
+
+  if (
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("lote inicial") ||
+    t.includes("kit inicial") ||
+    t.includes("pronta-entrega") ||
+    t.includes("pronta entrega")
+  ) {
+    detectedStage = Math.max(detectedStage, 3);
+  }
+
+  if (
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("comunicacao correta") ||
+    t.includes("comunicação correta")
+  ) {
+    detectedStage = Math.max(detectedStage, 4);
+  }
+
+  if (replyMentionsInvestment(text)) {
+    detectedStage = Math.max(detectedStage, 5);
+  }
+
+  if (
+    t.includes("resultado depende") ||
+    t.includes("depende da sua atuacao") ||
+    t.includes("depende da sua atuação") ||
+    t.includes("atuacao nas vendas") ||
+    t.includes("atuação nas vendas")
+  ) {
+    detectedStage = Math.max(detectedStage, 6);
+  }
+
+  if (
+    t.includes("pre-analise") ||
+    t.includes("pre análise") ||
+    t.includes("pré-análise") ||
+    t.includes("pre analise") ||
+    replyAsksPersonalData(text)
+  ) {
+    detectedStage = Math.max(detectedStage, 8);
+  }
+
+  return detectedStage;
+}
+
+function getSafeCurrentPhaseResponse(lead = {}) {
+  const e = lead.etapas || {};
+
+  if (!e.programa) {
+    return {
+      message: `Vou te explicar de forma simples 😊
+
+O Programa Parceiro Homologado IQG é uma parceria comercial onde você vende produtos da indústria com suporte, orientação e uma estrutura pensada para começar de forma organizada.
+
+Antes de falar de valores ou próximos passos, preciso entender melhor seu objetivo: você busca uma renda extra ou algo mais estruturado?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.beneficios) {
+    return {
+      message: `Ótimo 😊 O próximo ponto são os benefícios.
+
+Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orientação para te ajudar a vender com mais segurança.
+
+Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
+
+Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
+      fileKey: "folder"
+    };
+  }
+
+  if (!e.estoque) {
+    return {
+      message: `Agora o próximo ponto é o estoque inicial.
+
+Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
+
+Faz sentido essa parte do comodato pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.responsabilidades) {
+    return {
+      message: `Agora preciso alinhar uma parte importante: as responsabilidades do parceiro.
+
+Como o lote fica em comodato, o parceiro fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+Isso é importante porque o resultado depende da atuação do parceiro nas vendas, combinado?
+
+Ficou claro esse ponto?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.investimento) {
+    return {
+      message: `Antes de avançarmos, quero te explicar o investimento com total transparência 😊
+
+Existe um investimento de adesão e implantação de R$ 1.990.
+
+Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
+
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+
+Ou seja, você entra com acesso a produtos, estrutura e suporte sem precisar investir esse valor em estoque.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
+
+Faz sentido pra você nesse formato?`,
+      fileKey: null
+    };
+  }
+
+  if (!e.compromisso) {
+    return {
+      message: `Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante 😊
+
+Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+      fileKey: null
+    };
+  }
+
+  if (lead.interesseReal !== true) {
+    return {
+      message: `Perfeito 😊 Pelo que conversamos até aqui, faz sentido seguir para a pré-análise agora?`,
+      fileKey: null
+    };
+  }
+
+  return {
+    message: `Perfeito 😊 Vamos seguir então.
+
+Primeiro, pode me enviar seu nome completo?`,
+    fileKey: null
+  };
+}
+
+function enforceFunnelDiscipline({
+  respostaFinal = "",
+  currentLead = {}
+} = {}) {
+  const etapaAtual = getCurrentFunnelStage(currentLead);
+  const etapaDetectadaNaResposta = detectStageFromSdrReply(respostaFinal);
+
+  const falaDeInvestimento = replyMentionsInvestment(respostaFinal);
+  const pedeDadosPessoais = replyAsksPersonalData(respostaFinal);
+  const podeColetarDados = canStartDataCollection(currentLead);
+
+  const tentouPularFase =
+    etapaDetectadaNaResposta > 0 &&
+    etapaDetectadaNaResposta > etapaAtual;
+
+  const falouTaxaCedo =
+    falaDeInvestimento &&
+    etapaAtual < 5;
+
+  const falouTaxaSemControle =
+    falaDeInvestimento &&
+    etapaAtual === 5;
+
+  const pediuDadosCedo =
+    pedeDadosPessoais &&
+    !podeColetarDados;
+
+  if (
+    tentouPularFase ||
+    falouTaxaCedo ||
+    falouTaxaSemControle ||
+    pediuDadosCedo
+  ) {
+    const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
+    return {
+      changed: true,
+      reason: {
+        etapaAtual,
+        etapaDetectadaNaResposta,
+        tentouPularFase,
+        falouTaxaCedo,
+        falouTaxaSemControle,
+        pediuDadosCedo
+      },
+      respostaFinal: safeResponse.message,
+      fileKey: safeResponse.fileKey
+    };
+  }
+
+  return {
+    changed: false,
+    respostaFinal
+  };
+}
+
+function getLastAssistantMessage(history = []) {
+  if (!Array.isArray(history)) return "";
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]?.role === "assistant") {
+      return history[i]?.content || "";
+    }
+  }
+
+  return "";
+}
+
+function isShortNeutralLeadReply(text = "") {
+  const t = normalizeCommercialText(text);
+
+  if (!t) return false;
+  if (t.length > 45) return false;
+
+  const neutralPatterns = [
+    /^ok$/,
+    /^ok obrigado$/,
+    /^ok obrigada$/,
+    /^sim$/,
+    /^s$/,
+    /^certo$/,
+    /^ta certo$/,
+    /^tá certo$/,
+    /^entendi$/,
+    /^entendi sim$/,
+    /^legal$/,
+    /^show$/,
+    /^show de bola$/,
+    /^beleza$/,
+    /^blz$/,
+    /^perfeito$/,
+    /^top$/,
+    /^aham$/,
+    /^uhum$/,
+    /^faz sentido$/,
+    /^fez sentido$/,
+    /^para mim faz sentido$/,
+    /^pra mim faz sentido$/,
+    /^combinado$/,
+    /^tranquilo$/,
+    /^ta bom$/,
+    /^tá bom$/
+  ];
+
+  return neutralPatterns.some(pattern => pattern.test(t));
+}
+
+function detectReplyMainTheme(text = "") {
+  const t = normalizeCommercialText(text);
+
+  if (!t) return "";
+
+  if (
+    t.includes("afiliado") ||
+    t.includes("link exclusivo") ||
+    t.includes("divulgar por link") ||
+    t.includes("comissao online") ||
+    t.includes("comissão online")
+  ) {
+    return "afiliado";
+  }
+
+  if (
+    replyAsksPersonalData(text) ||
+    t.includes("pre-analise") ||
+    t.includes("pre analise") ||
+    t.includes("pré-análise") ||
+    t.includes("preanalise")
+  ) {
+    return "coleta";
+  }
+
+  if (
+    t.includes("resultado depende") ||
+    t.includes("depende da sua atuacao") ||
+    t.includes("depende da sua atuação") ||
+    t.includes("atuacao nas vendas") ||
+    t.includes("atuação nas vendas")
+  ) {
+    return "compromisso";
+  }
+
+  if (replyMentionsInvestment(text)) {
+    return "investimento";
+  }
+
+  if (
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("comunicacao correta") ||
+    t.includes("comunicação correta")
+  ) {
+    return "responsabilidades";
+  }
+
+  if (
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("lote inicial") ||
+    t.includes("kit inicial") ||
+    t.includes("pronta-entrega") ||
+    t.includes("pronta entrega")
+  ) {
+    return "estoque";
+  }
+
+  if (
+    t.includes("beneficio") ||
+    t.includes("benefícios") ||
+    t.includes("beneficios") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("materiais")
+  ) {
+    return "beneficios";
+  }
+
+  if (
+    t.includes("programa") ||
+    t.includes("parceria") ||
+    t.includes("parceiro homologado") ||
+    t.includes("como funciona")
+  ) {
+    return "programa";
+  }
+
+  return "";
+}
+
+function buildContinuationAfterRepeatedTheme({
+  lastTheme = "",
+  currentLead = {}
+} = {}) {
+  if (lastTheme === "programa") {
+    return {
+      message: `Ótimo 😊 O próximo ponto são os benefícios.
+
+Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orientação para te ajudar a vender com mais segurança.
+
+Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
+
+Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
+      fileKey: "folder"
+    };
+  }
+
+  if (lastTheme === "beneficios") {
+    return {
+      message: `Perfeito 😊 Agora o próximo ponto é o estoque inicial.
+
+Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
+
+Faz sentido essa parte do comodato pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "estoque") {
+    return {
+      message: `Show 😊 Agora preciso alinhar a parte das responsabilidades.
+
+Como o lote fica em comodato, o parceiro fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+Esse ponto é importante porque o resultado depende da atuação do parceiro nas vendas.
+
+Ficou claro pra você?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "responsabilidades") {
+    return {
+      message: `Perfeito 😊 Agora sim posso te explicar o investimento com transparência.
+
+Existe um investimento de adesão e implantação de R$ 1.990.
+
+Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
+
+Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
+
+Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento.
+
+E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
+
+Faz sentido pra você nesse formato?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "investimento") {
+    return {
+      message: `Perfeito 😊 Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante:
+
+Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+      fileKey: null
+    };
+  }
+
+  if (lastTheme === "compromisso") {
+    return {
+      message: `Perfeito 😊 Então faz sentido seguirmos para a pré-análise agora?`,
+      fileKey: null
+    };
+  }
+
+  return getSafeCurrentPhaseResponse(currentLead);
+}
+
+function applyAntiRepetitionGuard({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {},
+  history = []
+} = {}) {
+  const lastAssistantMessage = getLastAssistantMessage(history);
+
+  if (!lastAssistantMessage) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const leadReplyWasShort = isShortNeutralLeadReply(leadText);
+
+  if (!leadReplyWasShort) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const lastTheme = detectReplyMainTheme(lastAssistantMessage);
+  const currentTheme = detectReplyMainTheme(respostaFinal);
+
+  if (!lastTheme || !currentTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const repeatedSameTheme = lastTheme === currentTheme;
+
+  if (!repeatedSameTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const continuation = buildContinuationAfterRepeatedTheme({
+    lastTheme,
+    currentLead
+  });
+
+  return {
+    changed: true,
+    reason: {
+      leadReplyWasShort,
+      lastTheme,
+      currentTheme,
+      repeatedSameTheme
+    },
+    respostaFinal: continuation.message,
+    fileKey: continuation.fileKey
+  };
 }
 
 function isRepeatedDigits(value = "") {
@@ -3476,6 +6147,112 @@ function isAffiliateAlternativeOpportunity(text = "") {
   return rejeitouAdesao || rejeitouEstoque || pediuModeloSemEstoque;
 }
 
+function isPreCrmBlockingObjection(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    // trava por preço / taxa
+    t.includes("achei caro") ||
+    t.includes("muito caro") ||
+    t.includes("taxa cara") ||
+    t.includes("taxa alta") ||
+    t.includes("valor alto") ||
+    t.includes("ficou pesado") ||
+    t.includes("pesado pra mim") ||
+    t.includes("nao tenho dinheiro") ||
+    t.includes("não tenho dinheiro") ||
+    t.includes("sem dinheiro agora") ||
+    t.includes("nao consigo pagar") ||
+    t.includes("não consigo pagar") ||
+    t.includes("nao posso pagar") ||
+    t.includes("não posso pagar") ||
+
+    // rejeição da taxa
+    t.includes("nao quero pagar taxa") ||
+    t.includes("não quero pagar taxa") ||
+    t.includes("nao quero pagar adesao") ||
+    t.includes("não quero pagar adesão") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão") ||
+
+    // rejeição de estoque / físico
+    t.includes("nao quero estoque") ||
+    t.includes("não quero estoque") ||
+    t.includes("nao quero produto fisico") ||
+    t.includes("não quero produto físico") ||
+    t.includes("nao quero mexer com estoque") ||
+    t.includes("não quero mexer com estoque") ||
+
+    // medo / risco / desistência leve
+    t.includes("tenho medo") ||
+    t.includes("medo de arriscar") ||
+    t.includes("parece arriscado") ||
+    t.includes("muito risco") ||
+    t.includes("vou pensar") ||
+    t.includes("vou deixar pra depois") ||
+    t.includes("talvez depois") ||
+    t.includes("agora nao") ||
+    t.includes("agora não") ||
+    t.includes("nao e pra mim") ||
+    t.includes("não é pra mim")
+  );
+}
+
+function isClearAffiliateFallbackIntent(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    // intenção direta de afiliado
+    isAffiliateIntent(text) ||
+
+    // quer modelo sem estoque / sem taxa / por link
+    t.includes("quero algo sem estoque") ||
+    t.includes("tem algo sem estoque") ||
+    t.includes("tem opcao sem estoque") ||
+    t.includes("tem opção sem estoque") ||
+    t.includes("quero vender por link") ||
+    t.includes("quero divulgar por link") ||
+    t.includes("quero so divulgar") ||
+    t.includes("quero só divulgar") ||
+    t.includes("quero ganhar por indicacao") ||
+    t.includes("quero ganhar por indicação") ||
+    t.includes("posso indicar e ganhar") ||
+
+    // rejeição clara do modelo físico
+    t.includes("nao quero estoque") ||
+    t.includes("não quero estoque") ||
+    t.includes("nao quero produto fisico") ||
+    t.includes("não quero produto físico") ||
+    t.includes("nao quero mexer com estoque") ||
+    t.includes("não quero mexer com estoque") ||
+
+    // rejeição clara da taxa, não apenas objeção leve
+    t.includes("nao quero pagar taxa") ||
+    t.includes("não quero pagar taxa") ||
+    t.includes("nao quero pagar adesao") ||
+    t.includes("não quero pagar adesão") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão")
+  );
+}
+
+function buildAffiliateRecoveryResponse() {
+  return `Entendo totalmente 😊
+
+O Parceiro Homologado é um modelo mais estruturado, com produtos físicos, lote em comodato, suporte, treinamento, contrato e taxa de adesão. Ele faz mais sentido para quem quer atuar com produto em mãos e vender de forma mais ativa.
+
+Mas se esse formato não fizer sentido para você agora, existe um caminho mais simples: o Programa de Afiliados IQG.
+
+No afiliado, você não precisa ter estoque, não recebe lote em comodato e não tem a taxa de adesão do Parceiro Homologado.
+
+Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Se depois você quiser algo mais estruturado, com produtos em mãos e suporte da indústria, aí podemos retomar o Parceiro Homologado.`;
+}
+
 function buildAffiliateResponse(isAlternative = false) {
   if (isAlternative) {
     return `Entendi 😊 Nesse caso, talvez o Programa de Afiliados IQG faça mais sentido como uma alternativa mais simples.
@@ -3524,15 +6301,16 @@ if (isAffiliateAlternativeOpportunity(text)) {
 }
 
   const hasInterest =
-    t.includes("quero começar") ||
-    t.includes("quero entrar") ||
-    t.includes("tenho interesse") ||
-    t.includes("vamos") ||
-    t.includes("pode iniciar") ||
-    t.includes("seguir") ||
-    t.includes("pré-análise") ||
-    t.includes("pre-analise") ||
-    t.includes("pre análise");
+  isExplicitPreAnalysisIntent(text) ||
+  t.includes("quero começar") ||
+  t.includes("quero comecar") ||
+  t.includes("quero entrar") ||
+  t.includes("quero participar") ||
+  t.includes("tenho interesse em entrar") ||
+  t.includes("tenho interesse em participar") ||
+  t.includes("pode iniciar") ||
+  t.includes("podemos iniciar") ||
+  t.includes("quero aderir");
 
   const isRejecting =
     t.includes("não tenho interesse") ||
@@ -3605,9 +6383,9 @@ if (
     return "pre_analise";
   }
 
-  if (hasInterest) {
-    return "qualificando";
-  }
+  if (hasInterest && !isSoftUnderstandingConfirmation(text)) {
+  return "qualificando";
+}
 
   if (
     t.includes("como funciona") ||
@@ -3623,8 +6401,34 @@ if (
 
   return null;
 }
+
+function canSendBusinessFile(key, lead = {}) {
+  if (key !== "contrato") {
+    return true;
+  }
+
+  return (
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.faseFunil === "crm" ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm"
+  );
+}
+
+function removeFileAction(actions = [], keyToRemove = "") {
+  if (!Array.isArray(actions)) return;
+
+  for (let i = actions.length - 1; i >= 0; i--) {
+    if (actions[i] === keyToRemove) {
+      actions.splice(i, 1);
+    }
+  }
+}
+
 async function sendFileOnce(from, key) {
-  if (!FILES[key]) return;
+  if (!FILES[key]) return false;
 
   await connectMongo();
 
@@ -3633,11 +6437,12 @@ async function sendFileOnce(from, key) {
   const lead = await db.collection("leads").findOne({ user: from });
 
   if (lead?.sentFiles?.[key]) {
-    await sendWhatsAppMessage(
-      from,
-      "Esse material já te enviei logo acima 😊 Dá uma olhada e me diz se fez sentido pra você."
-    );
-    return;
+    console.log("📎 Arquivo não reenviado porque já foi enviado:", {
+      user: from,
+      arquivo: key
+    });
+
+    return false;
   }
 
   await db.collection("leads").updateOne(
@@ -3653,7 +6458,10 @@ async function sendFileOnce(from, key) {
 
   await delay(2000);
   await sendWhatsAppDocument(from, FILES[key]);
+
+  return true;
 }
+
 function getBrazilNow() {
   const now = new Date();
   const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -3834,6 +6642,57 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+function getFinalFollowupMessage(lead = {}) {
+  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+  const prefixo = nome ? `${nome}, ` : "";
+
+  const jaVirouParceiroConfirmado =
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.status === "enviado_crm";
+
+  const jaEstaEmAfiliado =
+    lead?.interesseAfiliado === true ||
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado";
+
+  if (jaVirouParceiroConfirmado) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Sua pré-análise já ficou encaminhada para a equipe comercial da IQG.
+
+Se surgir alguma dúvida, fico à disposição.`;
+  }
+
+  if (jaEstaEmAfiliado) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Só reforçando: para o Programa de Afiliados IQG, você pode acessar o cadastro por aqui:
+https://minhaiqg.com.br/
+
+No afiliado, você divulga por link, não precisa ter estoque e não tem a taxa de adesão do Parceiro Homologado.
+
+Qualquer dúvida, fico à disposição.`;
+  }
+
+  return `${prefixo}vou encerrar por aqui 😊
+
+Se o modelo de Parceiro Homologado não fizer sentido para você agora, existe também o Programa de Afiliados IQG.
+
+Ele é mais simples para começar: você não precisa ter estoque, não precisa receber lote em comodato e não tem a taxa de adesão do Parceiro Homologado.
+
+Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Se depois quiser algo mais estruturado, com produtos em mãos, suporte e lote em comodato, aí sim podemos retomar o Parceiro Homologado.`;
+}
+
   function shouldStopBotByLifecycle(lead = {}) {
   lead = lead || {};
 
@@ -3908,12 +6767,12 @@ function scheduleLeadFollowups(from) {
       message: "Quer que eu siga com sua pré-análise?",
       businessOnly: true
     },
-    {
-      delay: 30 * 60 * 60 * 1000,
-      message: "Vou encerrar por aqui 😊 Qualquer dúvida, fico à disposição!",
-      businessOnly: true,
-      closeAfter: true
-    }
+   {
+  delay: 30 * 60 * 60 * 1000,
+  getMessage: (lead) => getFinalFollowupMessage(lead),
+  businessOnly: true,
+  closeAfter: true
+}
   ];
 
   for (const followup of followups) {
@@ -3948,7 +6807,12 @@ if (shouldStopBotByLifecycle(latestLead)) {
   return;
 }
 
-await sendWhatsAppMessage(from, followup.message);
+const businessMessageToSend = followup.getMessage
+  ? followup.getMessage(latestLead)
+  : followup.message;
+
+await sendWhatsAppMessage(from, businessMessageToSend);
+               
               if (followup.closeAfter) {
                 latestState.closed = true;
                 clearTimers(from);
@@ -4099,14 +6963,12 @@ if (message.text?.body) {
   text = buffered.text;
 
 } else if (message.audio?.id) {
-  await sendWhatsAppMessage(from, "Vou ouvir seu áudio rapidinho e já te respondo 😊");
-
   const mediaUrl = await getWhatsAppMediaUrl(message.audio.id);
   const audioBuffer = await downloadWhatsAppMedia(mediaUrl);
 
   text = await transcribeAudioBuffer(audioBuffer, "audio.ogg");
 
-  if (!text) {
+  if (!text || !String(text).trim()) {
     await sendWhatsAppMessage(
       from,
       "Não consegui entender bem o áudio. Pode me enviar novamente ou escrever sua dúvida?"
@@ -4114,6 +6976,8 @@ if (message.text?.body) {
 
     return;
   }
+
+  text = String(text).trim();
 } else {
   await sendWhatsAppMessage(
     from,
@@ -4622,7 +7486,18 @@ Está correto?`;
     estado: "estado"
   };
 
- respostaConfirmacaoCampo = `Perfeito, ${labels[campo] || campo} confirmado ✅`;
+ const labelConfirmado =
+  campo === "cidade" && currentLead?.estadoPendente
+    ? "cidade/estado confirmados"
+    : campo === "estado" && currentLead?.cidadePendente
+      ? "cidade/estado confirmados"
+      : campo === "cidade"
+        ? "cidade confirmada"
+        : campo === "estado"
+          ? "estado confirmado"
+          : `${labels[campo] || campo} confirmado`;
+
+respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
 
  if (missingFields.length > 0) {
   const nextField = missingFields[0];
@@ -4743,9 +7618,155 @@ if (changedConfirmedData) {
 }
 
 const leadStatus = classifyLead(text, extractedData, history);
-     const strongIntent = isStrongBuyIntent(text);
+const strongIntent = isStrongBuyIntent(text);
+const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
+const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
+     // 🧠 CLASSIFICADOR SEMÂNTICO — MODO OBSERVAÇÃO
+// Não roda durante coleta/confirmação de dados, porque nesse momento
+// mensagens como nome, CPF, telefone, cidade e UF não são intenção comercial.
+const fasesDeColetaOuConfirmacao = [
+  "coletando_dados",
+  "dados_parciais",
+  "aguardando_dados",
+  "aguardando_confirmacao_campo",
+  "aguardando_confirmacao_dados",
+  "corrigir_dado",
+  "corrigir_dado_final",
+  "aguardando_valor_correcao_final"
+];
+
+const estaEmColetaOuConfirmacao =
+  fasesDeColetaOuConfirmacao.includes(currentLead?.faseQualificacao) ||
+  currentLead?.faseFunil === "coleta_dados" ||
+  currentLead?.faseFunil === "confirmacao_dados" ||
+  currentLead?.aguardandoConfirmacaoCampo === true ||
+  currentLead?.aguardandoConfirmacao === true;
+
+let semanticIntent = null;
+
+if (estaEmColetaOuConfirmacao) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação:", {
+    user: from,
+    ultimaMensagemLead: text,
+    statusAtual: currentLead?.status || "-",
+    faseAtual: currentLead?.faseQualificacao || "-",
+    faseFunilAtual: currentLead?.faseFunil || "-",
+    motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
+  });
+} else {
+  semanticIntent = await runLeadSemanticIntentClassifier({
+    lead: currentLead || {},
+    history,
+    lastUserText: text,
+    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
+  });
+
+  console.log("🧠 Intenção semântica observada:", {
+    user: from,
+    ultimaMensagemLead: text,
+    statusAtual: currentLead?.status || "-",
+    faseAtual: currentLead?.faseQualificacao || "-",
+    faseFunilAtual: currentLead?.faseFunil || "-",
+    etapas: currentLead?.etapas || {},
+    semanticIntent
+  });
+}
+     const podeConfirmarInteresseRealAgora =
+  canAskForRealInterest(currentLead || {}) &&
+  isPositiveConfirmation(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
+
+if (podeConfirmarInteresseRealAgora) {
+  await saveLeadProfile(from, {
+    interesseReal: true,
+    faseQualificacao: "coletando_dados",
+    status: "coletando_dados",
+    campoEsperado: "nome",
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: false,
+    dadosConfirmadosPeloLead: false
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  const msg = "Perfeito 😊 Vamos seguir com a pré-análise então.\n\nPrimeiro, pode me enviar seu nome completo?";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+     const leadTravouAntesDoCrm =
+    isClearAffiliateFallbackIntent(text) &&
+  currentLead?.dadosConfirmadosPeloLead !== true &&
+  currentLead?.crmEnviado !== true &&
+  currentLead?.statusOperacional !== "enviado_crm" &&
+  currentLead?.faseFunil !== "crm" &&
+  currentLead?.faseQualificacao !== "enviado_crm" &&
+  currentLead?.status !== "enviado_crm" &&
+  currentLead?.aguardandoConfirmacaoCampo !== true &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
+
+     if (leadTravouAntesDoCrm) {
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    interesseAfiliado: true,
+    origemConversao: "recuperado_objecao",
+    ultimaMensagem: text
+  });
+
+  const affiliateRecoveryMsg = buildAffiliateRecoveryResponse();
+
+  await sendWhatsAppMessage(from, affiliateRecoveryMsg);
+  await saveHistoryStep(from, history, text, affiliateRecoveryMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+     // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
+// Só marca compromisso como concluído quando:
+// 1. a SDR já perguntou sobre o resultado depender da atuação;
+// 2. o lead respondeu positivamente;
+// 3. ainda não estamos em confirmação de dados pessoais.
+if (
+  currentLead?.etapas?.compromissoPerguntado === true &&
+  currentLead?.etapas?.compromisso !== true &&
+    isCommitmentConfirmation(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    etapas: {
+      ...(currentLead?.etapas || {}),
+      compromisso: true,
+      compromissoPerguntado: false
+    }
+  });
+
+  currentLead = await loadLeadProfile(from);
+}
 
 if (leadStatus === "afiliado") {
   const isAlternative = isAffiliateAlternativeOpportunity(text);
@@ -4779,6 +7800,7 @@ await saveLeadProfile(from, {
      // 🔥 PRIORIDADE: LEAD QUENTE (INTENÇÃO FORTE)
 if (
   strongIntent &&
+  !leadDeuApenasConfirmacaoFraca &&
   currentLead?.faseQualificacao !== "coletando_dados" &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
@@ -4790,34 +7812,65 @@ if (
   });
 }
      
+// 🔒 BLOQUEIO DE PRÉ-ANÁLISE PREMATURA
+// Mesmo que o classificador diga "pre_analise",
+// o backend só aceita se o lead tiver intenção explícita
+// e todas as etapas obrigatórias estiverem concluídas.
+const podeAceitarPreAnaliseAgora = Boolean(
+  leadDeuIntencaoExplicitaPreAnalise &&
+  canStartDataCollection({
+    ...(currentLead || {}),
+    interesseReal: true
+  })
+);
+
+let leadStatusSeguro = leadStatus;
+
+if (leadStatus === "pre_analise" && !podeAceitarPreAnaliseAgora) {
+  console.log("🚫 Pré-análise bloqueada pelo backend:", {
+    user: from,
+    leadStatus,
+    leadDeuIntencaoExplicitaPreAnalise,
+    etapas: currentLead?.etapas || {},
+    motivo: "Lead ainda não cumpriu intenção explícita + etapas obrigatórias."
+  });
+
+  leadStatusSeguro = null;
+}
+
 if (
-  leadStatus &&
+  leadStatusSeguro &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-  
-const statusMap = {
-  frio: "perdido",
-  morno: "morno",
-  qualificando: "qualificando",
-  pre_analise: "pre_analise",
-  afiliado: "afiliado"
-};
+  const statusMap = {
+    frio: "perdido",
+    morno: "morno",
+    qualificando: "qualificando",
+    pre_analise: "pre_analise",
+    afiliado: "afiliado"
+  };
 
-const faseMap = {
-  frio: "perdido",
-  morno: "morno",
-  qualificando: "qualificando",
-  pre_analise: "pre_analise",
-  afiliado: "afiliado"
-};
+  const faseMap = {
+    frio: "perdido",
+    morno: "morno",
+    qualificando: "qualificando",
+    pre_analise: "pre_analise",
+    afiliado: "afiliado"
+  };
 
- await saveLeadProfile(from, {
-  status: statusMap[leadStatus] || leadStatus,
-  faseQualificacao: faseMap[leadStatus] || leadStatus,
-  origemConversao: leadStatus === "afiliado" ? "afiliado" : "homologado"
-});
+  const statusUpdateData = {
+    status: statusMap[leadStatusSeguro] || leadStatusSeguro,
+    faseQualificacao: faseMap[leadStatusSeguro] || leadStatusSeguro,
+    origemConversao: leadStatusSeguro === "afiliado" ? "afiliado" : "homologado"
+  };
+
+  if (leadStatusSeguro === "pre_analise") {
+    statusUpdateData.interesseReal = true;
+  }
+
+  await saveLeadProfile(from, statusUpdateData);
 
   currentLead = await loadLeadProfile(from);
 }
@@ -5005,9 +8058,145 @@ if (
   role: "user",
   content: message.audio?.id ? `[Áudio transcrito]: ${text}` : text
 });
-    history = history.slice(-20);
+history = history.slice(-20);
 
-    const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
+  lead: currentLead
+});
+
+// 🧠 CONSULTOR PRÉ-SDR
+// A SDR não responde sozinha.
+// Antes da SDR responder, o Consultor Assistente analisa a mensagem do lead
+// e orienta o que responder e como responder.
+let preSdrConsultantAdvice = null;
+
+const lastAssistantText =
+  [...history]
+    .reverse()
+    .find(message => message.role === "assistant")?.content || "";
+
+try {
+ preSdrConsultantAdvice = await runConsultantAssistant({
+  lead: currentLead || {},
+  history,
+  lastUserText: text,
+    lastSdrText: lastAssistantText,
+  supervisorAnalysis: currentLead?.supervisor || {},
+  classification: currentLead?.classificacao || {}
+});
+
+const originalPreSdrConsultantAdvice = preSdrConsultantAdvice;
+
+preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
+  advice: preSdrConsultantAdvice,
+  lead: currentLead || {},
+  lastUserText: text
+});
+
+if (
+  originalPreSdrConsultantAdvice?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
+  originalPreSdrConsultantAdvice?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
+  originalPreSdrConsultantAdvice?.cuidadoPrincipal !== preSdrConsultantAdvice?.cuidadoPrincipal
+) {
+  console.log("🛡️ Consultor PRÉ-SDR corrigido por trava dura:", {
+    user: from,
+    estrategiaOriginal: originalPreSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    estrategiaCorrigida: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    proximaMelhorAcaoOriginal: originalPreSdrConsultantAdvice?.proximaMelhorAcao || "-",
+    proximaMelhorAcaoCorrigida: preSdrConsultantAdvice?.proximaMelhorAcao || "-",
+    cuidadoOriginal: originalPreSdrConsultantAdvice?.cuidadoPrincipal || "-",
+    cuidadoCorrigido: preSdrConsultantAdvice?.cuidadoPrincipal || "-"
+  });
+}
+
+await saveConsultantAdvice(from, preSdrConsultantAdvice);
+
+ console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
+  user: from,
+  ultimaMensagemLead: text,
+  statusAtual: currentLead?.status || "-",
+  faseAtual: currentLead?.faseQualificacao || "-",
+  faseFunilAtual: currentLead?.faseFunil || "-",
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  etapas: currentLead?.etapas || {},
+
+  estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+  proximaMelhorAcao: preSdrConsultantAdvice?.proximaMelhorAcao || "-",
+  abordagemSugerida: preSdrConsultantAdvice?.abordagemSugerida || "-",
+  argumentoPrincipal: preSdrConsultantAdvice?.argumentoPrincipal || "-",
+  cuidadoPrincipal: preSdrConsultantAdvice?.cuidadoPrincipal || "-",
+  ofertaMaisAdequada: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+  momentoIdealHumano: preSdrConsultantAdvice?.momentoIdealHumano || "nao_analisado",
+  prioridadeComercial: preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado",
+  resumoConsultivo: preSdrConsultantAdvice?.resumoConsultivo || "-"
+});
+} catch (error) {
+  console.error("❌ Consultor PRÉ-SDR falhou. SDR não responderá sem orientação:", error.message);
+
+  const consultantErrorMsg = `Tive uma instabilidade rápida para analisar sua mensagem com segurança 😊
+
+Pode me mandar novamente o ponto principal da sua dúvida? Assim eu te respondo certinho.`;
+
+  await sendWhatsAppMessage(from, consultantErrorMsg);
+  await saveHistoryStep(from, history, text, consultantErrorMsg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+const preSdrConsultantContext = `ORIENTAÇÃO OBRIGATÓRIA DO CONSULTOR ASSISTENTE — USO INTERNO DA SDR
+
+Esta orientação veio ANTES da resposta da SDR.
+A SDR deve usar isso para decidir o que responder agora.
+
+Estratégia recomendada:
+${preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado"}
+
+Próxima melhor ação:
+${preSdrConsultantAdvice?.proximaMelhorAcao || "-"}
+
+Abordagem sugerida:
+${preSdrConsultantAdvice?.abordagemSugerida || "-"}
+
+Argumento principal:
+${preSdrConsultantAdvice?.argumentoPrincipal || "-"}
+
+Cuidado principal:
+${preSdrConsultantAdvice?.cuidadoPrincipal || "-"}
+
+Oferta mais adequada:
+${preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado"}
+
+Momento ideal para humano:
+${preSdrConsultantAdvice?.momentoIdealHumano || "nao_analisado"}
+
+Prioridade comercial:
+${preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado"}
+
+Resumo consultivo:
+${preSdrConsultantAdvice?.resumoConsultivo || "-"}
+
+REGRAS OBRIGATÓRIAS PARA A SDR:
+
+- A SDR só pode conduzir para pré-análise se o lead demonstrar intenção explícita, como "quero seguir", "vamos seguir", "pode iniciar", "quero entrar" ou equivalente.
+- Se o lead apenas confirmou entendimento, a SDR deve avançar para a próxima explicação necessária do funil, não para coleta de dados.
+- Responder primeiro a manifestação real do lead.
+- Se o lead fez pergunta, responder a pergunta antes de conduzir.
+- Se o lead mandou áudio, considerar a transcrição como a mensagem principal.
+- Não ignorar objeção, dúvida, reclamação ou correção do lead.
+- Não seguir roteiro se o lead perguntou outra coisa.
+- Não falar taxa antes da fase correta.
+- Não pedir dados antes da fase correta.
+- Não repetir explicação que o lead já disse ter entendido.
+- "ok", "sim", "sei sim", "entendi", "fez sentido", "foi explicativo", "show", "top" e "ficou claro" indicam apenas entendimento quando não houver pedido claro de avanço.
+- Expressões como "bora", "mete bala", "manda ver", "demorou", "toca ficha", "pode seguir", "vamos nessa" e equivalentes indicam intenção explícita de avançar, mas a SDR só pode conduzir para pré-análise se o backend/fase atual permitir.
+- Responder de forma natural, curta e consultiva.
+- Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
+
+const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -5017,6 +8206,14 @@ body: JSON.stringify({
   model: "gpt-4o-mini",
   messages: [
   { role: "system", content: SYSTEM_PROMPT },
+  {
+    role: "system",
+    content: preSdrConsultantContext
+  },
+  {
+    role: "system",
+    content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
+  },
   {
     role: "system",
     content: `DADOS DE CONTEXTO DO LEAD:
@@ -5060,6 +8257,31 @@ let resposta = cleanReply?.trim();
 if (!resposta) {
   resposta = "Perfeito 😊 Me conta um pouco melhor o que você quer entender pra eu te ajudar da melhor forma.";
 }
+
+// 🚫 BLOQUEIO DE CONTRATO ANTES DO CRM
+const leadPediuContratoAgora =
+  hasExplicitFileRequest(text) &&
+  detectRequestedFile(text) === "contrato";
+
+const iaTentouEnviarContrato =
+  Array.isArray(actions) &&
+  actions.includes("contrato");
+
+const podeEnviarContratoAgora =
+  canSendBusinessFile("contrato", currentLead || {});
+
+if ((leadPediuContratoAgora || iaTentouEnviarContrato) && !podeEnviarContratoAgora) {
+  removeFileAction(actions, "contrato");
+
+  resposta = `Posso te explicar sobre o contrato 😊
+
+A versão oficial para assinatura só é liberada depois da análise cadastral da equipe IQG.
+
+Antes disso, eu consigo te orientar sobre as regras principais do programa, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou envio de contrato oficial.
+
+Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
+}
+     
      const respostaLower = resposta.toLowerCase();
      const jaExplicouPrograma =
   historyText.includes("parceria") &&
@@ -5139,38 +8361,33 @@ if (
 }
 
 let respostaFinal = resposta;
+     
+// 🚫 BLOQUEIO DE REGRESSÃO DE FASE — VERSÃO SEGURA
+// Não bloqueia respostas apenas porque citam palavras como "estoque", "taxa" ou "programa".
+// A SDR pode responder dúvidas reais do lead sobre fases anteriores.
+// O bloqueio só atua quando a resposta tenta reiniciar o funil de forma genérica.
 
-     // 🚫 BLOQUEIO DE REGRESSÃO DE FASE
-const etapaAtual = getCurrentFunnelStage(currentLead);
-const respostaLowerCheck = respostaFinal.toLowerCase();
+const respostaLowerCheck = respostaFinal
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
-let etapaDetectadaNaResposta = etapaAtual;
+const respostaPareceReinicioDoFunil =
+  respostaLowerCheck.includes("vou te explicar de forma direta como funciona o programa") ||
+  respostaLowerCheck.includes("vamos comecar pelo inicio") ||
+  respostaLowerCheck.includes("deixa eu comecar explicando o programa") ||
+  respostaLowerCheck.includes("primeiro preciso te explicar o programa") ||
+  respostaLowerCheck.includes("antes de tudo, o programa funciona assim");
 
-if (respostaLowerCheck.includes("parceria") || respostaLowerCheck.includes("programa")) {
-  etapaDetectadaNaResposta = 1;
-}
+const leadFezPerguntaEspecifica =
+  String(text || "").includes("?") ||
+  /\b(estoque|comodato|taxa|valor|investimento|contrato|responsabilidade|comissao|comissão|kit|produto|afiliado|link)\b/i.test(text);
 
-if (respostaLowerCheck.includes("benef")) {
-  etapaDetectadaNaResposta = 2;
-}
-
-if (respostaLowerCheck.includes("estoque") || respostaLowerCheck.includes("comodato")) {
-  etapaDetectadaNaResposta = 3;
-}
-
-if (respostaLowerCheck.includes("respons")) {
-  etapaDetectadaNaResposta = 4;
-}
-
-if (respostaLowerCheck.includes("1.990") || respostaLowerCheck.includes("1990") || respostaLowerCheck.includes("investimento")) {
-  etapaDetectadaNaResposta = 5;
-}
-
-if (respostaLowerCheck.includes("resultado depende")) {
-  etapaDetectadaNaResposta = 6;
-}
-
-if (etapaDetectadaNaResposta < etapaAtual) {
+if (
+  respostaPareceReinicioDoFunil &&
+  !leadFezPerguntaEspecifica &&
+  getCurrentFunnelStage(currentLead) > 1
+) {
   respostaFinal = getNextFunnelStepMessage(currentLead);
 }
 
@@ -5248,26 +8465,31 @@ if (isBadResponse(respostaFinal)) {
   }
 }
      
-     // 🚫 BLOQUEIO: se o folder já foi enviado, não oferecer material de novo
+// 🚫 BLOQUEIO SEGURO: só falar "material já enviado" se o LEAD pediu material de novo
+const leadPediuMaterialAgora = hasExplicitFileRequest(text);
+
 if (
+  leadPediuMaterialAgora &&
   currentLead?.sentFiles?.folder &&
-  /material|folder|te mandar|mandar o material|enviar o material|te enviar/i.test(respostaFinal)
+  /material|folder|pdf|catalogo|catálogo|kit|manual|contrato|lista/i.test(respostaFinal)
 ) {
-  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Fez sentido pra você ou quer que eu te explique os pontos principais?";
+  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Se quiser, posso te resumir os pontos principais por aqui.";
 }
      
-     const mencionouPreAnalise =
+const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
-    respostaFinal = "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
+  if (leadDeuApenasConfirmacaoFraca) {
+    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
+  } else if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
+    respostaFinal =
+      "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
   } else {
-    respostaFinal = state.sentFiles.folder
-      ? "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nComo o material já está logo acima, posso te resumir os pontos principais por aqui. Quer que eu resuma?"
-      : "Antes de avançarmos, deixa eu te explicar melhor como funciona o programa 😊\n\nSe fizer sentido, posso te explicar os principais pontos ou te mandar um material. O que você prefere?";
+    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
   }
 }
+     
 // 🚨 BLOQUEIO DE COLETA PREMATURA — COM AVANÇO CONTROLADO E SEM LOOP
 if (startedDataCollection && !podeIniciarColeta) {
   const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
@@ -5310,51 +8532,179 @@ if (multiDataRequestPattern.test(respostaFinal)) {
   respostaFinal = "Show! Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
-// 🚫 ANTI-LOOP FINAL — impede repetir a última resposta do bot
+// 🚫 ANTI-LOOP EXATO — impede repetir a última resposta do bot
 if (isRepeatedBotReply(respostaFinal, history)) {
-  respostaFinal = getNextFunnelStepMessage(currentLead);
+  const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
+  console.log("🚫 Resposta repetida bloqueada:", {
+    user: from
+  });
+
+  respostaFinal = safeResponse.message;
+
+  if (
+    safeResponse.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(safeResponse.fileKey)
+  ) {
+    actions.push(safeResponse.fileKey);
+  }
+}
+
+// 🚫 ANTI-REPETIÇÃO POR TEMA
+// Se o lead respondeu algo curto e a SDR tentou repetir o mesmo assunto,
+// o backend força uma continuação natural.
+const antiRepetition = applyAntiRepetitionGuard({
+  leadText: text,
+  respostaFinal,
+  currentLead,
+  history
+});
+
+if (antiRepetition.changed) {
+  console.log("🚫 Resposta ajustada por repetição de tema:", {
+    user: from,
+    reason: antiRepetition.reason
+  });
+
+  respostaFinal = antiRepetition.respostaFinal;
+
+  if (
+    antiRepetition.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(antiRepetition.fileKey)
+  ) {
+    actions.push(antiRepetition.fileKey);
+  }
+}
+
+// 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
+// Essa trava impede a SDR de falar taxa cedo, pular fases,
+// misturar assuntos ou pedir dados antes da hora.
+const disciplinaFunil = enforceFunnelDiscipline({
+  respostaFinal,
+  currentLead
+});
+
+if (disciplinaFunil.changed) {
+  console.log("🧭 Resposta ajustada por disciplina de funil:", {
+    user: from,
+    reason: disciplinaFunil.reason
+  });
+
+  respostaFinal = disciplinaFunil.respostaFinal;
+
+  if (
+    disciplinaFunil.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(disciplinaFunil.fileKey)
+  ) {
+    actions.push(disciplinaFunil.fileKey);
+  }
 }
      
-     // 🔥 ATUALIZA ETAPAS DO FUNIL
+     // 🔥 ATUALIZA ETAPAS DO FUNIL — VERSÃO MAIS SEGURA
 const etapasUpdate = { ...(currentLead?.etapas || {}) };
 
-const respostaEtapaLower = respostaFinal.toLowerCase();
+const respostaEtapaLower = String(respostaFinal || "")
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
-if (respostaEtapaLower.includes("parceria") || respostaEtapaLower.includes("programa")) {
+const explicouPrograma =
+  respostaEtapaLower.includes("parceria comercial") ||
+  respostaEtapaLower.includes("programa parceiro homologado") ||
+  respostaEtapaLower.includes("voce vende produtos da iqg") ||
+  respostaEtapaLower.includes("vender produtos da iqg") ||
+  respostaEtapaLower.includes("suporte da industria");
+
+const explicouBeneficios =
+  respostaEtapaLower.includes("suporte") &&
+  (
+    respostaEtapaLower.includes("treinamento") ||
+    respostaEtapaLower.includes("materiais") ||
+    respostaEtapaLower.includes("nao comeca sozinho") ||
+    respostaEtapaLower.includes("nao começa sozinho")
+  );
+
+const explicouEstoque =
+  respostaEtapaLower.includes("comodato") ||
+  (
+    respostaEtapaLower.includes("lote inicial") &&
+    respostaEtapaLower.includes("produtos")
+  ) ||
+  (
+    respostaEtapaLower.includes("estoque") &&
+    respostaEtapaLower.includes("iqg")
+  );
+
+const explicouResponsabilidades =
+  respostaEtapaLower.includes("responsavel pela guarda") ||
+  respostaEtapaLower.includes("responsavel pela conservacao") ||
+  respostaEtapaLower.includes("responsavel pela conservação") ||
+  respostaEtapaLower.includes("comunicacao correta das vendas") ||
+  respostaEtapaLower.includes("comunicação correta das vendas") ||
+  (
+    respostaEtapaLower.includes("responsabilidades") &&
+    respostaEtapaLower.includes("parceiro")
+  );
+
+const explicouInvestimento =
+  (
+    respostaEtapaLower.includes("r$ 1.990") ||
+    respostaEtapaLower.includes("1.990") ||
+    respostaEtapaLower.includes("1990")
+  ) &&
+  (
+    respostaEtapaLower.includes("nao e compra de mercadoria") ||
+    respostaEtapaLower.includes("não é compra de mercadoria") ||
+    respostaEtapaLower.includes("nao e caucao") ||
+    respostaEtapaLower.includes("não é caução") ||
+    respostaEtapaLower.includes("parcelado") ||
+    respostaEtapaLower.includes("10x") ||
+    respostaEtapaLower.includes("lote inicial")
+  );
+
+const explicouCompromisso =
+  respostaEtapaLower.includes("resultado depende da sua atuacao") ||
+  respostaEtapaLower.includes("resultado depende da sua atuação") ||
+  respostaEtapaLower.includes("depende da sua atuacao nas vendas") ||
+  respostaEtapaLower.includes("depende da sua atuação nas vendas");
+
+if (explicouPrograma) {
   etapasUpdate.programa = true;
 }
 
-if (respostaEtapaLower.includes("benef")) {
+if (explicouBeneficios) {
   etapasUpdate.beneficios = true;
 }
 
-if (respostaEtapaLower.includes("comodato") || respostaEtapaLower.includes("estoque")) {
+if (explicouEstoque) {
   etapasUpdate.estoque = true;
 }
 
-if (respostaEtapaLower.includes("respons")) {
+if (explicouResponsabilidades) {
   etapasUpdate.responsabilidades = true;
 }
 
-if (
-  respostaEtapaLower.includes("1.990") ||
-  respostaEtapaLower.includes("1990") ||
-  respostaEtapaLower.includes("investimento")
-) {
+if (explicouInvestimento) {
   etapasUpdate.investimento = true;
 }
 
-if (
-  respostaEtapaLower.includes("resultado depende") ||
-  respostaEtapaLower.includes("depende da sua atuação") ||
-  respostaEtapaLower.includes("depende da sua atuacao")
-) {
+if (explicouCompromisso) {
   etapasUpdate.compromisso = true;
 }
 
 await saveLeadProfile(from, {
   etapas: etapasUpdate
 });
+if (containsInternalContextLeak(respostaFinal)) {
+  console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
+    user: from
+  });
+
+  respostaFinal = "Perfeito 😊 Vou te orientar de forma simples e direta.\n\nMe conta: qual ponto você quer entender melhor agora sobre o programa?";
+}
      
 // 🔥 Mostra "digitando..." real no WhatsApp
 await sendTypingIndicator(messageId);
@@ -5367,13 +8717,47 @@ await delay(800);
 // tempo proporcional ao tamanho da resposta
 await delay(typingTime);
 
+console.log("📤 SDR vai enviar resposta final:", {
+  user: from,
+  ultimaMensagemLead: text,
+  respostaFinal,
+  statusAtual: currentLead?.status || "-",
+  faseAtual: currentLead?.faseQualificacao || "-",
+  faseFunilAtual: currentLead?.faseFunil || "-",
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  etapas: currentLead?.etapas || {},
+  mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
+  mencionouInvestimento: replyMentionsInvestment(respostaFinal),
+  pediuDados: replyAsksPersonalData(respostaFinal)
+});
+
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
+     
 history.push({ role: "assistant", content: respostaFinal });
 
+const leadAtualizadoParaAgentes = await loadLeadProfile(from);
+
+console.log("🧾 Contexto enviado aos agentes pós-SDR:", {
+  user: from,
+  ultimaMensagemLead: text,
+  ultimaRespostaSdr: respostaFinal,
+  totalMensagensHistorico: Array.isArray(history) ? history.length : 0,
+  ultimasMensagensHistorico: Array.isArray(history) ? history.slice(-6) : [],
+  leadParaAgentes: {
+    status: leadAtualizadoParaAgentes?.status || "-",
+    faseQualificacao: leadAtualizadoParaAgentes?.faseQualificacao || "-",
+    statusOperacional: leadAtualizadoParaAgentes?.statusOperacional || "-",
+    faseFunil: leadAtualizadoParaAgentes?.faseFunil || "-",
+    temperaturaComercial: leadAtualizadoParaAgentes?.temperaturaComercial || "-",
+    rotaComercial: leadAtualizadoParaAgentes?.rotaComercial || "-",
+    etapas: leadAtualizadoParaAgentes?.etapas || {}
+  }
+});
+     
 runSupervisorAfterSdrReply({
   user: from,
-  lead: currentLead,
+  lead: leadAtualizadoParaAgentes || currentLead,
   history,
   lastUserText: text,
   lastSdrText: respostaFinal
@@ -5384,16 +8768,38 @@ await saveConversation(from, history);
 // 🔥 Envio de arquivos por decisão da IA
 const fileKeys = new Set();
 
-const requestedFile = detectRequestedFile(text);
+const requestedFile = hasExplicitFileRequest(text)
+  ? detectRequestedFile(text)
+  : null;
+
 if (requestedFile) {
   fileKeys.add(requestedFile);
 }
 
 for (const action of actions) {
-  fileKeys.add(action);
+  if (canSendBusinessFile(action, currentLead || {})) {
+    fileKeys.add(action);
+  } else {
+    console.log("📎 Arquivo bloqueado por regra comercial:", {
+      user: from,
+      arquivo: action,
+      fase: currentLead?.faseQualificacao || "-",
+      funil: currentLead?.faseFunil || "-",
+      statusOperacional: currentLead?.statusOperacional || "-"
+    });
+  }
 }
 
 for (const key of fileKeys) {
+  if (!canSendBusinessFile(key, currentLead || {})) {
+    console.log("📎 Arquivo não enviado por regra comercial:", {
+      user: from,
+      arquivo: key
+    });
+
+    continue;
+  }
+
   await sendFileOnce(from, key);
 }
 
@@ -5774,13 +9180,31 @@ app.get("/conversation/:user", async (req, res) => {
       const temperaturaComercial = lead.temperaturaComercial || "-";
       const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
 
-      const supervisor = lead.supervisor || {};
+            const supervisor = lead.supervisor || {};
       const supervisorRisco = supervisor.riscoPerda || "nao_analisado";
       const supervisorTrava = supervisor.pontoTrava || "-";
       const supervisorHumano = supervisor.necessitaHumano === true ? "sim" : "não";
       const supervisorQualidade = supervisor.qualidadeConducaoSdr || "nao_analisado";
       const supervisorUltimaAnalise = supervisor.analisadoEm
         ? formatDate(supervisor.analisadoEm)
+        : "-";
+
+            const classificacao = lead.classificacao || {};
+      const classificacaoPerfil = classificacao.perfilComportamentalPrincipal || "nao_analisado";
+      const classificacaoIntencao = classificacao.intencaoPrincipal || "nao_analisado";
+      const classificacaoObjecao = classificacao.objecaoPrincipal || "sem_objecao_detectada";
+      const classificacaoConfianca = classificacao.confiancaClassificacao || "nao_analisado";
+      const classificacaoUltima = classificacao.classificadoEm
+        ? formatDate(classificacao.classificadoEm)
+        : "-";
+
+      const consultoria = lead.consultoria || {};
+      const consultoriaEstrategia = consultoria.estrategiaRecomendada || "nao_analisado";
+      const consultoriaProximaAcao = consultoria.proximaMelhorAcao || "-";
+      const consultoriaOferta = consultoria.ofertaMaisAdequada || "nao_analisado";
+      const consultoriaPrioridade = consultoria.prioridadeComercial || "nao_analisado";
+      const consultoriaUltima = consultoria.consultadoEm
+        ? formatDate(consultoria.consultadoEm)
         : "-";
 
       const user = encodeURIComponent(lead.user || phone);
@@ -5794,11 +9218,21 @@ app.get("/conversation/:user", async (req, res) => {
   <td>${escapeHtml(faseFunil)}</td>
   <td>${escapeHtml(temperaturaComercial)}</td>
   <td>${escapeHtml(rotaComercial)}</td>
-  <td>${escapeHtml(supervisorRisco)}</td>
+    <td>${escapeHtml(supervisorRisco)}</td>
   <td>${escapeHtml(supervisorTrava)}</td>
   <td>${escapeHtml(supervisorHumano)}</td>
   <td>${escapeHtml(supervisorQualidade)}</td>
   <td>${escapeHtml(supervisorUltimaAnalise)}</td>
+    <td>${escapeHtml(classificacaoPerfil)}</td>
+  <td>${escapeHtml(classificacaoIntencao)}</td>
+  <td>${escapeHtml(classificacaoObjecao)}</td>
+  <td>${escapeHtml(classificacaoConfianca)}</td>
+  <td>${escapeHtml(classificacaoUltima)}</td>
+  <td>${escapeHtml(consultoriaEstrategia)}</td>
+  <td>${escapeHtml(consultoriaProximaAcao)}</td>
+  <td>${escapeHtml(consultoriaOferta)}</td>
+  <td>${escapeHtml(consultoriaPrioridade)}</td>
+  <td>${escapeHtml(consultoriaUltima)}</td>
   <td>${escapeHtml(lead.origemConversao || "-")}</td>
 <td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone)}</td>
 <td>${escapeHtml(lead.cpf || "-")}</td>
@@ -6154,6 +9588,16 @@ app.get("/conversation/:user", async (req, res) => {
 <th>Humano?</th>
 <th>Qualidade SDR</th>
 <th>Última análise</th>
+<th>Perfil</th>
+<th>Intenção</th>
+<th>Objeção</th>
+<th>Confiança</th>
+<th>Classificado em</th>
+<th>Estratégia</th>
+<th>Próxima ação</th>
+<th>Oferta ideal</th>
+<th>Prioridade</th>
+<th>Consultado em</th>
 <th>Origem</th>
 <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
 <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
@@ -6165,7 +9609,7 @@ app.get("/conversation/:user", async (req, res) => {
               </tr>
             </thead>
             <tbody>
-                        ${rows || `<tr><td colspan="19">Nenhum lead encontrado.</td></tr>`}
+                        ${rows || `<tr><td colspan="29">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -6190,4 +9634,3 @@ ensureIndexes()
     console.error("Erro ao iniciar servidor:", error);
     process.exit(1);
   });
-
