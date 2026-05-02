@@ -4500,6 +4500,7 @@ function enforceClassifierHardLimits({
   const etapaAtual = getCurrentFunnelStage(lead || {});
   const mensagemEhCumprimentoSimples = isSimpleGreetingOnly(lastUserText);
 
+  // 1) Cumprimento simples não pode virar lead quente, pronto ou pré-análise.
   if (mensagemEhCumprimentoSimples && nenhumaEtapaConcluida && etapaAtual <= 1) {
     return {
       ...safeClassification,
@@ -4516,62 +4517,11 @@ function enforceClassifierHardLimits({
     };
   }
 
+  // 2) Classificador não pode liberar pré-análise se o backend ainda não permite coleta.
   if (
     safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
     !canStartDataCollection(lead || {})
   ) {
-     const mensagemTemObjeçãoDePreço =
-  isPreCrmBlockingObjection(lastUserText) &&
-  !isClearAffiliateFallbackIntent(lastUserText);
-
-const classificadorForcouAfiliadoSemPedidoClaro =
-  mensagemTemObjeçãoDePreço &&
-  (
-    safeClassification.perfilComportamentalPrincipal === "afiliado_digital" ||
-    safeClassification.intencaoPrincipal === "buscar_afiliado" ||
-    safeClassification.temperaturaComercial === "afiliado"
-  );
-
-if (classificadorForcouAfiliadoSemPedidoClaro) {
-  return {
-    ...safeClassification,
-    temperaturaComercial:
-      safeClassification.temperaturaComercial === "afiliado"
-        ? "travado"
-        : safeClassification.temperaturaComercial === "quente"
-          ? "travado"
-          : safeClassification.temperaturaComercial,
-
-    perfilComportamentalPrincipal:
-      safeClassification.perfilComportamentalPrincipal === "afiliado_digital"
-        ? "sensivel_preco"
-        : safeClassification.perfilComportamentalPrincipal,
-
-    intencaoPrincipal:
-      safeClassification.intencaoPrincipal === "buscar_afiliado"
-        ? "avaliar_investimento"
-        : safeClassification.intencaoPrincipal,
-
-    objecaoPrincipal: "preco_taxa_adesao",
-
-    confiancaClassificacao:
-      safeClassification.confiancaClassificacao === "alta"
-        ? "media"
-        : safeClassification.confiancaClassificacao,
-
-    sinaisObservados: [
-      ...(Array.isArray(safeClassification.sinaisObservados)
-        ? safeClassification.sinaisObservados
-        : []),
-      "afiliado_bloqueado_por_objecao_de_preco_sem_pedido_claro"
-    ],
-
-    resumoPerfil:
-      "O Classificador tentou interpretar objeção de preço como intenção de Afiliado, mas o backend corrigiu porque o lead não pediu claramente link, afiliado, venda sem estoque ou alternativa sem taxa. A leitura correta é objeção de investimento no Homologado.",
-
-    classificadoEm: new Date()
-  };
-}
     return {
       ...safeClassification,
       temperaturaComercial:
@@ -4591,6 +4541,60 @@ if (classificadorForcouAfiliadoSemPedidoClaro) {
         "pre_analise_bloqueada_por_etapas_incompletas"
       ],
       resumoPerfil: "O Classificador indicou avanço para pré-análise, mas o backend bloqueou porque ainda faltam etapas obrigatórias do funil. A intenção do lead deve ser tratada com cautela.",
+      classificadoEm: new Date()
+    };
+  }
+
+  // 3) Objeção leve de taxa/preço NÃO pode virar Afiliado sem pedido claro.
+  const mensagemTemObjeçãoDePreço =
+    isPreCrmBlockingObjection(lastUserText) &&
+    !isClearAffiliateFallbackIntent(lastUserText);
+
+  const classificadorForcouAfiliadoSemPedidoClaro =
+    mensagemTemObjeçãoDePreço &&
+    (
+      safeClassification.perfilComportamentalPrincipal === "afiliado_digital" ||
+      safeClassification.intencaoPrincipal === "buscar_afiliado" ||
+      safeClassification.temperaturaComercial === "afiliado"
+    );
+
+  if (classificadorForcouAfiliadoSemPedidoClaro) {
+    return {
+      ...safeClassification,
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "afiliado"
+          ? "travado"
+          : safeClassification.temperaturaComercial === "quente"
+            ? "travado"
+            : safeClassification.temperaturaComercial,
+
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "afiliado_digital"
+          ? "sensivel_preco"
+          : safeClassification.perfilComportamentalPrincipal,
+
+      intencaoPrincipal:
+        safeClassification.intencaoPrincipal === "buscar_afiliado"
+          ? "avaliar_investimento"
+          : safeClassification.intencaoPrincipal,
+
+      objecaoPrincipal: "preco_taxa_adesao",
+
+      confiancaClassificacao:
+        safeClassification.confiancaClassificacao === "alta"
+          ? "media"
+          : safeClassification.confiancaClassificacao,
+
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "afiliado_bloqueado_por_objecao_de_preco_sem_pedido_claro"
+      ],
+
+      resumoPerfil:
+        "O Classificador tentou interpretar objeção de preço como intenção de Afiliado, mas o backend corrigiu porque o lead não pediu claramente link, afiliado, venda sem estoque ou alternativa sem taxa. A leitura correta é objeção de investimento no Homologado.",
+
       classificadoEm: new Date()
     };
   }
