@@ -8070,12 +8070,17 @@ const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
 // e orienta o que responder e como responder.
 let preSdrConsultantAdvice = null;
 
+const lastAssistantText =
+  [...history]
+    .reverse()
+    .find(message => message.role === "assistant")?.content || "";
+
 try {
  preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
   history,
   lastUserText: text,
-  lastSdrText: "",
+    lastSdrText: lastAssistantText,
   supervisorAnalysis: currentLead?.supervisor || {},
   classification: currentLead?.classificacao || {}
 });
