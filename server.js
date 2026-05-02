@@ -7686,37 +7686,32 @@ if (
 
 let respostaFinal = resposta;
      
-     // 🚫 BLOQUEIO DE REGRESSÃO DE FASE
-const etapaAtual = getCurrentFunnelStage(currentLead);
-const respostaLowerCheck = respostaFinal.toLowerCase();
+// 🚫 BLOQUEIO DE REGRESSÃO DE FASE — VERSÃO SEGURA
+// Não bloqueia respostas apenas porque citam palavras como "estoque", "taxa" ou "programa".
+// A SDR pode responder dúvidas reais do lead sobre fases anteriores.
+// O bloqueio só atua quando a resposta tenta reiniciar o funil de forma genérica.
 
-let etapaDetectadaNaResposta = etapaAtual;
+const respostaLowerCheck = respostaFinal
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "");
 
-if (respostaLowerCheck.includes("parceria") || respostaLowerCheck.includes("programa")) {
-  etapaDetectadaNaResposta = 1;
-}
+const respostaPareceReinicioDoFunil =
+  respostaLowerCheck.includes("vou te explicar de forma direta como funciona o programa") ||
+  respostaLowerCheck.includes("vamos comecar pelo inicio") ||
+  respostaLowerCheck.includes("deixa eu comecar explicando o programa") ||
+  respostaLowerCheck.includes("primeiro preciso te explicar o programa") ||
+  respostaLowerCheck.includes("antes de tudo, o programa funciona assim");
 
-if (respostaLowerCheck.includes("benef")) {
-  etapaDetectadaNaResposta = 2;
-}
+const leadFezPerguntaEspecifica =
+  String(text || "").includes("?") ||
+  /\b(estoque|comodato|taxa|valor|investimento|contrato|responsabilidade|comissao|comissão|kit|produto|afiliado|link)\b/i.test(text);
 
-if (respostaLowerCheck.includes("estoque") || respostaLowerCheck.includes("comodato")) {
-  etapaDetectadaNaResposta = 3;
-}
-
-if (respostaLowerCheck.includes("respons")) {
-  etapaDetectadaNaResposta = 4;
-}
-
-if (respostaLowerCheck.includes("1.990") || respostaLowerCheck.includes("1990") || respostaLowerCheck.includes("investimento")) {
-  etapaDetectadaNaResposta = 5;
-}
-
-if (respostaLowerCheck.includes("resultado depende")) {
-  etapaDetectadaNaResposta = 6;
-}
-
-if (etapaDetectadaNaResposta < etapaAtual) {
+if (
+  respostaPareceReinicioDoFunil &&
+  !leadFezPerguntaEspecifica &&
+  getCurrentFunnelStage(currentLead) > 1
+) {
   respostaFinal = getNextFunnelStepMessage(currentLead);
 }
 
