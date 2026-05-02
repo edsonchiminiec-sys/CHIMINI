@@ -6324,6 +6324,32 @@ if (
 
   return null;
 }
+
+function canSendBusinessFile(key, lead = {}) {
+  if (key !== "contrato") {
+    return true;
+  }
+
+  return (
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.faseFunil === "crm" ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm"
+  );
+}
+
+function removeFileAction(actions = [], keyToRemove = "") {
+  if (!Array.isArray(actions)) return;
+
+  for (let i = actions.length - 1; i >= 0; i--) {
+    if (actions[i] === keyToRemove) {
+      actions.splice(i, 1);
+    }
+  }
+}
+
 async function sendFileOnce(from, key) {
   if (!FILES[key]) return false;
 
@@ -8107,6 +8133,31 @@ let resposta = cleanReply?.trim();
 if (!resposta) {
   resposta = "Perfeito 😊 Me conta um pouco melhor o que você quer entender pra eu te ajudar da melhor forma.";
 }
+
+// 🚫 BLOQUEIO DE CONTRATO ANTES DO CRM
+const leadPediuContratoAgora =
+  hasExplicitFileRequest(text) &&
+  detectRequestedFile(text) === "contrato";
+
+const iaTentouEnviarContrato =
+  Array.isArray(actions) &&
+  actions.includes("contrato");
+
+const podeEnviarContratoAgora =
+  canSendBusinessFile("contrato", currentLead || {});
+
+if ((leadPediuContratoAgora || iaTentouEnviarContrato) && !podeEnviarContratoAgora) {
+  removeFileAction(actions, "contrato");
+
+  resposta = `Posso te explicar sobre o contrato 😊
+
+A versão oficial para assinatura só é liberada depois da análise cadastral da equipe IQG.
+
+Antes disso, eu consigo te orientar sobre as regras principais do programa, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou envio de contrato oficial.
+
+Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
+}
+     
      const respostaLower = resposta.toLowerCase();
      const jaExplicouPrograma =
   historyText.includes("parceria") &&
@@ -8602,10 +8653,29 @@ if (requestedFile) {
 }
 
 for (const action of actions) {
-  fileKeys.add(action);
+  if (canSendBusinessFile(action, currentLead || {})) {
+    fileKeys.add(action);
+  } else {
+    console.log("📎 Arquivo bloqueado por regra comercial:", {
+      user: from,
+      arquivo: action,
+      fase: currentLead?.faseQualificacao || "-",
+      funil: currentLead?.faseFunil || "-",
+      statusOperacional: currentLead?.statusOperacional || "-"
+    });
+  }
 }
 
 for (const key of fileKeys) {
+  if (!canSendBusinessFile(key, currentLead || {})) {
+    console.log("📎 Arquivo não enviado por regra comercial:", {
+      user: from,
+      arquivo: key
+    });
+
+    continue;
+  }
+
   await sendFileOnce(from, key);
 }
 
