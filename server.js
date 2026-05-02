@@ -1195,6 +1195,191 @@ async function runConsultantAssistant({
   return parseConsultantAdviceJson(rawText);
 }
 
+async function runLeadSemanticIntentClassifier({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const fallback = {
+    greetingOnly: false,
+    asksQuestion: false,
+    questionTopics: [],
+    wantsAffiliate: false,
+    wantsHomologado: false,
+    wantsBoth: false,
+    positiveRealInterest: false,
+    positiveCommitment: false,
+    softUnderstandingOnly: false,
+    blockingObjection: false,
+    blockingReason: "",
+    priceObjection: false,
+    stockObjection: false,
+    riskObjection: false,
+    delayOrAbandonment: false,
+    paymentIntent: false,
+    humanRequest: false,
+    dataCorrectionIntent: false,
+    requestedFile: "",
+    confidence: "baixa",
+    reason: "Fallback local. Classificador semântico não executado ou falhou."
+  };
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-8).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é um classificador semântico interno da IQG.
+
+Sua função é interpretar a ÚLTIMA mensagem do lead em uma conversa de WhatsApp.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve resposta da SDR.
+Você NÃO altera status.
+Você NÃO decide envio ao CRM.
+Você NÃO confirma CPF, telefone, cidade ou estado.
+Você apenas retorna um JSON interno de interpretação semântica.
+
+CONTEXTO COMERCIAL:
+A IQG possui dois caminhos:
+1. Parceiro Homologado IQG:
+- envolve produtos físicos;
+- lote inicial em comodato;
+- suporte, treinamento, contrato e taxa de adesão;
+- exige condução por fases antes de coletar dados.
+
+2. Programa de Afiliados IQG:
+- divulgação por link;
+- sem estoque;
+- sem taxa de adesão do Homologado;
+- cadastro em https://minhaiqg.com.br/.
+
+TAREFA:
+Analise a última mensagem do lead e retorne sinais semânticos.
+
+REGRAS:
+- Se o lead só cumprimentou, marque greetingOnly true.
+- Se o lead fez pergunta, marque asksQuestion true e informe questionTopics.
+- Se o lead quer afiliado, link, comissão por link, divulgação online ou vender sem estoque, marque wantsAffiliate true.
+- Se o lead quer claramente Parceiro Homologado, revenda, estoque, kit, lote ou produto físico, marque wantsHomologado true.
+- Se o lead quer os dois caminhos ou compara os dois, marque wantsBoth true.
+- Se o lead confirma claramente interesse em seguir para pré-análise, marque positiveRealInterest true.
+- Respostas como "óbvio", "claro", "com certeza", "demorou", "manda bala", "👍", "✅", "👌" podem ser positivas dependendo do contexto.
+- Se o lead apenas demonstra recebimento/entendimento, como "ok", "entendi", "show", "beleza", "fez sentido", marque softUnderstandingOnly true.
+- Se o lead trava por preço, taxa, risco, estoque, produto físico ou diz que vai pensar/deixar para depois, marque blockingObjection true.
+- Se a trava for sobre preço/taxa/valor, marque priceObjection true.
+- Se a trava for sobre estoque/produto físico/comodato, marque stockObjection true.
+- Se a trava for sobre medo, risco, insegurança ou desconfiança, marque riskObjection true.
+- Se o lead quer adiar, sumir, pensar ou deixar para depois, marque delayOrAbandonment true.
+- Se o lead fala em pagar, pagamento, pix, cartão ou boleto, marque paymentIntent true.
+- Se o lead pede atendente, pessoa, humano, consultor ou vendedor, marque humanRequest true.
+- Se o lead diz que algum dado está errado ou quer corrigir CPF, telefone, cidade, estado ou nome, marque dataCorrectionIntent true.
+- Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
+
+IMPORTANTE:
+- Não invente intenção.
+- Se houver dúvida, use false e confidence baixa.
+- O backend decidirá o que fazer. Você apenas interpreta.
+
+Responda somente JSON válido neste formato:
+
+{
+  "greetingOnly": false,
+  "asksQuestion": false,
+  "questionTopics": [],
+  "wantsAffiliate": false,
+  "wantsHomologado": false,
+  "wantsBoth": false,
+  "positiveRealInterest": false,
+  "positiveCommitment": false,
+  "softUnderstandingOnly": false,
+  "blockingObjection": false,
+  "blockingReason": "",
+  "priceObjection": false,
+  "stockObjection": false,
+  "riskObjection": false,
+  "delayOrAbandonment": false,
+  "paymentIntent": false,
+  "humanRequest": false,
+  "dataCorrectionIntent": false,
+  "requestedFile": "",
+  "confidence": "baixa",
+  "reason": ""
+}
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: lastUserText || "",
+              ultimaRespostaSdr: lastSdrText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                status: lead.status || "",
+                faseQualificacao: lead.faseQualificacao || "",
+                statusOperacional: lead.statusOperacional || "",
+                faseFunil: lead.faseFunil || "",
+                temperaturaComercial: lead.temperaturaComercial || "",
+                rotaComercial: lead.rotaComercial || "",
+                origemConversao: lead.origemConversao || "",
+                interesseReal: lead.interesseReal === true,
+                interesseAfiliado: lead.interesseAfiliado === true,
+                dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+                crmEnviado: lead.crmEnviado === true,
+                aguardandoConfirmacaoCampo: lead.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: lead.aguardandoConfirmacao === true,
+                campoPendente: lead.campoPendente || "",
+                campoEsperado: lead.campoEsperado || "",
+                etapas: lead.etapas || {}
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro no classificador semântico:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
+      requestedFile: parsed?.requestedFile || "",
+      confidence: parsed?.confidence || "baixa",
+      reason: parsed?.reason || ""
+    };
+  } catch (error) {
+    console.error("Falha no classificador semântico:", error.message);
+    return fallback;
+  }
+}
+
 async function runConsultantAfterClassifier({
   user,
   lead = {},
@@ -7098,6 +7283,26 @@ const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
 const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
+
+     // 🧠 CLASSIFICADOR SEMÂNTICO — MODO OBSERVAÇÃO
+// Nesta etapa ele NÃO muda fluxo, NÃO salva status e NÃO envia mensagem.
+// Ele apenas registra no log como interpretou a última mensagem do lead.
+const semanticIntent = await runLeadSemanticIntentClassifier({
+  lead: currentLead || {},
+  history,
+  lastUserText: text,
+  lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
+});
+
+console.log("🧠 Intenção semântica observada:", {
+  user: from,
+  ultimaMensagemLead: text,
+  statusAtual: currentLead?.status || "-",
+  faseAtual: currentLead?.faseQualificacao || "-",
+  faseFunilAtual: currentLead?.faseFunil || "-",
+  etapas: currentLead?.etapas || {},
+  semanticIntent
+});
 
      const podeConfirmarInteresseRealAgora =
   canAskForRealInterest(currentLead || {}) &&
