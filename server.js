@@ -8593,7 +8593,10 @@ await saveConversation(from, history);
 // 🔥 Envio de arquivos por decisão da IA
 const fileKeys = new Set();
 
-const requestedFile = detectRequestedFile(text);
+const requestedFile = hasExplicitFileRequest(text)
+  ? detectRequestedFile(text)
+  : null;
+
 if (requestedFile) {
   fileKeys.add(requestedFile);
 }
