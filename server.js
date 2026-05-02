@@ -5665,6 +5665,74 @@ function isAffiliateAlternativeOpportunity(text = "") {
   return rejeitouAdesao || rejeitouEstoque || pediuModeloSemEstoque;
 }
 
+function isPreCrmBlockingObjection(text = "") {
+  const t = normalizeTextForIntent(text);
+
+  return (
+    // trava por preço / taxa
+    t.includes("achei caro") ||
+    t.includes("muito caro") ||
+    t.includes("taxa cara") ||
+    t.includes("taxa alta") ||
+    t.includes("valor alto") ||
+    t.includes("ficou pesado") ||
+    t.includes("pesado pra mim") ||
+    t.includes("nao tenho dinheiro") ||
+    t.includes("não tenho dinheiro") ||
+    t.includes("sem dinheiro agora") ||
+    t.includes("nao consigo pagar") ||
+    t.includes("não consigo pagar") ||
+    t.includes("nao posso pagar") ||
+    t.includes("não posso pagar") ||
+
+    // rejeição da taxa
+    t.includes("nao quero pagar taxa") ||
+    t.includes("não quero pagar taxa") ||
+    t.includes("nao quero pagar adesao") ||
+    t.includes("não quero pagar adesão") ||
+    t.includes("nao quero adesao") ||
+    t.includes("não quero adesão") ||
+
+    // rejeição de estoque / físico
+    t.includes("nao quero estoque") ||
+    t.includes("não quero estoque") ||
+    t.includes("nao quero produto fisico") ||
+    t.includes("não quero produto físico") ||
+    t.includes("nao quero mexer com estoque") ||
+    t.includes("não quero mexer com estoque") ||
+
+    // medo / risco / desistência leve
+    t.includes("tenho medo") ||
+    t.includes("medo de arriscar") ||
+    t.includes("parece arriscado") ||
+    t.includes("muito risco") ||
+    t.includes("vou pensar") ||
+    t.includes("vou deixar pra depois") ||
+    t.includes("talvez depois") ||
+    t.includes("agora nao") ||
+    t.includes("agora não") ||
+    t.includes("nao e pra mim") ||
+    t.includes("não é pra mim")
+  );
+}
+
+function buildAffiliateRecoveryResponse() {
+  return `Entendo totalmente 😊
+
+O Parceiro Homologado é um modelo mais estruturado, com produtos físicos, lote em comodato, suporte, treinamento, contrato e taxa de adesão. Ele faz mais sentido para quem quer atuar com produto em mãos e vender de forma mais ativa.
+
+Mas se esse formato não fizer sentido para você agora, existe um caminho mais simples: o Programa de Afiliados IQG.
+
+No afiliado, você não precisa ter estoque, não recebe lote em comodato e não tem a taxa de adesão do Parceiro Homologado.
+
+Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Se depois você quiser algo mais estruturado, com produtos em mãos e suporte da indústria, aí podemos retomar o Parceiro Homologado.`;
+}
+
 function buildAffiliateResponse(isAlternative = false) {
   if (isAlternative) {
     return `Entendi 😊 Nesse caso, talvez o Programa de Afiliados IQG faça mais sentido como uma alternativa mais simples.
