@@ -1392,16 +1392,41 @@ async function runConsultantAfterClassifier({
   try {
     if (!user) return;
 
-    const consultantAdvice = await runConsultantAssistant({
-      lead,
-      history,
-      lastUserText,
-      lastSdrText,
-      supervisorAnalysis,
-      classification
-    });
+    let consultantAdvice = await runConsultantAssistant({
+  lead,
+  history,
+  lastUserText,
+  lastSdrText,
+  supervisorAnalysis,
+  classification
+});
 
-    await saveConsultantAdvice(user, consultantAdvice);
+const originalConsultantAdvice = consultantAdvice;
+
+consultantAdvice = enforceConsultantHardLimits({
+  consultantAdvice,
+  lead,
+  lastUserText,
+  classification
+});
+
+if (
+  originalConsultantAdvice?.estrategiaRecomendada !== consultantAdvice?.estrategiaRecomendada ||
+  originalConsultantAdvice?.ofertaMaisAdequada !== consultantAdvice?.ofertaMaisAdequada ||
+  originalConsultantAdvice?.momentoIdealHumano !== consultantAdvice?.momentoIdealHumano
+) {
+  console.log("🛡️ Consultor corrigido por trava dura:", {
+    user,
+    ultimaMensagemLead: lastUserText,
+    estrategiaOriginal: originalConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    estrategiaCorrigida: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    ofertaOriginal: originalConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    ofertaCorrigida: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    motivo: "objecao_de_preco_sem_pedido_claro_de_afiliado"
+  });
+}
+
+await saveConsultantAdvice(user, consultantAdvice);
 
     console.log("✅ Consultor Assistente analisou estratégia:", {
       user,
