@@ -4602,6 +4602,56 @@ function enforceClassifierHardLimits({
   return safeClassification;
 }
 
+function enforceConsultantHardLimits({
+  consultantAdvice = {},
+  lead = {},
+  lastUserText = "",
+  classification = {}
+} = {}) {
+  const safeAdvice = {
+    ...buildDefaultConsultantAdvice(),
+    ...(consultantAdvice || {})
+  };
+
+  const mensagemTemObjeçãoDePreço =
+    isPreCrmBlockingObjection(lastUserText) &&
+    !isClearAffiliateFallbackIntent(lastUserText);
+
+  const consultorForcouAfiliadoSemPedidoClaro =
+    mensagemTemObjeçãoDePreço &&
+    (
+      safeAdvice.estrategiaRecomendada === "oferecer_afiliado" ||
+      safeAdvice.ofertaMaisAdequada === "afiliado" ||
+      classification?.intencaoPrincipal === "buscar_afiliado" ||
+      classification?.perfilComportamentalPrincipal === "afiliado_digital"
+    );
+
+  if (consultorForcouAfiliadoSemPedidoClaro) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada: "tratar_objecao_taxa",
+      ofertaMaisAdequada: "homologado",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial:
+        safeAdvice.prioridadeComercial === "urgente"
+          ? "alta"
+          : safeAdvice.prioridadeComercial || "alta",
+      proximaMelhorAcao:
+        "Tratar a objeção de taxa antes de oferecer Afiliados. A SDR deve reforçar valor percebido: lote inicial acima de R$ 5.000,00 em preço de venda, margem é de 40% no preço sugerido, possibilidade de margem maior com ágio, parcelamento no cartão e pagamento somente após análise interna e contrato.",
+      abordagemSugerida:
+        "Tom acolhedor e consultivo. Validar que o valor merece análise, mas não tratar a taxa isoladamente. Não pressionar e não oferecer Afiliados ainda, pois o lead não pediu claramente link, venda sem estoque ou alternativa sem taxa.",
+      argumentoPrincipal:
+        "A taxa de R$ 1.990,00 deve ser comparada com a estrutura recebida, suporte, treinamento, lote em comodato acima de R$ 5.000,00 em preço de venda e margem é de 40% quando vende no preço sugerido.",
+      cuidadoPrincipal:
+        "Não transformar objeção de preço em intenção de Afiliado. Só apresentar Afiliados se o lead rejeitar claramente taxa, estoque, produto físico ou pedir uma alternativa por link/sem estoque.",
+      resumoConsultivo:
+        "O Consultor tentou orientar Afiliados diante de objeção de preço, mas o backend corrigiu porque o lead ainda não pediu claramente Afiliado. A próxima resposta deve tratar a objeção de taxa com proposta de valor do Parceiro Homologado."
+    };
+  }
+
+  return safeAdvice;
+}
+
 function enforceSupervisorHardLimits({
   supervisorAnalysis = {},
   lead = {},
