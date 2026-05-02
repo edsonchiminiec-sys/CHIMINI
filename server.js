@@ -5375,15 +5375,16 @@ if (isAffiliateAlternativeOpportunity(text)) {
 }
 
   const hasInterest =
-    t.includes("quero começar") ||
-    t.includes("quero entrar") ||
-    t.includes("tenho interesse") ||
-    t.includes("vamos") ||
-    t.includes("pode iniciar") ||
-    t.includes("seguir") ||
-    t.includes("pré-análise") ||
-    t.includes("pre-analise") ||
-    t.includes("pre análise");
+  isExplicitPreAnalysisIntent(text) ||
+  t.includes("quero começar") ||
+  t.includes("quero comecar") ||
+  t.includes("quero entrar") ||
+  t.includes("quero participar") ||
+  t.includes("tenho interesse em entrar") ||
+  t.includes("tenho interesse em participar") ||
+  t.includes("pode iniciar") ||
+  t.includes("podemos iniciar") ||
+  t.includes("quero aderir");
 
   const isRejecting =
     t.includes("não tenho interesse") ||
@@ -5456,9 +5457,9 @@ if (
     return "pre_analise";
   }
 
-  if (hasInterest) {
-    return "qualificando";
-  }
+  if (hasInterest && !isSoftUnderstandingConfirmation(text)) {
+  return "qualificando";
+}
 
   if (
     t.includes("como funciona") ||
@@ -6600,6 +6601,29 @@ const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
 const missingFields = getMissingLeadFields(extractedData);
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
+     // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
+// Só marca compromisso como concluído quando:
+// 1. a SDR já perguntou sobre o resultado depender da atuação;
+// 2. o lead respondeu positivamente;
+// 3. ainda não estamos em confirmação de dados pessoais.
+if (
+  currentLead?.etapas?.compromissoPerguntado === true &&
+  currentLead?.etapas?.compromisso !== true &&
+  isPositiveConfirmation(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    etapas: {
+      ...(currentLead?.etapas || {}),
+      compromisso: true,
+      compromissoPerguntado: false
+    }
+  });
+
+  currentLead = await loadLeadProfile(from);
+}
+
 if (leadStatus === "afiliado") {
   const isAlternative = isAffiliateAlternativeOpportunity(text);
 
@@ -7411,36 +7435,155 @@ const etapasUpdate = { ...(currentLead?.etapas || {}) };
 
 const respostaEtapaLower = respostaFinal.toLowerCase();
 
-if (respostaEtapaLower.includes("parceria") || respostaEtapaLower.includes("programa")) {
+     const explicouProgramaDeVerdade =
+  (
+    respostaEtapaLower.includes("parceria comercial") ||
+    respostaEtapaLower.includes("parceria onde você vende") ||
+    respostaEtapaLower.includes("parceria onde voce vende") ||
+    respostaEtapaLower.includes("você vende produtos") ||
+    respostaEtapaLower.includes("voce vende produtos") ||
+    respostaEtapaLower.includes("vende produtos da iqg") ||
+    respostaEtapaLower.includes("direto da indústria") ||
+    respostaEtapaLower.includes("direto da industria") ||
+    respostaEtapaLower.includes("com suporte da indústria") ||
+    respostaEtapaLower.includes("com suporte da industria")
+  );
+
+if (explicouProgramaDeVerdade) {
   etapasUpdate.programa = true;
 }
 
-if (respostaEtapaLower.includes("benef")) {
+const explicouBeneficiosDeVerdade =
+  (
+    respostaEtapaLower.includes("você não começa sozinho") ||
+    respostaEtapaLower.includes("voce nao comeca sozinho") ||
+    respostaEtapaLower.includes("recebe suporte") ||
+    respostaEtapaLower.includes("suporte da indústria") ||
+    respostaEtapaLower.includes("suporte da industria") ||
+    respostaEtapaLower.includes("materiais") ||
+    respostaEtapaLower.includes("treinamento") ||
+    respostaEtapaLower.includes("orientação para vender") ||
+    respostaEtapaLower.includes("orientacao para vender") ||
+    respostaEtapaLower.includes("vender com mais segurança") ||
+    respostaEtapaLower.includes("vender com mais seguranca") ||
+    respostaEtapaLower.includes("facilita muito porque você pode focar") ||
+    respostaEtapaLower.includes("facilita muito porque voce pode focar")
+  );
+
+if (explicouBeneficiosDeVerdade) {
   etapasUpdate.beneficios = true;
 }
+const explicouEstoqueDeVerdade =
+  (
+    respostaEtapaLower.includes("lote estratégico") ||
+    respostaEtapaLower.includes("lote estrategico") ||
+    respostaEtapaLower.includes("lote inicial") ||
+    respostaEtapaLower.includes("produtos em comodato") ||
+    respostaEtapaLower.includes("estoque é cedido em comodato") ||
+    respostaEtapaLower.includes("estoque e cedido em comodato") ||
+    respostaEtapaLower.includes("fica com você para operação") ||
+    respostaEtapaLower.includes("fica com voce para operacao") ||
+    respostaEtapaLower.includes("continua sendo da iqg") ||
+    respostaEtapaLower.includes("continua sendo propriedade da iqg") ||
+    respostaEtapaLower.includes("pronta-entrega") ||
+    respostaEtapaLower.includes("demonstração") ||
+    respostaEtapaLower.includes("demonstracao") ||
+    respostaEtapaLower.includes("você não compra esse estoque") ||
+    respostaEtapaLower.includes("voce nao compra esse estoque") ||
+    respostaEtapaLower.includes("não compra esse estoque") ||
+    respostaEtapaLower.includes("nao compra esse estoque")
+  );
 
-if (respostaEtapaLower.includes("comodato") || respostaEtapaLower.includes("estoque")) {
+if (explicouEstoqueDeVerdade) {
   etapasUpdate.estoque = true;
 }
+const explicouResponsabilidadesDeVerdade =
+  (
+    respostaEtapaLower.includes("responsável pela guarda") ||
+    respostaEtapaLower.includes("responsavel pela guarda") ||
+    respostaEtapaLower.includes("guarda dos produtos") ||
+    respostaEtapaLower.includes("conservação dos produtos") ||
+    respostaEtapaLower.includes("conservacao dos produtos") ||
+    respostaEtapaLower.includes("comunicação correta das vendas") ||
+    respostaEtapaLower.includes("comunicacao correta das vendas") ||
+    respostaEtapaLower.includes("comunicar corretamente as vendas") ||
+    respostaEtapaLower.includes("responsável pela venda") ||
+    respostaEtapaLower.includes("responsavel pela venda") ||
+    respostaEtapaLower.includes("atuação nas vendas") ||
+    respostaEtapaLower.includes("atuacao nas vendas") ||
+    respostaEtapaLower.includes("resultado depende da sua atuação") ||
+    respostaEtapaLower.includes("resultado depende da sua atuacao") ||
+    respostaEtapaLower.includes("depende da sua atuação nas vendas") ||
+    respostaEtapaLower.includes("depende da sua atuacao nas vendas")
+  );
 
-if (respostaEtapaLower.includes("respons")) {
+if (explicouResponsabilidadesDeVerdade) {
   etapasUpdate.responsabilidades = true;
 }
 
-if (
-  respostaEtapaLower.includes("1.990") ||
-  respostaEtapaLower.includes("1990") ||
-  respostaEtapaLower.includes("investimento")
-) {
+const explicouInvestimentoDeVerdade =
+  (
+    (
+      respostaEtapaLower.includes("r$ 1.990") ||
+      respostaEtapaLower.includes("1.990") ||
+      respostaEtapaLower.includes("1990")
+    ) &&
+    (
+      respostaEtapaLower.includes("não é compra de mercadoria") ||
+      respostaEtapaLower.includes("nao e compra de mercadoria") ||
+      respostaEtapaLower.includes("não é caução") ||
+      respostaEtapaLower.includes("nao e caucao") ||
+      respostaEtapaLower.includes("não é garantia") ||
+      respostaEtapaLower.includes("nao e garantia") ||
+      respostaEtapaLower.includes("ativação no programa") ||
+      respostaEtapaLower.includes("ativacao no programa") ||
+      respostaEtapaLower.includes("adesão e implantação") ||
+      respostaEtapaLower.includes("adesao e implantacao")
+    ) &&
+    (
+      respostaEtapaLower.includes("mais de r$ 5.000") ||
+      respostaEtapaLower.includes("mais de 5.000") ||
+      respostaEtapaLower.includes("mais de r$5.000") ||
+      respostaEtapaLower.includes("mais de 5000") ||
+      respostaEtapaLower.includes("lote inicial representa")
+    ) &&
+    (
+      respostaEtapaLower.includes("parcelado") ||
+      respostaEtapaLower.includes("10x") ||
+      respostaEtapaLower.includes("r$ 199") ||
+      respostaEtapaLower.includes("199 no cartão") ||
+      respostaEtapaLower.includes("199 no cartao") ||
+      respostaEtapaLower.includes("pix")
+    ) &&
+    (
+      respostaEtapaLower.includes("pagamento só acontece depois") ||
+      respostaEtapaLower.includes("pagamento so acontece depois") ||
+      respostaEtapaLower.includes("depois da análise interna") ||
+      respostaEtapaLower.includes("depois da analise interna") ||
+      respostaEtapaLower.includes("assinatura do contrato") ||
+      respostaEtapaLower.includes("após análise interna") ||
+      respostaEtapaLower.includes("apos analise interna")
+    )
+  );
+
+if (explicouInvestimentoDeVerdade) {
   etapasUpdate.investimento = true;
 }
 
-if (
-  respostaEtapaLower.includes("resultado depende") ||
-  respostaEtapaLower.includes("depende da sua atuação") ||
-  respostaEtapaLower.includes("depende da sua atuacao")
-) {
-  etapasUpdate.compromisso = true;
+const perguntouCompromissoDeAtuacao =
+  (
+    respostaEtapaLower.includes("resultado depende da sua atuação") ||
+    respostaEtapaLower.includes("resultado depende da sua atuacao") ||
+    respostaEtapaLower.includes("depende da sua atuação nas vendas") ||
+    respostaEtapaLower.includes("depende da sua atuacao nas vendas") ||
+    respostaEtapaLower.includes("você está de acordo que o resultado depende") ||
+    respostaEtapaLower.includes("voce esta de acordo que o resultado depende") ||
+    respostaEtapaLower.includes("está de acordo que o resultado depende") ||
+    respostaEtapaLower.includes("esta de acordo que o resultado depende")
+  );
+
+if (perguntouCompromissoDeAtuacao) {
+  etapasUpdate.compromissoPerguntado = true;
 }
 
 await saveLeadProfile(from, {
