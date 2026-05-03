@@ -6201,7 +6201,279 @@ Estado: ${normalizeUF(data.estado || "-")}
 Esses dados estão corretos?`;
 }
 
+function isDataFlowState(lead = {}) {
+  const fasesDeColetaOuConfirmacao = [
+    "coletando_dados",
+    "dados_parciais",
+    "aguardando_dados",
+    "aguardando_confirmacao_campo",
+    "aguardando_confirmacao_dados",
+    "corrigir_dado",
+    "corrigir_dado_final",
+    "aguardando_valor_correcao_final"
+  ];
 
+  return Boolean(
+    fasesDeColetaOuConfirmacao.includes(lead?.faseQualificacao) ||
+    lead?.faseFunil === "coleta_dados" ||
+    lead?.faseFunil === "confirmacao_dados" ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true
+  );
+}
+
+function isLikelyPureDataAnswer(text = "", currentLead = {}) {
+  const cleanText = String(text || "").trim();
+
+  if (!cleanText) {
+    return false;
+  }
+
+  const normalized = cleanText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const hasQuestionSignal =
+    cleanText.includes("?") ||
+    /^(como|qual|quais|quando|onde|por que|porque|pq|pra que|para que|posso|tem|e se|me explica|fiquei com duvida|tenho duvida)\b/i.test(normalized) ||
+    normalized.includes("duvida") ||
+    normalized.includes("dúvida");
+
+  if (hasQuestionSignal) {
+    return false;
+  }
+
+  if (isPositiveConfirmation(cleanText) || isNegativeConfirmation(cleanText)) {
+    return true;
+  }
+
+  const digits = onlyDigits(cleanText);
+
+  // CPF ou telefone puro.
+  if (digits.length >= 10) {
+    return true;
+  }
+
+  // Estado puro.
+  if (
+    currentLead?.campoEsperado === "estado" &&
+    VALID_UFS.includes(normalizeUF(cleanText))
+  ) {
+    return true;
+  }
+
+  // Cidade pura.
+  if (
+    currentLead?.campoEsperado === "cidade" &&
+    /^[A-Za-zÀ-ÿ.'\-\s]{2,50}$/.test(cleanText) &&
+    !VALID_UFS.includes(normalizeUF(cleanText))
+  ) {
+    return true;
+  }
+
+  // Nome puro, quando está esperando nome.
+  if (
+    currentLead?.campoEsperado === "nome" &&
+    /^[A-Za-zÀ-ÿ.'\-\s]{5,80}$/.test(cleanText) &&
+    cleanText.trim().split(/\s+/).length >= 2
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function isLeadQuestionDuringDataFlow(text = "", currentLead = {}) {
+  const cleanText = String(text || "").trim();
+
+  if (!cleanText) {
+    return false;
+  }
+
+  if (isLikelyPureDataAnswer(cleanText, currentLead)) {
+    return false;
+  }
+
+  const normalized = cleanText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const hasQuestionSignal =
+    cleanText.includes("?") ||
+    /^(como|qual|quais|quando|onde|por que|porque|pq|pra que|para que|posso|tem|e se|me explica|fiquei com duvida|tenho duvida)\b/i.test(normalized) ||
+    normalized.includes("duvida") ||
+    normalized.includes("dúvida") ||
+    normalized.includes("nao entendi") ||
+    normalized.includes("não entendi");
+
+  if (!hasQuestionSignal) {
+    return false;
+  }
+
+  // Correção de dado não é pergunta comercial.
+  const explicitCorrection = extractExplicitCorrection(cleanText);
+
+  if (
+    explicitCorrection?.campoParaCorrigir ||
+    explicitCorrection?.nome ||
+    explicitCorrection?.cpf ||
+    explicitCorrection?.telefone ||
+    explicitCorrection?.cidade ||
+    explicitCorrection?.estado
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function buildDataFlowResumeMessage(lead = {}) {
+  const labels = {
+    nome: "nome completo",
+    cpf: "CPF",
+    telefone: "telefone com DDD",
+    cidade: "cidade",
+    estado: "estado"
+  };
+
+  const labelsComArtigo = {
+    nome: "o nome completo",
+    cpf: "o CPF",
+    telefone: "o telefone com DDD",
+    cidade: "a cidade",
+    estado: "o estado"
+  };
+
+  if (
+    lead?.faseQualificacao === "aguardando_valor_correcao_final" &&
+    lead?.campoPendente
+  ) {
+    return `Retomando de onde paramos: qual é ${labelsComArtigo[lead.campoPendente] || "o dado"} correto?`;
+  }
+
+  if (lead?.aguardandoConfirmacaoCampo === true && lead?.campoPendente) {
+    const campo = lead.campoPendente;
+    const valor = lead.valorPendente || "-";
+
+    return `Retomando de onde paramos: identifiquei seu ${labels[campo] || campo} como "${valor}". Está correto?`;
+  }
+
+  if (
+    lead?.aguardandoConfirmacao === true ||
+    lead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+    lead?.faseFunil === "confirmacao_dados"
+  ) {
+    return `Retomando a confirmação dos dados:\n\n${buildLeadConfirmationMessage(lead)}`;
+  }
+
+  const missingFields = getMissingLeadFields(lead || {});
+  const nextField = lead?.campoEsperado || missingFields[0];
+
+  if (nextField) {
+    return `Retomando a pré-análise: ${getMissingFieldQuestion(nextField)}`;
+  }
+
+  return "Retomando a pré-análise: pode me confirmar se os dados estão corretos?";
+}
+
+async function answerDataFlowQuestion({
+  currentLead = {},
+  history = [],
+  userText = ""
+} = {}) {
+  const resumeMessage = buildDataFlowResumeMessage(currentLead || {});
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-8).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: `Você é a SDR comercial da IQG no WhatsApp.
+
+A conversa está em coleta ou confirmação de dados.
+
+Sua tarefa:
+1. Responder primeiro a dúvida do lead de forma curta, natural e comercial.
+2. Não pedir pagamento.
+3. Não aprovar lead.
+4. Não prometer ganho.
+5. Não alterar status.
+6. Não dizer que existe Supervisor, Classificador, Consultor ou análise interna de IA.
+7. Não pedir novos dados além da retomada abaixo.
+8. Depois de responder, retomar exatamente o ponto pendente.
+
+Retomada obrigatória:
+${resumeMessage}
+
+Responda em no máximo 2 blocos curtos antes da retomada.`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: userText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                faseQualificacao: currentLead?.faseQualificacao || "",
+                faseFunil: currentLead?.faseFunil || "",
+                campoEsperado: currentLead?.campoEsperado || "",
+                campoPendente: currentLead?.campoPendente || "",
+                aguardandoConfirmacaoCampo: currentLead?.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: currentLead?.aguardandoConfirmacao === true,
+                etapas: currentLead?.etapas || {}
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao responder pergunta durante coleta/confirmação:", data);
+
+      return `Boa pergunta 😊 Vou te responder de forma simples: essa parte é tratada com segurança pela equipe IQG durante a análise e evolução do parceiro no programa.\n\n${resumeMessage}`;
+    }
+
+    const answer = data.choices?.[0]?.message?.content?.trim();
+
+    if (!answer) {
+      return `Boa pergunta 😊 Essa parte é alinhada com segurança dentro do processo da IQG.\n\n${resumeMessage}`;
+    }
+
+    if (answer.includes(resumeMessage)) {
+      return answer;
+    }
+
+    return `${answer}\n\n${resumeMessage}`;
+  } catch (error) {
+    console.error("Falha ao responder pergunta durante coleta/confirmação:", error.message);
+
+    return `Boa pergunta 😊 Essa parte é alinhada com segurança dentro do processo da IQG.\n\n${resumeMessage}`;
+  }
+}
 
 const variations = {
   nome: [
@@ -7542,6 +7814,33 @@ const msg = `Sem problema 😊 Qual é ${labels[explicitCorrection.campoParaCorr
   return;
 }
 
+// 🔥 PERGUNTA REAL DURANTE COLETA/CONFIRMAÇÃO
+// Se o lead fizer uma pergunta enquanto estamos coletando ou confirmando dados,
+// a SDR responde a dúvida primeiro e depois retoma o campo pendente.
+// Isso evita tratar pergunta como cidade, nome, CPF ou confirmação.
+const leadFezPerguntaDuranteColeta =
+  isDataFlowState(currentLead || {}) &&
+  pendingFields.length === 0 &&
+  !explicitCorrection?.campoParaCorrigir &&
+  isLeadQuestionDuringDataFlow(text, currentLead || {});
+
+if (leadFezPerguntaDuranteColeta) {
+  const msg = await answerDataFlowQuestion({
+    currentLead: currentLead || {},
+    history,
+    userText: text
+  });
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+     
      if (
   currentLead?.faseQualificacao === "aguardando_valor_correcao_final" &&
   currentLead?.campoPendente
