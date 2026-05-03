@@ -4585,6 +4585,80 @@ function isPositiveConfirmation(text = "") {
   return positivePatterns.some(pattern => pattern.test(t));
 }
 
+function isNegativeConfirmation(text = "") {
+  const rawText = String(text || "").trim();
+
+  const t = rawText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) {
+    return false;
+  }
+
+  // Evita interpretar frases como "não está errado" como negativa.
+  if (
+    t.includes("nao esta errado") ||
+    t.includes("nao esta errada") ||
+    t.includes("nao tem erro") ||
+    t.includes("nao ha erro")
+  ) {
+    return false;
+  }
+
+  const negativePatterns = [
+    /^nao$/,
+    /^não$/,
+    /^n$/,
+    /^negativo$/,
+    /^errado$/,
+    /^errada$/,
+    /^incorreto$/,
+    /^incorreta$/,
+    /^nao esta correto$/,
+    /^não está correto$/,
+    /^nao esta correta$/,
+    /^não está correta$/,
+    /^nao estao corretos$/,
+    /^não estão corretos$/,
+    /^nao estao corretas$/,
+    /^não estão corretas$/,
+    /^nao estao$/,
+    /^não estão$/,
+    /^tem erro$/,
+    /^tem coisa errada$/,
+    /^tem dado errado$/,
+    /^tem dados errados$/,
+    /^precisa corrigir$/,
+    /^quero corrigir$/,
+    /^preciso corrigir$/,
+    /^vou corrigir$/,
+    /^dados errados$/,
+    /^os dados estao errados$/,
+    /^os dados estão errados$/
+  ];
+
+  if (negativePatterns.some(pattern => pattern.test(t))) {
+    return true;
+  }
+
+  const fieldThenError =
+    /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b.*\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b/i.test(rawText);
+
+  const errorThenField =
+    /\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b.*\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(rawText);
+
+  if (fieldThenError || errorThenField) {
+    return true;
+  }
+
+  return false;
+}
+
 function isCommitmentConfirmation(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -7711,79 +7785,6 @@ if (campoEsperado && pendingExtractedData[campoEsperado]) {
   };
 }
 
- function isNegativeConfirmation(text = "") {
-  const rawText = String(text || "").trim();
-
-  const t = rawText
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[.,!?]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (!t) {
-    return false;
-  }
-
-  // Evita interpretar frases como "não está errado" como negativa.
-  if (
-    t.includes("nao esta errado") ||
-    t.includes("nao esta errada") ||
-    t.includes("nao tem erro") ||
-    t.includes("nao ha erro")
-  ) {
-    return false;
-  }
-
-  const negativePatterns = [
-    /^nao$/,
-    /^não$/,
-    /^n$/,
-    /^negativo$/,
-    /^errado$/,
-    /^errada$/,
-    /^incorreto$/,
-    /^incorreta$/,
-    /^nao esta correto$/,
-    /^não está correto$/,
-    /^nao esta correta$/,
-    /^não está correta$/,
-    /^nao estao corretos$/,
-    /^não estão corretos$/,
-    /^nao estao corretas$/,
-    /^não estão corretas$/,
-    /^nao estao$/,
-    /^não estão$/,
-    /^tem erro$/,
-    /^tem coisa errada$/,
-    /^tem dado errado$/,
-    /^tem dados errados$/,
-    /^precisa corrigir$/,
-    /^quero corrigir$/,
-    /^preciso corrigir$/,
-    /^vou corrigir$/,
-    /^dados errados$/,
-    /^os dados estao errados$/,
-    /^os dados estão errados$/
-  ];
-
-  if (negativePatterns.some(pattern => pattern.test(t))) {
-    return true;
-  }
-
-  const fieldThenError =
-    /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b.*\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b/i.test(rawText);
-
-  const errorThenField =
-    /\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b.*\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(rawText);
-
-  if (fieldThenError || errorThenField) {
-    return true;
-  }
-
-  return false;
-}
      const pendingFields = Object.keys(pendingExtractedData);
      
 if (
