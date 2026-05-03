@@ -8185,6 +8185,59 @@ if (
     valorCorrigido = normalizeUF(valorCorrigido);
   }
 
+        // 🛡️ VALIDAÇÃO DO VALOR CORRIGIDO
+// Aqui impedimos que texto ruim seja salvo como nome, cidade ou estado.
+if (
+  campo === "nome" &&
+  isInvalidLooseNameCandidate(valorCorrigido)
+) {
+  const msg = "Esse texto não parece um nome completo válido 😊\n\nPode me enviar o nome completo correto?";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+if (
+  ["cidade", "estado"].includes(campo) &&
+  isInvalidLocationCandidate(valorCorrigido)
+) {
+  const msg =
+    campo === "cidade"
+      ? "Esse texto não parece uma cidade válida 😊\n\nPode me enviar somente a cidade correta?"
+      : "Esse texto não parece um estado válido 😊\n\nPode me enviar somente a sigla do estado? Exemplo: SP, RJ ou MG.";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+if (
+  campo === "estado" &&
+  !VALID_UFS.includes(normalizeUF(valorCorrigido))
+) {
+  const msg = "O estado informado parece inválido 😊\n\nPode me enviar somente a sigla correta? Exemplo: SP, RJ ou MG.";
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
   const dadosAtualizados = {
     ...(currentLead || {}),
     [campo]: valorCorrigido
