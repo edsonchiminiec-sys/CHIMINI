@@ -6748,14 +6748,23 @@ function buildDataFlowResumeMessage(lead = {}) {
   }
 
   const missingFields = getMissingLeadFields(lead || {});
-  const nextField = lead?.campoEsperado || missingFields[0];
 
-  if (nextField) {
-    return `Retomando a pré-análise: ${getMissingFieldQuestion(nextField)}`;
-  }
+// 🛡️ PROTEÇÃO 25B-6:
+// Só usa campoEsperado se esse campo realmente ainda estiver faltando.
+// Isso evita pedir de novo um dado que já foi salvo.
+const campoEsperadoAindaFalta =
+  lead?.campoEsperado &&
+  missingFields.includes(lead.campoEsperado);
 
-  return "Retomando a pré-análise: pode me confirmar se os dados estão corretos?";
+const nextField = campoEsperadoAindaFalta
+  ? lead.campoEsperado
+  : missingFields[0];
+
+if (nextField) {
+  return `Retomando a pré-análise: ${getMissingFieldQuestion(nextField)}`;
 }
+
+return "Retomando a pré-análise: pode me confirmar se os dados estão corretos?";
 
 async function answerDataFlowQuestion({
   currentLead = {},
