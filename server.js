@@ -4200,6 +4200,106 @@ function isInvalidLooseNameCandidate(value = "") {
   return false;
 }
 
+function isInvalidLocationCandidate(value = "") {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return true;
+  }
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const invalidExact = [
+    "sim",
+    "nao",
+    "não",
+    "ok",
+    "certo",
+    "correto",
+    "esta correto",
+    "esta correta",
+    "ta certo",
+    "tudo certo",
+    "tudo correto",
+    "ja enviei",
+    "ja enviei acima",
+    "ja passei",
+    "ja passei acima",
+    "voce ja tem",
+    "voces ja tem",
+    "voce nao esta analisando",
+    "voce nao respondeu",
+    "nao respondeu minha pergunta",
+    "que confirmacao",
+    "qual confirmacao",
+    "nome esta errado",
+    "cpf esta errado",
+    "telefone esta errado",
+    "cidade esta errada",
+    "estado esta errado",
+    "dados estao errados"
+  ];
+
+  if (invalidExact.includes(normalized)) {
+    return true;
+  }
+
+  const invalidParts = [
+    "ja enviei",
+    "ja passei",
+    "voce ja tem",
+    "voces ja tem",
+    "nao respondeu",
+    "voce nao respondeu",
+    "nao esta analisando",
+    "confirmacao",
+    "confirmar",
+    "corrigir",
+    "correcao",
+    "errado",
+    "errada",
+    "incorreto",
+    "incorreta",
+    "duvida",
+    "pergunta",
+    "me explica",
+    "como funciona",
+    "por que",
+    "porque",
+    "taxa",
+    "comodato",
+    "estoque",
+    "afiliado",
+    "link",
+    "contrato",
+    "pagamento",
+    "cpf",
+    "telefone",
+    "celular",
+    "whatsapp",
+    "nome completo"
+  ];
+
+  if (invalidParts.some(term => normalized.includes(term))) {
+    return true;
+  }
+
+  // Cidade muito longa costuma ser frase, não cidade.
+  const words = normalized.split(" ").filter(Boolean);
+
+  if (words.length > 5) {
+    return true;
+  }
+
+  return false;
+}
+
 function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
