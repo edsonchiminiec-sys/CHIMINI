@@ -4510,11 +4510,11 @@ function isPositiveConfirmation(text = "") {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   // Confirmações por emoji comuns no WhatsApp.
-  // Exemplo: 👍, 👍🏻, ✅, 👌
   const positiveEmojiPatterns = [
     /^👍$/,
     /^👍🏻$/,
@@ -4536,6 +4536,7 @@ function isPositiveConfirmation(text = "") {
   }
 
   const positivePatterns = [
+    // confirmações simples
     /^sim$/,
     /^s$/,
     /^isso$/,
@@ -4558,19 +4559,62 @@ function isPositiveConfirmation(text = "") {
     /^está$/,
     /^ta$/,
     /^tá$/,
+    /^ok$/,
+    /^perfeito$/,
+    /^exato$/,
+    /^confirmo$/,
+    /^confirmado$/,
+
+    // confirmações finais de dados
+    /^estao$/,
+    /^estão$/,
+    /^sim estao$/,
+    /^sim estão$/,
+    /^estao corretos$/,
+    /^estão corretos$/,
+    /^estao corretas$/,
+    /^estão corretas$/,
+    /^sim estao corretos$/,
+    /^sim estão corretos$/,
+    /^sim estao corretas$/,
+    /^sim estão corretas$/,
+    /^todos corretos$/,
+    /^todas corretas$/,
+    /^todos estao corretos$/,
+    /^todos estão corretos$/,
+    /^todas estao corretas$/,
+    /^todas estão corretas$/,
+    /^todos certos$/,
+    /^todas certas$/,
+    /^dados corretos$/,
+    /^os dados estao corretos$/,
+    /^os dados estão corretos$/,
+    /^esta tudo correto$/,
+    /^está tudo correto$/,
+    /^esta tudo certo$/,
+    /^está tudo certo$/,
+    /^ta tudo certo$/,
+    /^tá tudo certo$/,
+    /^ta tudo correto$/,
+    /^tá tudo correto$/,
+    /^tudo certo$/,
+    /^tudo correto$/,
+    /^tudo ok$/,
+
+    // autorização para seguir após confirmação
     /^pode seguir$/,
     /^pode$/,
     /^pode continuar$/,
-    /^confirmo$/,
-    /^confirmado$/,
-    /^perfeito$/,
-    /^ok$/,
-    /^exato$/,
-    /^tudo certo$/,
-    /^esta tudo correto$/,
-    /^está tudo correto$/,
+    /^pode encaminhar$/,
+    /^pode enviar$/,
+    /^pode mandar$/,
+    /^pode finalizar$/,
+    /^segue$/,
+    /^segue ai$/,
+    /^segue aí$/,
+    /^vai em frente$/,
 
-    // confirmações naturais
+    // confirmações comerciais naturais
     /^claro$/,
     /^claro que sim$/,
     /^com certeza$/,
