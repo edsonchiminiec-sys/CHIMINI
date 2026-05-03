@@ -6925,6 +6925,108 @@ ${found.join("\n")}
 ${question}`;
 }
 
+function isPostCrmLead(lead = {}) {
+  return Boolean(
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.faseFunil === "crm" ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.status === "em_atendimento" ||
+    lead?.faseQualificacao === "em_atendimento"
+  );
+}
+
+async function answerPostCrmQuestion({
+  currentLead = {},
+  history = [],
+  userText = ""
+} = {}) {
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-10).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: `Você é a SDR comercial da IQG no WhatsApp.
+
+A conversa já foi enviada ao CRM ou está em atendimento pela equipe IQG.
+
+Sua tarefa:
+1. Continuar ajudando o lead com dúvidas comerciais.
+2. Responder de forma curta, natural e consultiva.
+3. NÃO reiniciar coleta de dados.
+4. NÃO pedir CPF, telefone, cidade, estado ou nome novamente.
+5. NÃO reenviar o lead ao CRM.
+6. NÃO dizer que aprovou o lead.
+7. NÃO pedir pagamento.
+8. NÃO prometer ganhos.
+9. Se o lead perguntar sobre próximos passos, explique que a equipe IQG já recebeu os dados e seguirá com a análise/orientação.
+10. Se o lead perguntar sobre estoque, taxa, contrato, margem, afiliado ou funcionamento, responda normalmente.
+11. Se o lead pedir humano, diga que a equipe IQG já foi acionada ou poderá complementar o atendimento, mas você pode continuar ajudando por aqui.
+
+Não mencione Supervisor, Classificador, Consultor Assistente, backend, CRM interno ou agentes internos.
+
+Responda em até 3 blocos curtos.`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: userText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                status: currentLead?.status || "",
+                faseQualificacao: currentLead?.faseQualificacao || "",
+                statusOperacional: currentLead?.statusOperacional || "",
+                faseFunil: currentLead?.faseFunil || "",
+                temperaturaComercial: currentLead?.temperaturaComercial || "",
+                rotaComercial: currentLead?.rotaComercial || "",
+                crmEnviado: currentLead?.crmEnviado === true,
+                dadosConfirmadosPeloLead: currentLead?.dadosConfirmadosPeloLead === true
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao responder no modo pós-CRM:", data);
+
+      return "Claro, posso continuar te ajudando por aqui 😊\n\nSeus dados já foram encaminhados para a equipe IQG, então agora posso esclarecer dúvidas sobre estoque, taxa, contrato, margem, afiliado ou próximos passos sem reiniciar o cadastro.";
+    }
+
+    const answer = data.choices?.[0]?.message?.content?.trim();
+
+    if (!answer) {
+      return "Claro, posso continuar te ajudando por aqui 😊\n\nSeus dados já foram encaminhados para a equipe IQG, então agora posso esclarecer suas dúvidas sem reiniciar o cadastro.";
+    }
+
+    return answer;
+  } catch (error) {
+    console.error("Falha ao responder no modo pós-CRM:", error.message);
+
+    return "Claro, posso continuar te ajudando por aqui 😊\n\nSeus dados já foram encaminhados para a equipe IQG, então agora posso esclarecer suas dúvidas sem reiniciar o cadastro.";
+  }
+}
+
 function canSendLeadToCRM(lead = {}) {
   const dadosConfirmados = lead.dadosConfirmadosPeloLead === true;
 
@@ -8275,6 +8377,27 @@ if (
 
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+     // 🧠 MODO PÓS-CRM ATIVO E SEGURO
+// Se o lead já foi enviado ao CRM ou está em atendimento,
+// a SDR continua respondendo dúvidas, mas não reinicia coleta,
+// não pede dados novamente e não reenvia ao CRM.
+if (isPostCrmLead(currentLead || {})) {
+  const respostaPosCrm = await answerPostCrmQuestion({
+    currentLead: currentLead || {},
+    history,
+    userText: text
+  });
+
+  await sendWhatsAppMessage(from, respostaPosCrm);
+  await saveHistoryStep(from, history, text, respostaPosCrm, !!message.audio?.id);
 
   if (messageId) {
     markMessageAsProcessed(messageId);
