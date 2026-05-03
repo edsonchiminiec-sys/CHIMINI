@@ -9194,23 +9194,33 @@ Só reforçando: essa etapa ainda é um pré-cadastro, não uma aprovação auto
   return;
 }
 
-await saveLeadProfile(from, {
-  ...extractedData,
-  cpf: formatCPF(extractedData.cpf),
-  telefone: formatPhone(extractedData.telefone),
-  estado: normalizeUF(extractedData.estado),
-  cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
-  cidadePendente: null,
-  estadoPendente: null,
-  campoPendente: null,
-  valorPendente: null,
-  campoEsperado: null,
-  aguardandoConfirmacaoCampo: false,
-  dadosConfirmadosPeloLead: false,
-  aguardandoConfirmacao: true,
-  faseQualificacao: "aguardando_confirmacao_dados",
-  status: "aguardando_confirmacao_dados"
-});
+if (
+  hasAllRequiredLeadFields(extractedData) &&
+  !currentLead?.dadosConfirmadosPeloLead &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !currentLead?.aguardandoConfirmacao
+) {
+  await saveLeadProfile(from, {
+    ...extractedData,
+    cpf: formatCPF(extractedData.cpf),
+    telefone: formatPhone(extractedData.telefone),
+    estado: normalizeUF(extractedData.estado),
+    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
+
+    // 🛡️ LIMPEZA 25B-8D:
+    // Apaga campos temporários da coleta para evitar repetição de dados.
+    cidadePendente: null,
+    estadoPendente: null,
+    campoPendente: null,
+    valorPendente: null,
+    campoEsperado: null,
+    aguardandoConfirmacaoCampo: false,
+
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: true,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "aguardando_confirmacao_dados"
+  });
 
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
@@ -9223,6 +9233,7 @@ await saveLeadProfile(from, {
 
   return;
 }
+   
      const shouldAskMissingFields =
   currentLead?.faseQualificacao === "coletando_dados" ||
   currentLead?.faseQualificacao === "dados_parciais" ||
