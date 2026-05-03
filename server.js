@@ -8150,6 +8150,29 @@ if (leadFezPerguntaDuranteColeta) {
 
   let valorCorrigido = text.trim();
 
+        // 🛡️ PROTEÇÃO 25B-5:
+// Se o sistema está esperando uma correção de dado,
+// não pode salvar pergunta, reclamação ou frase genérica como valor corrigido.
+if (
+  isLeadQuestionDuringDataFlow(text, currentLead || {}) ||
+  isLeadQuestionObjectionOrCorrection(text)
+) {
+  const msg = await answerDataFlowQuestion({
+    currentLead: currentLead || {},
+    history,
+    userText: text
+  });
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
   if (campo === "cpf") {
     valorCorrigido = formatCPF(valorCorrigido);
   }
