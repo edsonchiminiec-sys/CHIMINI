@@ -5882,7 +5882,8 @@ Primeiro, pode me enviar seu nome completo?`,
 
 function enforceFunnelDiscipline({
   respostaFinal = "",
-  currentLead = {}
+  currentLead = {},
+  leadText = ""
 } = {}) {
   const etapaAtual = getCurrentFunnelStage(currentLead);
   const etapaDetectadaNaResposta = detectStageFromSdrReply(respostaFinal);
@@ -5891,6 +5892,7 @@ function enforceFunnelDiscipline({
   const pedeDadosPessoais = replyAsksPersonalData(respostaFinal);
   const podeColetarDados = canStartDataCollection(currentLead);
 
+  const leadTemPerguntaOuObjecao = isLeadQuestionObjectionOrCorrection(leadText);
   const tentouPularFase =
     etapaDetectadaNaResposta > 0 &&
     etapaDetectadaNaResposta > etapaAtual;
@@ -5908,34 +5910,51 @@ function enforceFunnelDiscipline({
     !podeColetarDados;
 
   if (
-    tentouPularFase ||
-    falouTaxaCedo ||
-    falouTaxaSemControle ||
-    pediuDadosCedo
+  tentouPularFase ||
+  falouTaxaCedo ||
+  falouTaxaSemControle ||
+  pediuDadosCedo
+) {
+  // 🧠 REGRA 25B-2:
+  // Se o lead fez pergunta, objeção ou correção,
+  // não trocar automaticamente a resposta da SDR por um bloco rígido de fase.
+  // A SDR deve responder primeiro o lead.
+  if (
+    leadTemPerguntaOuObjecao &&
+    !pediuDadosCedo
   ) {
-    const safeResponse = getSafeCurrentPhaseResponse(currentLead);
-
     return {
-      changed: true,
+      changed: false,
+      respostaFinal,
       reason: {
         etapaAtual,
         etapaDetectadaNaResposta,
         tentouPularFase,
         falouTaxaCedo,
         falouTaxaSemControle,
-        pediuDadosCedo
-      },
-      respostaFinal: safeResponse.message,
-      fileKey: safeResponse.fileKey
+        pediuDadosCedo,
+        preservadoPorqueLeadPerguntou: true
+      }
     };
   }
 
+  const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
   return {
-    changed: false,
-    respostaFinal
+    changed: true,
+    reason: {
+      etapaAtual,
+      etapaDetectadaNaResposta,
+      tentouPularFase,
+      falouTaxaCedo,
+      falouTaxaSemControle,
+      pediuDadosCedo,
+      leadTemPerguntaOuObjecao
+    },
+    respostaFinal: safeResponse.message,
+    fileKey: safeResponse.fileKey
   };
 }
-
 function getLastAssistantMessage(history = []) {
   if (!Array.isArray(history)) return "";
 
@@ -6362,6 +6381,68 @@ function isLikelyPureDataAnswer(text = "", currentLead = {}) {
   }
 
   return false;
+}
+
+function isLeadQuestionObjectionOrCorrection(text = "") {
+  const rawText = String(text || "").trim();
+
+  if (!rawText) {
+    return false;
+  }
+
+  const t = rawText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const hasQuestion =
+    rawText.includes("?") ||
+    /^(como|qual|quais|quando|onde|por que|porque|pq|pra que|para que|posso|tem|e se|me explica|fiquei com duvida|tenho duvida)\b/i.test(t) ||
+    t.includes("duvida") ||
+    t.includes("nao entendi") ||
+    t.includes("não entendi");
+
+  const hasObjection =
+    t.includes("taxa") ||
+    t.includes("valor") ||
+    t.includes("preco") ||
+    t.includes("preço") ||
+    t.includes("caro") ||
+    t.includes("comodato") ||
+    t.includes("estoque") ||
+    t.includes("margem") ||
+    t.includes("lucro") ||
+    t.includes("risco") ||
+    t.includes("contrato") ||
+    t.includes("pagamento") ||
+    t.includes("afiliado") ||
+    t.includes("link") ||
+    t.includes("comissao") ||
+    t.includes("comissão") ||
+    t.includes("nao faz sentido") ||
+    t.includes("não faz sentido") ||
+    t.includes("nao quero") ||
+    t.includes("não quero") ||
+    t.includes("achei estranho") ||
+    t.includes("nao estou entendendo") ||
+    t.includes("não estou entendendo");
+
+  const hasCorrection =
+    t.includes("corrigir") ||
+    t.includes("correcao") ||
+    t.includes("correção") ||
+    t.includes("errado") ||
+    t.includes("errada") ||
+    t.includes("incorreto") ||
+    t.includes("incorreta") ||
+    t.includes("voce nao respondeu") ||
+    t.includes("você não respondeu") ||
+    t.includes("nao respondeu minha pergunta") ||
+    t.includes("não respondeu minha pergunta");
+
+  return hasQuestion || hasObjection || hasCorrection;
 }
 
 function isLeadQuestionDuringDataFlow(text = "", currentLead = {}) {
@@ -7897,6 +7978,30 @@ if (leadFezPerguntaDuranteColeta) {
 
   return;
 }
+
+     // 🧠 PRIORIDADE DA IA DURANTE COLETA/CONFIRMAÇÃO
+// Se o lead fizer uma pergunta durante a coleta,
+// a SDR responde primeiro e depois retoma o dado pendente.
+// Isso evita que o backend trate pergunta como nome, cidade ou outro dado.
+if (
+  isDataFlowState(currentLead || {}) &&
+  isLeadQuestionDuringDataFlow(text, currentLead || {})
+) {
+  const respostaPerguntaColeta = await answerDataFlowQuestion({
+    currentLead: currentLead || {},
+    history,
+    userText: text
+  });
+
+  await sendWhatsAppMessage(from, respostaPerguntaColeta);
+  await saveHistoryStep(from, history, text, respostaPerguntaColeta, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
      
 const isOnlyConfirmationText =
   isPositiveConfirmation(text) || isNegativeConfirmation(text);
@@ -9227,9 +9332,10 @@ if (antiRepetition.changed) {
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
 // Essa trava impede a SDR de falar taxa cedo, pular fases,
 // misturar assuntos ou pedir dados antes da hora.
-const disciplinaFunil = enforceFunnelDiscipline({
+const disciplineResult = enforceFunnelDiscipline({
   respostaFinal,
-  currentLead
+  currentLead,
+  leadText: text
 });
 
 if (disciplinaFunil.changed) {
