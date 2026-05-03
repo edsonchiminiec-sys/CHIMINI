@@ -8817,7 +8817,7 @@ if (changedConfirmedData) {
   }
 
   return;
-
+}
 
 const leadStatus = classifyLead(text, extractedData, history);
 const strongIntent = isStrongBuyIntent(text);
