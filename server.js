@@ -8789,8 +8789,6 @@ if (changedConfirmedData) {
   status: "aguardando_confirmacao_dados"
 });
 
-const confirmationMsg = buildLeadConfirmationMessage(extractedData);
-
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
   await sendWhatsAppMessage(from, confirmationMsg);
