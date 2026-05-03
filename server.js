@@ -4098,73 +4098,6 @@ function extractExplicitCorrection(text = "") {
   return correction;
 }
 
-  const estadoMatch = fullText.match(/\b(?:estado|uf)\s*(?:é|e|:|-)?\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
-
-  if (estadoMatch) {
-    correction.estado = normalizeUF(estadoMatch[1]);
-    return correction;
-  }
-
-  const cidadeMatch = fullText.match(/\bcidade\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{3,})$/i);
-
-  if (cidadeMatch) {
-    correction.cidade = cidadeMatch[1].trim();
-    return correction;
-  }
-
-  const nomeMatch = fullText.match(/\bnome\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{3,})$/i);
-
-  if (nomeMatch) {
-    correction.nome = nomeMatch[1].trim();
-    return correction;
-  }
-
-  const cpfMatch = fullText.match(/\bcpf\s*(?:é|e|:|-)?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
-
-  if (cpfMatch) {
-    correction.cpf = formatCPF(cpfMatch[1]);
-    return correction;
-  }
-
-  const telefoneMatch = fullText.match(/\b(?:telefone|celular|whatsapp)\s*(?:é|e|:|-)?\s*((?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4})\b/i);
-
-  if (telefoneMatch) {
-    correction.telefone = formatPhone(telefoneMatch[1]);
-    return correction;
-  }
-
-  if (lower.includes("cidade") && lower.includes("errada")) {
-    correction.campoParaCorrigir = "cidade";
-    return correction;
-  }
-
-  if (lower.includes("estado") && lower.includes("errado")) {
-    correction.campoParaCorrigir = "estado";
-    return correction;
-  }
-
-  if (lower.includes("nome") && lower.includes("errado")) {
-    correction.campoParaCorrigir = "nome";
-    return correction;
-  }
-
-  if (lower.includes("cpf") && lower.includes("errado")) {
-    correction.campoParaCorrigir = "cpf";
-    return correction;
-  }
-
-  if (
-    (lower.includes("telefone") || lower.includes("celular") || lower.includes("whatsapp")) &&
-    lower.includes("errado")
-  ) {
-    correction.campoParaCorrigir = "telefone";
-    return correction;
-  }
-
-  return correction;
-}
-
-
 function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
@@ -7502,27 +7435,79 @@ if (campoEsperado && pendingExtractedData[campoEsperado]) {
   };
 }
 
- function isNegativeConfirmation(value = "") {
-  const t = String(value)
+ function isNegativeConfirmation(text = "") {
+  const rawText = String(text || "").trim();
+
+  const t = rawText
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
-  return [
-    "nao",
-    "não",
-    "errado",
-    "incorreto",
-    "nao esta",
-    "não está",
-    "não esta",
-    "ta errado",
-    "esta errado",
-    "está errado"
-  ].includes(t);
-}
+  if (!t) {
+    return false;
+  }
 
+  // Evita interpretar frases como "não está errado" como negativa.
+  if (
+    t.includes("nao esta errado") ||
+    t.includes("nao esta errada") ||
+    t.includes("nao tem erro") ||
+    t.includes("nao ha erro")
+  ) {
+    return false;
+  }
+
+  const negativePatterns = [
+    /^nao$/,
+    /^não$/,
+    /^n$/,
+    /^negativo$/,
+    /^errado$/,
+    /^errada$/,
+    /^incorreto$/,
+    /^incorreta$/,
+    /^nao esta correto$/,
+    /^não está correto$/,
+    /^nao esta correta$/,
+    /^não está correta$/,
+    /^nao estao corretos$/,
+    /^não estão corretos$/,
+    /^nao estao corretas$/,
+    /^não estão corretas$/,
+    /^nao estao$/,
+    /^não estão$/,
+    /^tem erro$/,
+    /^tem coisa errada$/,
+    /^tem dado errado$/,
+    /^tem dados errados$/,
+    /^precisa corrigir$/,
+    /^quero corrigir$/,
+    /^preciso corrigir$/,
+    /^vou corrigir$/,
+    /^dados errados$/,
+    /^os dados estao errados$/,
+    /^os dados estão errados$/
+  ];
+
+  if (negativePatterns.some(pattern => pattern.test(t))) {
+    return true;
+  }
+
+  const fieldThenError =
+    /\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b.*\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b/i.test(rawText);
+
+  const errorThenField =
+    /\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b.*\b(nome|cpf|telefone|celular|whatsapp|cidade|estado|uf)\b/i.test(rawText);
+
+  if (fieldThenError || errorThenField) {
+    return true;
+  }
+
+  return false;
+}
      const pendingFields = Object.keys(pendingExtractedData);
      
 if (
