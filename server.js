@@ -4102,6 +4102,104 @@ function extractExplicitCorrection(text = "") {
   return correction;
 }
 
+function isInvalidLooseNameCandidate(value = "") {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return true;
+  }
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const invalidExact = [
+    "mas vamos la",
+    "vamos la",
+    "esta correto",
+    "esta correta",
+    "esta certo",
+    "esta certa",
+    "ta correto",
+    "ta correta",
+    "ta certo",
+    "ta certa",
+    "tudo certo",
+    "tudo correto",
+    "que confirmacao",
+    "qual confirmacao",
+    "esta errado",
+    "esta errada",
+    "nome errado",
+    "nome esta errado",
+    "cpf errado",
+    "telefone errado",
+    "cidade errada",
+    "estado errado",
+    "voce nao respondeu",
+    "nao respondeu minha pergunta",
+    "ja enviei acima",
+    "ja passei acima",
+    "voce ja tem",
+    "voces ja tem",
+    "pode seguir",
+    "pode continuar",
+    "vamos seguir",
+    "quero seguir"
+  ];
+
+  if (invalidExact.includes(normalized)) {
+    return true;
+  }
+
+  const invalidParts = [
+    "confirmacao",
+    "confirmar",
+    "corrigir",
+    "correcao",
+    "errado",
+    "errada",
+    "incorreto",
+    "incorreta",
+    "respondeu",
+    "pergunta",
+    "duvida",
+    "nao entendi",
+    "nao estou entendendo",
+    "ja enviei",
+    "ja passei",
+    "esta correto",
+    "tudo certo",
+    "pode seguir",
+    "pode continuar",
+    "vamos seguir",
+    "me explica",
+    "como funciona",
+    "por que",
+    "porque"
+  ];
+
+  if (invalidParts.some(term => normalized.includes(term))) {
+    return true;
+  }
+
+  const words = normalized.split(" ").filter(Boolean);
+
+  if (words.length < 2) {
+    return true;
+  }
+
+  if (words.length > 5) {
+    return true;
+  }
+
+  return false;
+}
+
 function extractLeadData(text = "", currentLead = {}) {
   const data = {};
   const fullText = String(text || "").trim();
@@ -4324,12 +4422,13 @@ if (!data.nome) {
     )
   );
 
-  if (
-    nomeEncontrado.split(/\s+/).length >= 2 &&
-    !isInvalidName
-  ) {
-    data.nome = nomeEncontrado;
-  }
+ if (
+  nomeEncontrado.split(/\s+/).length >= 2 &&
+  !isInvalidName &&
+  !isInvalidLooseNameCandidate(nomeEncontrado)
+) {
+  data.nome = nomeEncontrado;
+}
 }
   }
 }
