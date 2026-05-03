@@ -5232,6 +5232,152 @@ function normalizeUF(value = "") {
   return estados[text] || text;
 }
 
+function extractExpectedFieldData({
+  field = "",
+  text = "",
+  currentLead = {}
+} = {}) {
+  const result = {};
+  const cleanText = String(text || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!field || !cleanText) {
+    return result;
+  }
+
+  // Evita transformar perguntas ou correções em cidade/estado.
+  // Exemplo: "nome está errado" não pode virar cidade.
+  const hasQuestionOrCorrection =
+    /[?]/.test(cleanText) ||
+    /\b(como|porque|por que|duvida|dúvida|sugestao|sugestão|errado|errada|incorreto|incorreta|corrigir|correcao|correção)\b/i.test(cleanText);
+
+  if (hasQuestionOrCorrection) {
+    return result;
+  }
+
+  // Evita misturar outros dados pessoais com cidade/estado.
+  const mentionsOtherPersonalData =
+    /\b(nome|cpf|telefone|celular|whatsapp)\b/i.test(cleanText);
+
+  if (
+    mentionsOtherPersonalData &&
+    !["nome", "cpf", "telefone"].includes(field)
+  ) {
+    return result;
+  }
+
+  if (field === "cidade") {
+    // Caso: "Cidade Paraí estado Rio Grande do Sul"
+    const labeledCityStateMatch = cleanText.match(
+      /\bcidade\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ.'\-\s]{2,}?)(?:\s+(?:estado|uf)\s*(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{2,}|[A-Z]{2}))?$/i
+    );
+
+    if (labeledCityStateMatch?.[1]) {
+      const cidade = labeledCityStateMatch[1].trim();
+      const estado = labeledCityStateMatch[2]
+        ? normalizeUF(labeledCityStateMatch[2])
+        : "";
+
+      if (cidade && !VALID_UFS.includes(normalizeUF(cidade))) {
+        result.cidade = cidade;
+      }
+
+      if (estado && VALID_UFS.includes(estado)) {
+        result.estado = estado;
+      }
+
+      if (result.cidade || result.estado) {
+        return result;
+      }
+    }
+
+    // Caso: "Rio Grande do Sul, Paraí" ou "Paraí, RS"
+    const parts = cleanText
+      .split(/[\/,;-]/)
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    if (parts.length >= 2) {
+      let cidade = "";
+      let estado = "";
+
+      for (const part of parts) {
+        const possibleUf = normalizeUF(part);
+
+        if (VALID_UFS.includes(possibleUf)) {
+          estado = possibleUf;
+        } else if (!cidade && /^[A-Za-zÀ-ÿ.'\-\s]{2,50}$/.test(part)) {
+          cidade = part;
+        }
+      }
+
+      if (cidade) {
+        result.cidade = cidade;
+      }
+
+      if (estado) {
+        result.estado = estado;
+      }
+
+      if (result.cidade || result.estado) {
+        return result;
+      }
+    }
+
+    // Caso: "Paraí RS"
+    const cityUfMatch = cleanText.match(
+      /^\s*([A-Za-zÀ-ÿ.'\-\s]{2,})\s+(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\s*$/i
+    );
+
+    if (cityUfMatch) {
+      result.cidade = cityUfMatch[1].trim();
+      result.estado = normalizeUF(cityUfMatch[2]);
+      return result;
+    }
+
+    // Caso: lead respondeu só o estado quando o sistema esperava cidade.
+    // Exemplo: "Rio Grande do Sul". Nesse caso salva estado, mas ainda faltará cidade.
+    const possibleOnlyUf = normalizeUF(cleanText);
+
+    if (VALID_UFS.includes(possibleOnlyUf)) {
+      result.estado = possibleOnlyUf;
+      return result;
+    }
+
+    // Caso principal: SDR perguntou cidade e lead respondeu apenas "Paraí".
+    const possibleCity = cleanText
+      .replace(/\b(minha cidade|cidade|moro em|sou de|resido em)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (
+      /^[A-Za-zÀ-ÿ.'\-\s]{2,50}$/.test(possibleCity) &&
+      !VALID_UFS.includes(normalizeUF(possibleCity))
+    ) {
+      result.cidade = possibleCity;
+      return result;
+    }
+  }
+
+  if (field === "estado") {
+    const cleanState = cleanText
+      .replace(/\b(estado|uf)\b/gi, "")
+      .replace(/[:\-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const possibleUf = normalizeUF(cleanState);
+
+    if (VALID_UFS.includes(possibleUf)) {
+      result.estado = possibleUf;
+      return result;
+    }
+  }
+
+  return result;
+}
+
 async function saveHistoryStep(from, history, userText, botText, isAudio = false) {
   history.push({
     role: "user",
@@ -7091,7 +7237,7 @@ const leadPodeColetarDadosAgora =
 
 const podeTentarExtrairDados = leadPodeColetarDadosAgora;
 
-const rawExtracted =
+let rawExtracted =
   Object.keys(explicitCorrection).length > 0
     ? {
         ...(currentLead || {}),
@@ -7100,6 +7246,26 @@ const rawExtracted =
     : podeTentarExtrairDados
       ? extractLeadData(textForExtraction, currentLead || {})
       : {};
+
+// 🔥 CAMPO ESPERADO COM FORÇA
+// Se a SDR perguntou cidade, a resposta curta do lead deve ser tratada como cidade.
+// Se perguntou estado, a resposta deve ser tratada como estado.
+const forcedExpectedData = extractExpectedFieldData({
+  field: currentLead?.campoEsperado,
+  text: textForExtraction,
+  currentLead
+});
+
+if (
+  podeTentarExtrairDados &&
+  Object.keys(explicitCorrection).length === 0 &&
+  Object.keys(forcedExpectedData).length > 0
+) {
+  rawExtracted = {
+    ...(rawExtracted || {}),
+    ...forcedExpectedData
+  };
+}
      
 // 🔥 NÃO SOBRESCREVE COM NULL
      
