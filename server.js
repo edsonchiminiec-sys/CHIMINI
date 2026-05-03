@@ -7972,7 +7972,7 @@ if (state.closed && leadJaEstaPosCrm) {
      
 clearTimers(from);
 
-if (!shouldStopBotByLifecycle(leadBeforeProcessing)) {
+if (!leadEncerradoDefinitivo) {
   state.closed = false;
 }
 
