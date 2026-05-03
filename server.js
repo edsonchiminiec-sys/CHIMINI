@@ -8258,15 +8258,18 @@ if (
   }
 
   await saveLeadProfile(from, {
-    ...dadosAtualizados,
-    campoPendente: null,
-    valorPendente: null,
-    aguardandoConfirmacaoCampo: false,
-    aguardandoConfirmacao: true,
-    dadosConfirmadosPeloLead: false,
-    faseQualificacao: "aguardando_confirmacao_dados",
-    status: "aguardando_confirmacao_dados"
-  });
+  ...dadosAtualizados,
+  cidadePendente: null,
+  estadoPendente: null,
+  campoPendente: null,
+  valorPendente: null,
+  campoEsperado: null,
+  aguardandoConfirmacaoCampo: false,
+  aguardandoConfirmacao: true,
+  dadosConfirmadosPeloLead: false,
+  faseQualificacao: "aguardando_confirmacao_dados",
+  status: "aguardando_confirmacao_dados"
+});
 
   const msg = buildLeadConfirmationMessage(dadosAtualizados);
 
@@ -8649,14 +8652,21 @@ const changedConfirmedData =
   );
 
 if (changedConfirmedData) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: true,
-    crmPendenteAtualizacao: true,
-    faseQualificacao: "aguardando_confirmacao_dados",
-    status: "aguardando_confirmacao_dados"
-  });
+ await saveLeadProfile(from, {
+  ...extractedData,
+  cidadePendente: null,
+  estadoPendente: null,
+  campoPendente: null,
+  valorPendente: null,
+  campoEsperado: null,
+  aguardandoConfirmacaoCampo: false,
+  aguardandoConfirmacao: true,
+  dadosConfirmadosPeloLead: false,
+  faseQualificacao: "aguardando_confirmacao_dados",
+  status: "aguardando_confirmacao_dados"
+});
+
+const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
