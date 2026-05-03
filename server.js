@@ -6765,6 +6765,7 @@ if (nextField) {
 }
 
 return "Retomando a pré-análise: pode me confirmar se os dados estão corretos?";
+}
 
 async function answerDataFlowQuestion({
   currentLead = {},
