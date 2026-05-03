@@ -4048,13 +4048,17 @@ function extractExplicitCorrection(text = "") {
       .replace(/\b(errado|incorreto|correto)\b/gi, "")
       .trim();
 
-    if (nome && nome.split(/\s+/).length >= 2 && !/\b(esta|está|errado|incorreto)\b/i.test(nome)) {
+    if (
+      nome &&
+      nome.split(/\s+/).length >= 2 &&
+      !/\b(esta|está|errado|incorreto)\b/i.test(nome)
+    ) {
       correction.nome = nome;
       return correction;
     }
   }
 
-  // Agora detecta quando o lead apenas informou QUAL campo está errado.
+  // Detecta quando o lead apenas informou QUAL campo está errado.
   // Exemplo: "nome está errado", "CPF incorreto", "cidade errada".
   const temPalavraDeErro =
     /\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b/i.test(fullText);
