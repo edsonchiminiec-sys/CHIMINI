@@ -3990,9 +3990,113 @@ function onlyDigits(value = "") {
 
 function extractExplicitCorrection(text = "") {
   const fullText = String(text || "").trim();
-  const lower = fullText.toLowerCase();
+
+  const lower = fullText
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   const correction = {};
+
+  // CPF correto enviado diretamente
+  const cpfMatch = fullText.match(/\bcpf\s*(?:correto\s*)?(?:é|e|:|-)?\s*(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/i);
+
+  if (cpfMatch) {
+    correction.cpf = formatCPF(cpfMatch[1]);
+    return correction;
+  }
+
+  // Telefone correto enviado diretamente
+  const telefoneMatch = fullText.match(/\b(?:telefone|celular|whatsapp)\s*(?:correto\s*)?(?:é|e|:|-)?\s*((?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[\s.-]?\d{4})\b/i);
+
+  if (telefoneMatch) {
+    correction.telefone = formatPhone(telefoneMatch[1]);
+    return correction;
+  }
+
+  // Estado correto enviado diretamente
+  const estadoMatch = fullText.match(/\b(?:estado|uf)\s*(?:correto\s*)?(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ\s]{2,}|AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\s*$/i);
+
+  if (estadoMatch) {
+    const uf = normalizeUF(estadoMatch[1]);
+
+    if (VALID_UFS.includes(uf)) {
+      correction.estado = uf;
+      return correction;
+    }
+  }
+
+  // Cidade correta enviada diretamente
+  const cidadeMatch = fullText.match(/\bcidade\s*(?:correta\s*)?(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ.'\-\s]{2,})$/i);
+
+  if (cidadeMatch) {
+    const cidade = cidadeMatch[1]
+      .replace(/\b(errada|incorreta|correta)\b/gi, "")
+      .trim();
+
+    if (cidade && !/\b(esta|está|errada|incorreta)\b/i.test(cidade)) {
+      correction.cidade = cidade;
+      return correction;
+    }
+  }
+
+  // Nome correto enviado diretamente
+  const nomeMatch = fullText.match(/\b(?:meu\s+)?nome\s*(?:correto\s*)?(?:é|e|:|-)?\s*([A-Za-zÀ-ÿ.'\-\s]{3,})$/i);
+
+  if (nomeMatch) {
+    const nome = nomeMatch[1]
+      .replace(/\b(errado|incorreto|correto)\b/gi, "")
+      .trim();
+
+    if (nome && nome.split(/\s+/).length >= 2 && !/\b(esta|está|errado|incorreto)\b/i.test(nome)) {
+      correction.nome = nome;
+      return correction;
+    }
+  }
+
+  // Agora detecta quando o lead apenas informou QUAL campo está errado.
+  // Exemplo: "nome está errado", "CPF incorreto", "cidade errada".
+  const temPalavraDeErro =
+    /\b(errado|errada|incorreto|incorreta|corrigir|correcao|correção|alterar|trocar)\b/i.test(fullText);
+
+  if (!temPalavraDeErro) {
+    return correction;
+  }
+
+  if (lower.includes("nome")) {
+    correction.campoParaCorrigir = "nome";
+    return correction;
+  }
+
+  if (lower.includes("cpf")) {
+    correction.campoParaCorrigir = "cpf";
+    return correction;
+  }
+
+  if (
+    lower.includes("telefone") ||
+    lower.includes("celular") ||
+    lower.includes("whatsapp")
+  ) {
+    correction.campoParaCorrigir = "telefone";
+    return correction;
+  }
+
+  if (lower.includes("cidade")) {
+    correction.campoParaCorrigir = "cidade";
+    return correction;
+  }
+
+  if (
+    lower.includes("estado") ||
+    lower.includes("uf")
+  ) {
+    correction.campoParaCorrigir = "estado";
+    return correction;
+  }
+
+  return correction;
+}
 
   const estadoMatch = fullText.match(/\b(?:estado|uf)\s*(?:é|e|:|-)?\s*(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b/i);
 
@@ -7210,10 +7314,20 @@ const isConfirmationContext =
   currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
 const textForExtraction = text;
-const explicitCorrection =
-  currentLead?.faseQualificacao === "corrigir_dado_final"
-    ? extractExplicitCorrection(text)
-    : {};
+
+// 🔥 CORREÇÃO GLOBAL DE DADOS
+// Agora frases como "nome está errado", "CPF está incorreto"
+// ou "cidade errada" são entendidas durante coleta e confirmação,
+// não apenas quando o sistema já está em corrigir_dado_final.
+const podeTratarCorrecaoDadosAgora =
+  isDataCollectionContext ||
+  isConfirmationContext ||
+  currentLead?.aguardandoConfirmacaoCampo === true ||
+  currentLead?.aguardandoConfirmacao === true;
+
+const explicitCorrection = podeTratarCorrecaoDadosAgora
+  ? extractExplicitCorrection(text)
+  : {};
      
 const fasesQuePermitemExtracao = [
   "coletando_dados",
@@ -7366,10 +7480,12 @@ if (campoEsperado && pendingExtractedData[campoEsperado]) {
 }
 
      const pendingFields = Object.keys(pendingExtractedData);
+     
 if (
-  currentLead?.faseQualificacao === "corrigir_dado_final" &&
+  podeTratarCorrecaoDadosAgora &&
   explicitCorrection?.campoParaCorrigir
 ) {
+   
   await saveLeadProfile(from, {
     campoPendente: explicitCorrection.campoParaCorrigir,
     aguardandoConfirmacaoCampo: false,
@@ -7379,15 +7495,14 @@ if (
   });
 
   const labels = {
-    nome: "nome completo",
-    cpf: "CPF",
-    telefone: "telefone com DDD",
-    cidade: "cidade",
-    estado: "estado"
-  };
+  nome: "o nome completo",
+  cpf: "o CPF",
+  telefone: "o telefone com DDD",
+  cidade: "a cidade",
+  estado: "o estado"
+};
 
-  const msg = `Sem problema 😊 Qual é o ${labels[explicitCorrection.campoParaCorrigir]} correto?`;
-
+const msg = `Sem problema 😊 Qual é ${labels[explicitCorrection.campoParaCorrigir]} correto?`;
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
