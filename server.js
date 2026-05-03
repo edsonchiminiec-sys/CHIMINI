@@ -7923,8 +7923,16 @@ const leadBeforeProcessing = await loadLeadProfile(from);
   stateClosed: state.closed
 });
 
-if (shouldStopBotByLifecycle(leadBeforeProcessing)) {
-  console.log("⛔ Lead bloqueado pelo ciclo de vida:", {
+const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
+
+const leadEncerradoDefinitivo =
+  ["fechado", "perdido"].includes(leadBeforeProcessing?.status) ||
+  ["fechado", "perdido"].includes(leadBeforeProcessing?.faseQualificacao) ||
+  ["fechado", "perdido"].includes(leadBeforeProcessing?.statusOperacional) ||
+  leadBeforeProcessing?.faseFunil === "encerrado";
+
+if (leadEncerradoDefinitivo) {
+  console.log("⛔ Lead encerrado definitivamente:", {
     status: leadBeforeProcessing?.status,
     faseQualificacao: leadBeforeProcessing?.faseQualificacao,
     statusOperacional: leadBeforeProcessing?.statusOperacional,
@@ -7933,9 +7941,20 @@ if (shouldStopBotByLifecycle(leadBeforeProcessing)) {
   return;
 }
 
-if (state.closed) {
+if (state.closed && !leadJaEstaPosCrm) {
   console.log("⛔ Lead bloqueado por state.closed em memória");
   return;
+}
+
+if (state.closed && leadJaEstaPosCrm) {
+  console.log("✅ Lead pós-CRM reativado para resposta consultiva segura:", {
+    status: leadBeforeProcessing?.status,
+    faseQualificacao: leadBeforeProcessing?.faseQualificacao,
+    statusOperacional: leadBeforeProcessing?.statusOperacional,
+    faseFunil: leadBeforeProcessing?.faseFunil
+  });
+
+  state.closed = false;
 }
      
 // Atendimento humano deve ser marcado pelo botão "Atender" no dashboard.
@@ -9175,22 +9194,23 @@ Só reforçando: essa etapa ainda é um pré-cadastro, não uma aprovação auto
   return;
 }
 
-if (
-  hasAllRequiredLeadFields(extractedData) &&
-  !currentLead?.dadosConfirmadosPeloLead &&
-  !currentLead?.aguardandoConfirmacaoCampo
-) {
-  await saveLeadProfile(from, {
-    ...extractedData,
-    cpf: formatCPF(extractedData.cpf),
-    telefone: formatPhone(extractedData.telefone),
-    estado: normalizeUF(extractedData.estado),
-    cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: true,
-    faseQualificacao: "aguardando_confirmacao_dados",
-    status: "aguardando_confirmacao_dados"
-  });
+await saveLeadProfile(from, {
+  ...extractedData,
+  cpf: formatCPF(extractedData.cpf),
+  telefone: formatPhone(extractedData.telefone),
+  estado: normalizeUF(extractedData.estado),
+  cidadeEstado: `${extractedData.cidade}/${normalizeUF(extractedData.estado)}`,
+  cidadePendente: null,
+  estadoPendente: null,
+  campoPendente: null,
+  valorPendente: null,
+  campoEsperado: null,
+  aguardandoConfirmacaoCampo: false,
+  dadosConfirmadosPeloLead: false,
+  aguardandoConfirmacao: true,
+  faseQualificacao: "aguardando_confirmacao_dados",
+  status: "aguardando_confirmacao_dados"
+});
 
   const confirmationMsg = buildLeadConfirmationMessage(extractedData);
 
