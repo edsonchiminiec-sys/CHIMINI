@@ -5604,6 +5604,13 @@ function extractExpectedFieldData({
     return result;
   }
 
+if (
+  ["cidade", "estado"].includes(field) &&
+  isInvalidLocationCandidate(cleanText)
+) {
+  return result;
+}
+   
   // Evita transformar perguntas ou correções em cidade/estado.
   // Exemplo: "nome está errado" não pode virar cidade.
   const hasQuestionOrCorrection =
@@ -5710,14 +5717,15 @@ function extractExpectedFieldData({
       .trim();
 
     if (
-      /^[A-Za-zÀ-ÿ.'\-\s]{2,50}$/.test(possibleCity) &&
-      !VALID_UFS.includes(normalizeUF(possibleCity))
-    ) {
-      result.cidade = possibleCity;
-      return result;
-    }
+  /^[A-Za-zÀ-ÿ.'\-\s]{2,50}$/.test(possibleCity) &&
+  !VALID_UFS.includes(normalizeUF(possibleCity)) &&
+  !isInvalidLocationCandidate(possibleCity)
+) {
+  result.cidade = possibleCity;
+  return result;
+}
   }
-
+   
   if (field === "estado") {
     const cleanState = cleanText
       .replace(/\b(estado|uf)\b/gi, "")
