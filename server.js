@@ -9340,7 +9340,7 @@ if (antiRepetition.changed) {
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
 // Essa trava impede a SDR de falar taxa cedo, pular fases,
 // misturar assuntos ou pedir dados antes da hora.
-const disciplineResult = enforceFunnelDiscipline({
+const disciplinaFunil = enforceFunnelDiscipline({
   respostaFinal,
   currentLead,
   leadText: text
