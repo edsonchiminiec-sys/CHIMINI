@@ -6972,24 +6972,15 @@ if (!shouldStopBotByLifecycle(leadBeforeProcessing)) {
   state.closed = false;
 }
 
-  let text = "";
+let text = "";
+let isAudioMessage = false;
 
 if (message.text?.body) {
   text = message.text.body.trim();
 
-  // 🔥 Aguarda alguns segundos para ver se o lead vai mandar mais mensagens
-  const buffered = await collectBufferedText(from, text, messageId);
-
-  // Se esta mensagem foi apenas adicionada ao buffer,
-  // encerra este webhook sem chamar a IA.
-  if (!buffered.shouldContinue) {
-    return;
-  }
-
-  // A primeira requisição continua com todas as mensagens juntas
-  text = buffered.text;
-
 } else if (message.audio?.id) {
+  isAudioMessage = true;
+
   const mediaUrl = await getWhatsAppMediaUrl(message.audio.id);
   const audioBuffer = await downloadWhatsAppMedia(mediaUrl);
 
@@ -7005,6 +6996,7 @@ if (message.text?.body) {
   }
 
   text = String(text).trim();
+
 } else {
   await sendWhatsAppMessage(
     from,
@@ -7013,6 +7005,19 @@ if (message.text?.body) {
 
   return;
 }
+
+// 🔥 AGORA TEXTO E ÁUDIO PASSAM PELO MESMO BUFFER
+// Isso evita respostas duplicadas quando o lead manda várias mensagens ou vários áudios seguidos.
+const buffered = await collectBufferedText(from, text, messageId);
+
+// Se esta mensagem foi apenas adicionada ao buffer,
+// encerra este webhook sem chamar a IA.
+if (!buffered.shouldContinue) {
+  return;
+}
+
+// A primeira requisição continua com todas as mensagens juntas.
+text = buffered.text;
 
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
