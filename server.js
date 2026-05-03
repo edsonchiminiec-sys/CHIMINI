@@ -5893,6 +5893,7 @@ function enforceFunnelDiscipline({
   const podeColetarDados = canStartDataCollection(currentLead);
 
   const leadTemPerguntaOuObjecao = isLeadQuestionObjectionOrCorrection(leadText);
+
   const tentouPularFase =
     etapaDetectadaNaResposta > 0 &&
     etapaDetectadaNaResposta > etapaAtual;
@@ -5910,22 +5911,38 @@ function enforceFunnelDiscipline({
     !podeColetarDados;
 
   if (
-  tentouPularFase ||
-  falouTaxaCedo ||
-  falouTaxaSemControle ||
-  pediuDadosCedo
-) {
-  // 🧠 REGRA 25B-2:
-  // Se o lead fez pergunta, objeção ou correção,
-  // não trocar automaticamente a resposta da SDR por um bloco rígido de fase.
-  // A SDR deve responder primeiro o lead.
-  if (
-    leadTemPerguntaOuObjecao &&
-    !pediuDadosCedo
+    tentouPularFase ||
+    falouTaxaCedo ||
+    falouTaxaSemControle ||
+    pediuDadosCedo
   ) {
+    // 🧠 REGRA 25B-2:
+    // Se o lead fez pergunta, objeção ou correção,
+    // não trocar automaticamente a resposta da SDR por um bloco rígido de fase.
+    // A SDR deve responder primeiro o lead.
+    if (
+      leadTemPerguntaOuObjecao &&
+      !pediuDadosCedo
+    ) {
+      return {
+        changed: false,
+        respostaFinal,
+        reason: {
+          etapaAtual,
+          etapaDetectadaNaResposta,
+          tentouPularFase,
+          falouTaxaCedo,
+          falouTaxaSemControle,
+          pediuDadosCedo,
+          preservadoPorqueLeadPerguntou: true
+        }
+      };
+    }
+
+    const safeResponse = getSafeCurrentPhaseResponse(currentLead);
+
     return {
-      changed: false,
-      respostaFinal,
+      changed: true,
       reason: {
         etapaAtual,
         etapaDetectadaNaResposta,
@@ -5933,28 +5950,19 @@ function enforceFunnelDiscipline({
         falouTaxaCedo,
         falouTaxaSemControle,
         pediuDadosCedo,
-        preservadoPorqueLeadPerguntou: true
-      }
+        leadTemPerguntaOuObjecao
+      },
+      respostaFinal: safeResponse.message,
+      fileKey: safeResponse.fileKey
     };
   }
 
-  const safeResponse = getSafeCurrentPhaseResponse(currentLead);
-
   return {
-    changed: true,
-    reason: {
-      etapaAtual,
-      etapaDetectadaNaResposta,
-      tentouPularFase,
-      falouTaxaCedo,
-      falouTaxaSemControle,
-      pediuDadosCedo,
-      leadTemPerguntaOuObjecao
-    },
-    respostaFinal: safeResponse.message,
-    fileKey: safeResponse.fileKey
+    changed: false,
+    respostaFinal
   };
 }
+
 function getLastAssistantMessage(history = []) {
   if (!Array.isArray(history)) return "";
 
