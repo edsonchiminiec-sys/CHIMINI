@@ -10850,6 +10850,71 @@ if (
     currentLead = await loadLeadProfile(from);
 }
 
+     // 🔥 RECUPERAÇÃO COMERCIAL ANTES DE QUALQUER CADASTRO
+// Se o lead esfriou, rejeitou, achou caro, quis deixar para depois
+// ou tentou encerrar antes do pré-cadastro, o backend não deixa virar perda.
+// Primeiro tentamos reaquecer no Homologado.
+// Depois, se persistir, oferecemos Afiliados como alternativa obrigatória.
+if (
+  shouldRecoverLeadBeforeLoss({
+    text,
+    lead: currentLead,
+    awaitingConfirmation
+  })
+) {
+  const recoveryAttemptsAtual = Number(currentLead?.recoveryAttempts || 0);
+  const novoRecoveryAttempts = recoveryAttemptsAtual + 1;
+
+  const firstName = getFirstName(
+    currentLead?.nome ||
+    currentLead?.nomeWhatsApp ||
+    ""
+  );
+
+  const deveOferecerAfiliadoAgora =
+    currentLead?.afiliadoOferecidoComoAlternativa === true ||
+    novoRecoveryAttempts > MAX_REENGAGEMENT_ATTEMPTS_BEFORE_AFFILIATE;
+
+  const recoveryMsg = deveOferecerAfiliadoAgora
+    ? buildMandatoryAffiliateAlternativeResponse(firstName)
+    : buildHomologadoRecoveryResponse(novoRecoveryAttempts, firstName);
+
+  await saveLeadProfile(from, {
+    status: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
+    faseQualificacao: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
+    statusOperacional: "ativo",
+    faseFunil: deveOferecerAfiliadoAgora ? "afiliado" : currentLead?.faseFunil || "beneficios",
+    temperaturaComercial: "morno",
+    rotaComercial: deveOferecerAfiliadoAgora ? "afiliado" : currentLead?.rotaComercial || "homologado",
+    interesseAfiliado: deveOferecerAfiliadoAgora,
+    afiliadoOferecidoComoAlternativa: deveOferecerAfiliadoAgora,
+    origemConversao: deveOferecerAfiliadoAgora
+      ? "recuperado_objecao_ou_rejeicao"
+      : currentLead?.origemConversao || "homologado",
+    recoveryAttempts: novoRecoveryAttempts,
+    ultimaRejeicaoOuEsfriamento: text,
+    ultimaMensagem: text
+  });
+
+  console.log("🔥 Lead não foi perdido. Recuperação comercial acionada antes do cadastro:", {
+    user: from,
+    recoveryAttempts: novoRecoveryAttempts,
+    ofereceuAfiliado: deveOferecerAfiliadoAgora,
+    ultimaMensagemLead: text
+  });
+
+  await sendWhatsAppMessage(from, recoveryMsg);
+  await saveHistoryStep(from, history, text, recoveryMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
 // 🔥 RESPOSTA CONTROLADA PARA PEDIDO DE CADASTRO / PARTICIPAÇÃO
 if (
   isCadastroOuParticipacaoIntent(text) &&
