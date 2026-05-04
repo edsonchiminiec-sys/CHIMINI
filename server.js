@@ -5670,6 +5670,45 @@ function isTaxaAlinhadaConfirmation(text = "") {
   return taxaAlinhadaPatterns.some(pattern => pattern.test(t));
 }
 
+function isLikelyAutoReplyMessage(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[“”"]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const autoReplyPatterns = [
+    "obrigado por sua mensagem",
+    "obrigada por sua mensagem",
+    "agradecemos sua mensagem",
+    "recebemos sua mensagem",
+    "em breve retornaremos",
+    "em breve responderemos",
+    "fora do horario de atendimento",
+    "fora do horário de atendimento",
+    "nosso horario de atendimento",
+    "nosso horário de atendimento",
+    "mensagem automatica",
+    "mensagem automática",
+    "resposta automatica",
+    "resposta automática",
+    "acesse a area me ajuda",
+    "acesse a área me ajuda",
+    "sou.nu/meajuda"
+  ];
+
+  return autoReplyPatterns.some(pattern => t.includes(
+    pattern
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+  ));
+}
+
 function isSimpleGreetingOnly(text = "") {
   const t = String(text || "")
     .toLowerCase()
