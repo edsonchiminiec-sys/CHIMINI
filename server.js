@@ -6442,7 +6442,7 @@ function detectReplyMainTheme(text = "") {
   ) {
     return "beneficios";
   }
-
+   
   if (
     t.includes("programa") ||
     t.includes("parceria") ||
@@ -6455,52 +6455,6 @@ function detectReplyMainTheme(text = "") {
   return "";
 }
 
-   
-  const leadReplyWasShort = isShortNeutralLeadReply(leadText);
-
-  if (!leadReplyWasShort) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
-  const lastTheme = detectReplyMainTheme(lastAssistantMessage);
-  const currentTheme = detectReplyMainTheme(respostaFinal);
-
-  if (!lastTheme || !currentTheme) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
-  const repeatedSameTheme = lastTheme === currentTheme;
-
-  if (!repeatedSameTheme) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
-  const continuation = buildContinuationAfterRepeatedTheme({
-    lastTheme,
-    currentLead
-  });
-
-  return {
-    changed: true,
-    reason: {
-      leadReplyWasShort,
-      lastTheme,
-      currentTheme,
-      repeatedSameTheme
-    },
-    respostaFinal: continuation.message,
-    fileKey: continuation.fileKey
-  };
-}
 
 function applyAntiRepetitionGuard({
   leadText = "",
