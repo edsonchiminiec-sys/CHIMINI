@@ -6666,6 +6666,44 @@ async function saveHistoryStep(from, history, userText, botText, isAudio = false
   await saveConversation(from, history);
 }
 
+async function finalizeHandledResponse({
+  from,
+  history = [],
+  userText = "",
+  botText = "",
+  isAudio = false,
+  messageId = null,
+  shouldScheduleFollowups = true,
+  shouldMarkProcessed = true
+} = {}) {
+  if (!from || !botText) {
+    console.warn("⚠️ finalizeHandledResponse chamado sem from ou botText:", {
+      from,
+      hasBotText: Boolean(botText)
+    });
+
+    return;
+  }
+
+  await sendWhatsAppMessage(from, botText);
+
+  await saveHistoryStep(
+    from,
+    history,
+    userText,
+    botText,
+    isAudio
+  );
+
+  if (shouldScheduleFollowups) {
+    scheduleLeadFollowups(from);
+  }
+
+  if (shouldMarkProcessed && messageId) {
+    markMessageAsProcessed(messageId);
+  }
+}
+
 function canStartDataCollection(lead = {}) {
   const e = lead.etapas || {};
 
@@ -10683,14 +10721,15 @@ if (
     ultimaMensagemLead: text
   });
 
-  await sendWhatsAppMessage(from, taxaMsg);
-  await saveHistoryStep(from, history, text, taxaMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+    await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: taxaMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
@@ -10932,11 +10971,13 @@ if (
 // 🔥 RESPOSTA CONTROLADA PARA PEDIDO DE CADASTRO / PARTICIPAÇÃO
 if (
   isCadastroOuParticipacaoIntent(text) &&
-  !currentLead?.aguardandoConfirmacaoCampo &&
-  !awaitingConfirmation &&
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  }) &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-  const firstName = getFirstName(
+   const firstName = getFirstName(
     currentLead?.nome ||
     currentLead?.nomeWhatsApp ||
     ""
