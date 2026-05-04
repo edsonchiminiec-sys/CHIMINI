@@ -197,16 +197,17 @@ async function saveLeadProfile(user, data = {}) {
 
   // ETAPAS INICIAIS APENAS PARA LEAD NOVO
   if (!currentLead && !safeData.etapas) {
-    insertData.etapas = {
-      programa: false,
-      beneficios: false,
-      estoque: false,
-      responsabilidades: false,
-      investimento: false,
-      compromisso: false
-    };
-  }
-
+  insertData.etapas = {
+    programa: false,
+    beneficios: false,
+    estoque: false,
+    responsabilidades: false,
+    investimento: false,
+    taxaPerguntada: false,
+    compromissoPerguntado: false,
+    compromisso: false
+  };
+}
    if (!currentLead && safeData.taxaAlinhada === undefined) {
   insertData.taxaAlinhada = false;
 }
@@ -9272,28 +9273,35 @@ const podeConfirmarInteresseRealAgora =
 }
 
 // ✅ CONFIRMAÇÃO ESPECÍFICA DA TAXA / INVESTIMENTO
-// Só marca taxaAlinhada quando o lead confirma claramente que entendeu
-// ou concorda com o investimento. Respostas fracas como "ok", "sim"
-// ou "entendi" não bastam para liberar pré-análise.
+// Só marca taxaAlinhada quando:
+// 1. o investimento já foi explicado;
+// 2. a taxa já foi perguntada/validada;
+// 3. o lead respondeu de forma clara sobre o investimento.
+// Respostas fracas como "ok", "sim" ou "entendi" não bastam.
 if (
   currentLead?.etapas?.investimento === true &&
+  currentLead?.etapas?.taxaPerguntada === true &&
   currentLead?.taxaAlinhada !== true &&
   isTaxaAlinhadaConfirmation(text) &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
 ) {
   await saveLeadProfile(from, {
-    taxaAlinhada: true
+    taxaAlinhada: true,
+    etapas: {
+      ...(currentLead?.etapas || {}),
+      taxaPerguntada: false
+    }
   });
 
   currentLead = await loadLeadProfile(from);
-}
-     
+}     
      // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
 // Só marca compromisso como concluído quando:
 // 1. a SDR já perguntou sobre o resultado depender da atuação;
 // 2. o lead respondeu positivamente;
 // 3. ainda não estamos em confirmação de dados pessoais.
+     
 if (
   currentLead?.etapas?.compromissoPerguntado === true &&
   currentLead?.etapas?.compromisso !== true &&
@@ -10265,10 +10273,11 @@ if (explicouResponsabilidades) {
 
 if (explicouInvestimento) {
   etapasUpdate.investimento = true;
+  etapasUpdate.taxaPerguntada = true;
 }
 
 if (explicouCompromisso) {
-  etapasUpdate.compromisso = true;
+  etapasUpdate.compromissoPerguntado = true;
 }
 
 await saveLeadProfile(from, {
