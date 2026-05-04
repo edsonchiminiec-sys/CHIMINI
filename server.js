@@ -5950,15 +5950,22 @@ Você consegue me confirmar se essa parte do investimento faz sentido pra você?
 }
    
   if (!e.compromisso) {
-    return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
+    return "Antes de avançarmos, só preciso confirmar um ponto importante \n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   }
 
  if (lead.interesseReal !== true) {
-  return `Com esses pontos claros, você tem interesse em seguir para a pré-análise agora? 😊
+  if (lead.sinalInteresseInicial === true) {
+    return `Você tinha comentado que queria seguir, e isso é ótimo!
+
+Agora que já alinhamos programa, benefícios, estoque, responsabilidades, investimento e compromisso, posso seguir com a pré-análise?
+
+Só reforçando: essa etapa ainda não é aprovação automática e não envolve pagamento neste momento. É apenas para a equipe IQG avaliar seus dados e orientar o próximo passo com segurança.`;
+  }
+
+  return `Com esses pontos claros, você tem interesse em seguir para a pré-análise agora?
 
 Só reforçando: essa etapa ainda não é aprovação automática e não envolve pagamento neste momento. É apenas para a equipe IQG avaliar seus dados e orientar o próximo passo com segurança.`;
 }
-
   return "Perfeito! Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
 
