@@ -78,6 +78,12 @@ async function ensureIndexes() {
     { user: 1 },
     { unique: true }
   );
+
+     await db.collection("incoming_message_buffers").createIndex(
+    { updatedAt: 1 },
+    { expireAfterSeconds: 300 }
+  );
+   
 }
 
 async function updateLeadStatus(user, status) {
@@ -590,12 +596,9 @@ const processingMessages = new Set();
 const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_MESSAGES = 5000;
 
-// 🔥 BUFFER PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
-const incomingMessageBuffers = new Map();
-
-const TYPING_DEBOUNCE_MS = 7000; // espera 7s após a última mensagem
-const MAX_TYPING_WAIT_MS = 15000; // limite máximo de espera
-
+// 🔥 BUFFER PERSISTENTE NO MONGO PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
+const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem
+const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
 /* =========================
    STATE
 ========================= */
@@ -639,75 +642,90 @@ function shouldUseName(state) {
 }
 
 async function collectBufferedText(from, text, messageId) {
-  const now = Date.now();
+  await connectMongo();
 
-  let buffer = incomingMessageBuffers.get(from);
+  const now = new Date();
+  const nowMs = Date.now();
+
+  const cleanText = String(text || "").trim();
+
+  if (!from || !cleanText) {
+    return {
+      shouldContinue: false,
+      text: ""
+    };
+  }
+
+  const bufferId = from;
+
+  await db.collection("incoming_message_buffers").updateOne(
+    { _id: bufferId },
+    {
+      $setOnInsert: {
+        _id: bufferId,
+        user: from,
+        messages: [],
+        messageIds: [],
+        startedAtMs: nowMs,
+        createdAt: now
+      },
+      $set: {
+        lastAtMs: nowMs,
+        updatedAt: now,
+        processing: false
+      },
+      $push: {
+        messages: cleanText,
+        ...(messageId ? { messageIds: messageId } : {})
+      }
+    },
+    { upsert: true }
+  );
+
+  await delay(TYPING_DEBOUNCE_MS);
+
+  const buffer = await db.collection("incoming_message_buffers").findOne({
+    _id: bufferId
+  });
 
   if (!buffer) {
-    buffer = {
-      active: true,
-      processing: false,
-      messages: [],
-      messageIds: [],
-      startedAt: now,
-      lastAt: now
-    };
-
-    incomingMessageBuffers.set(from, buffer);
-  }
-
-  buffer.messages.push(text);
-  buffer.lastAt = now;
-
-  if (messageId) {
-    buffer.messageIds.push(messageId);
-  }
-
-  // Se outra requisição já está aguardando o lead terminar de digitar,
-  // esta aqui só adiciona a mensagem ao buffer e para.
-  if (buffer.processing) {
     return {
       shouldContinue: false,
       text: ""
     };
   }
 
-  buffer.processing = true;
+  const quietFor = Date.now() - Number(buffer.lastAtMs || 0);
+  const totalWait = Date.now() - Number(buffer.startedAtMs || 0);
 
-  // Aguarda o lead parar de mandar mensagens por alguns segundos.
-  while (Date.now() - buffer.startedAt < MAX_TYPING_WAIT_MS) {
-    const quietFor = Date.now() - buffer.lastAt;
-
-    if (quietFor >= TYPING_DEBOUNCE_MS) {
-      break;
-    }
-
-    await delay(500);
-  }
-
-  const finalBuffer = incomingMessageBuffers.get(from);
-
-  if (!finalBuffer) {
+  if (quietFor < TYPING_DEBOUNCE_MS && totalWait < MAX_TYPING_WAIT_MS) {
     return {
       shouldContinue: false,
       text: ""
     };
   }
 
-  incomingMessageBuffers.delete(from);
+  const claimResult = await db.collection("incoming_message_buffers").findOneAndDelete({
+    _id: bufferId
+  });
 
-  const finalText = finalBuffer.messages
-    .map(msg => String(msg || "").trim())
-    .filter(Boolean)
-    .join("\n");
+  const finalBuffer = claimResult?.value || buffer;
+
+  const finalText = Array.isArray(finalBuffer.messages)
+    ? finalBuffer.messages
+        .map(msg => String(msg || "").trim())
+        .filter(Boolean)
+        .join("\n")
+    : cleanText;
 
   return {
     shouldContinue: true,
     text: finalText,
-    messageIds: finalBuffer.messageIds
+    messageIds: Array.isArray(finalBuffer.messageIds)
+      ? finalBuffer.messageIds
+      : []
   };
 }
-
 function clearTimers(from) {
   const state = getState(from);
 
