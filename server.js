@@ -6059,6 +6059,8 @@ function isLeadRejectingOrCooling(text = "") {
 
   return patterns.some(pattern => t.includes(pattern));
 }
+
+
 function leadHasFinishedPreCadastro(lead = {}) {
   return Boolean(
     lead?.dadosConfirmadosPeloLead === true ||
@@ -6067,6 +6069,36 @@ function leadHasFinishedPreCadastro(lead = {}) {
     lead?.faseFunil === "crm" ||
     lead?.faseQualificacao === "enviado_crm" ||
     lead?.status === "enviado_crm"
+  );
+}
+
+function isCriticalCommercialBlockedState({
+  lead = {},
+  awaitingConfirmation = false
+} = {}) {
+  const fase = lead?.faseQualificacao || "";
+  const status = lead?.status || "";
+  const faseFunil = lead?.faseFunil || "";
+
+  const fasesBloqueadas = [
+    "coletando_dados",
+    "dados_parciais",
+    "aguardando_dados",
+    "aguardando_confirmacao_campo",
+    "aguardando_confirmacao_dados",
+    "corrigir_dado",
+    "corrigir_dado_final",
+    "aguardando_valor_correcao_final"
+  ];
+
+  return Boolean(
+    awaitingConfirmation ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    fasesBloqueadas.includes(fase) ||
+    fasesBloqueadas.includes(status) ||
+    faseFunil === "coleta_dados" ||
+    faseFunil === "confirmacao_dados"
   );
 }
 
@@ -6083,23 +6115,12 @@ function shouldRecoverLeadBeforeLoss({
     return false;
   }
 
-  if (lead?.aguardandoConfirmacaoCampo === true) {
-    return false;
-  }
-
-  if (awaitingConfirmation) {
-    return false;
-  }
-
-  if (lead?.faseQualificacao === "corrigir_dado") {
-    return false;
-  }
-
-  if (lead?.faseQualificacao === "corrigir_dado_final") {
-    return false;
-  }
-
-  if (lead?.faseQualificacao === "aguardando_valor_correcao_final") {
+  if (
+    isCriticalCommercialBlockedState({
+      lead,
+      awaitingConfirmation
+    })
+  ) {
     return false;
   }
 
@@ -10623,18 +10644,13 @@ if (
   isTaxaQuestionIntent(text) &&
   !isTaxaObjectionAgainstInvestment(text) &&
   !isAffiliateIntent(text) &&
-  currentLead?.dadosConfirmadosPeloLead !== true &&
-  currentLead?.crmEnviado !== true &&
-  currentLead?.statusOperacional !== "enviado_crm" &&
-  currentLead?.faseFunil !== "crm" &&
-  currentLead?.faseQualificacao !== "enviado_crm" &&
-  currentLead?.status !== "enviado_crm" &&
-  currentLead?.aguardandoConfirmacaoCampo !== true &&
-  !awaitingConfirmation &&
-  currentLead?.faseQualificacao !== "corrigir_dado" &&
-  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
-  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final"
+  !leadHasFinishedPreCadastro(currentLead || {}) &&
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  })
 ) {
+   
   const firstName = getFirstName(
     currentLead?.nome ||
     currentLead?.nomeWhatsApp ||
@@ -10683,18 +10699,12 @@ const leadTemObjecaoTaxaControlada =
   currentLead?.taxaAlinhada !== true &&
   isTaxaObjectionAgainstInvestment(text) &&
   !isAffiliateIntent(text) &&
-  currentLead?.dadosConfirmadosPeloLead !== true &&
-  currentLead?.crmEnviado !== true &&
-  currentLead?.statusOperacional !== "enviado_crm" &&
-  currentLead?.faseFunil !== "crm" &&
-  currentLead?.faseQualificacao !== "enviado_crm" &&
-  currentLead?.status !== "enviado_crm" &&
-  currentLead?.aguardandoConfirmacaoCampo !== true &&
-  !awaitingConfirmation &&
-  currentLead?.faseQualificacao !== "corrigir_dado" &&
-  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
-  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
-
+  !leadHasFinishedPreCadastro(currentLead || {}) &&
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  });
+     
 if (leadTemObjecaoTaxaControlada) {
   const taxaObjectionCountAtual = Number(currentLead?.taxaObjectionCount || 0);
   const novaContagemObjecaoTaxa = taxaObjectionCountAtual + 1;
