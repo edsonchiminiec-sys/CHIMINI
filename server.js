@@ -5567,6 +5567,10 @@ function getMissingFunnelStepLabels(lead = {}) {
     missing.push("investimento");
   }
 
+if (lead?.taxaAlinhada !== true) {
+  missing.push("alinhamento claro da taxa");
+}
+   
   if (!e.compromisso) {
     missing.push("compromisso de atuação");
   }
@@ -5821,6 +5825,7 @@ function canAskForRealInterest(lead = {}) {
     e.estoque === true &&
     e.responsabilidades === true &&
     e.investimento === true &&
+    lead.taxaAlinhada === true &&
     e.compromisso === true &&
     lead.interesseReal !== true
   );
@@ -6441,6 +6446,172 @@ function applyAntiRepetitionGuard({
     };
   }
 
+function leadMentionedTaxObjection(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    t.includes("taxa") ||
+    t.includes("1990") ||
+    t.includes("1 990") ||
+    t.includes("1.990") ||
+    t.includes("valor") ||
+    t.includes("investimento") ||
+    t.includes("caro") ||
+    t.includes("pagar") ||
+    t.includes("pagamento") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("parcelar") ||
+    t.includes("parcelado") ||
+    t.includes("10x") ||
+    t.includes("nao tenho esse valor") ||
+    t.includes("não tenho esse valor") ||
+    t.includes("sem dinheiro") ||
+    t.includes("achei alto") ||
+    t.includes("muito alto")
+  );
+}
+
+function historyAlreadyExplainedInvestment(history = []) {
+  if (!Array.isArray(history)) return false;
+
+  const historyText = history
+    .filter(message => message?.role === "assistant")
+    .slice(-8)
+    .map(message => message?.content || "")
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    (
+      historyText.includes("r$ 1.990") ||
+      historyText.includes("1.990") ||
+      historyText.includes("1990")
+    ) &&
+    (
+      historyText.includes("nao e compra de mercadoria") ||
+      historyText.includes("nao e caucao") ||
+      historyText.includes("nao e garantia") ||
+      historyText.includes("lote inicial") ||
+      historyText.includes("mais de r$ 5.000") ||
+      historyText.includes("mais de 5.000") ||
+      historyText.includes("10x")
+    )
+  );
+}
+
+function buildShortTaxObjectionResponse({ leadText = "" } = {}) {
+  const t = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (
+    t.includes("parcel") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("10x")
+  ) {
+    return `Sim, existe possibilidade de parcelamento no cartão em até 10x de R$ 199,00, dependendo da disponibilidade no momento.
+
+E só reforçando: esse pagamento não acontece agora. Ele só vem depois da análise interna e da assinatura do contrato.
+
+Assim fica mais viável pra você analisar?`;
+  }
+
+  if (
+    t.includes("pix") ||
+    t.includes("pagar") ||
+    t.includes("pagamento")
+  ) {
+    return `O pagamento não acontece agora, tá? 😊
+
+Primeiro vem a análise interna e, se fizer sentido seguir, a assinatura do contrato. Só depois disso a parte do investimento é tratada.
+
+Neste momento, o mais importante é você entender se o modelo faz sentido pra você. Faz sentido nesse formato?`;
+  }
+
+  if (
+    t.includes("caro") ||
+    t.includes("alto") ||
+    t.includes("nao tenho esse valor") ||
+    t.includes("não tenho esse valor") ||
+    t.includes("sem dinheiro")
+  ) {
+    return `Entendo sua análise 😊
+
+O ponto principal é não olhar a taxa isolada: ela não é compra de mercadoria, caução ou garantia. Ela está ligada à entrada na estrutura, suporte e liberação do lote em comodato, que representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+
+Mas precisa fazer sentido pra você também. Nesse formato, você prefere entender melhor a margem ou acha que o investimento fica inviável agora?`;
+  }
+
+  return `Sim, existe a taxa de adesão e implantação de R$ 1.990,00.
+
+Só reforçando de forma direta: ela não é compra de mercadoria, caução ou garantia. Ela faz parte da ativação no programa, suporte e liberação do lote em comodato, que representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+
+Faz sentido pra você olhando por esse lado?`;
+}
+
+function applyTaxObjectionAntiRepetitionGuard({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {},
+  history = []
+} = {}) {
+  const leadFalouDeTaxa = leadMentionedTaxObjection(leadText);
+  const investimentoJaExplicado = historyAlreadyExplainedInvestment(history);
+
+  if (!leadFalouDeTaxa || !investimentoJaExplicado) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const respostaIaFicouLonga =
+    String(respostaFinal || "").length > 650;
+
+  const respostaIaRepetiuArgumentos =
+    replyMentionsInvestment(respostaFinal) &&
+    (
+      String(respostaFinal || "").includes("não é compra de mercadoria") ||
+      String(respostaFinal || "").includes("não é caução") ||
+      String(respostaFinal || "").includes("não é garantia") ||
+      String(respostaFinal || "").includes("mais de R$ 5.000") ||
+      String(respostaFinal || "").includes("margem") ||
+      String(respostaFinal || "").includes("10x")
+    );
+
+  if (!respostaIaFicouLonga && !respostaIaRepetiuArgumentos) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  return {
+    changed: true,
+    reason: {
+      leadFalouDeTaxa,
+      investimentoJaExplicado,
+      respostaIaFicouLonga,
+      respostaIaRepetiuArgumentos
+    },
+    respostaFinal: buildShortTaxObjectionResponse({
+      leadText
+    })
+  };
+}
+   
   const leadReplyWasShort = isShortNeutralLeadReply(leadText);
 
   if (!leadReplyWasShort) {
@@ -8915,8 +9086,12 @@ if (estaEmColetaOuConfirmacao) {
     semanticIntent
   });
 }
-     const podeConfirmarInteresseRealAgora =
+const podeConfirmarInteresseRealAgora =
   canAskForRealInterest(currentLead || {}) &&
+  canStartDataCollection({
+    ...(currentLead || {}),
+    interesseReal: true
+  }) &&
   isPositiveConfirmation(text) &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation &&
@@ -8924,7 +9099,8 @@ if (estaEmColetaOuConfirmacao) {
   currentLead?.faseQualificacao !== "corrigir_dado_final" &&
   currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
 
-if (podeConfirmarInteresseRealAgora) {
+     if (podeConfirmarInteresseRealAgora) {
+   
   await saveLeadProfile(from, {
     interesseReal: true,
     faseQualificacao: "coletando_dados",
@@ -9849,6 +10025,25 @@ if (antiRepetition.changed) {
   }
 }
 
+// 🚫 ANTI-REPETIÇÃO ESPECÍFICA DA TAXA
+// Se a taxa já foi explicada e o lead voltou com objeção,
+// o backend impede a SDR de repetir o textão inteiro.
+const taxObjectionAntiRepetition = applyTaxObjectionAntiRepetitionGuard({
+  leadText: text,
+  respostaFinal,
+  currentLead,
+  history
+});
+
+if (taxObjectionAntiRepetition.changed) {
+  console.log("🚫 Resposta ajustada por repetição de objeção da taxa:", {
+    user: from,
+    reason: taxObjectionAntiRepetition.reason
+  });
+
+  respostaFinal = taxObjectionAntiRepetition.respostaFinal;
+}
+     
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
 // Essa trava impede a SDR de falar taxa cedo, pular fases,
 // misturar assuntos ou pedir dados antes da hora.
