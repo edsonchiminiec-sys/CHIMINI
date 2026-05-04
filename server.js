@@ -10951,6 +10951,30 @@ if (disciplinaFunil.changed) {
     actions.push(disciplinaFunil.fileKey);
   }
 }
+
+// 🔀 TRAVA FINAL ANTI-MISTURA ENTRE AFILIADO E HOMOLOGADO
+// Esta é a última auditoria semântica antes de salvar etapas e antes de enviar.
+// Se a SDR gerou uma resposta misturando os dois programas de forma errada,
+// corrigimos aqui.
+const routeMixGuard = await runFinalRouteMixGuard({
+  lead: currentLead || {},
+  leadText: text,
+  respostaFinal,
+  semanticIntent,
+  commercialRouteDecision
+});
+
+if (routeMixGuard.changed) {
+  console.log("🔀 Resposta corrigida por anti-mistura de rota:", {
+    user: from,
+    ultimaMensagemLead: text,
+    motivo: routeMixGuard.motivo,
+    respostaAntes: respostaFinal,
+    respostaDepois: routeMixGuard.respostaFinal
+  });
+
+  respostaFinal = routeMixGuard.respostaFinal;
+}
      
      // 🔥 ATUALIZA ETAPAS DO FUNIL — VERSÃO MAIS SEGURA
 const etapasUpdate = { ...(currentLead?.etapas || {}) };
