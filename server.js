@@ -12499,6 +12499,33 @@ if (taxObjectionAntiRepetition.changed) {
 
   respostaFinal = taxObjectionAntiRepetition.respostaFinal;
 }
+
+     // 🧠 TRAVA DE OBEDIÊNCIA AO CONSULTOR PRÉ-SDR
+// Se a SDR gerar uma resposta que contradiz a orientação recebida,
+// o backend corrige antes de aplicar as travas finais de funil e rota.
+const consultantDirectionGuard = enforceConsultantDirectionOnFinalReply({
+  respostaFinal,
+  consultantAdvice: preSdrConsultantAdvice || {},
+  currentLead,
+  leadText: text
+});
+
+if (consultantDirectionGuard.changed) {
+  console.log("🧠 Resposta ajustada por obediência ao Consultor Pré-SDR:", {
+    user: from,
+    reason: consultantDirectionGuard.reason
+  });
+
+  respostaFinal = consultantDirectionGuard.respostaFinal;
+
+  if (
+    consultantDirectionGuard.fileKey &&
+    Array.isArray(actions) &&
+    !actions.includes(consultantDirectionGuard.fileKey)
+  ) {
+    actions.push(consultantDirectionGuard.fileKey);
+  }
+}
      
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
 // Essa trava impede a SDR de falar taxa cedo, pular fases,
