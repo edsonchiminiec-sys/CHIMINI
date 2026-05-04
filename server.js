@@ -187,7 +187,7 @@ async function saveLeadProfile(user, data = {}) {
   const currentLead = await db.collection("leads").findOne({ user });
 
   // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
-   const {
+  const {
     _id,
     createdAt,
     crmEnviado,
@@ -199,43 +199,94 @@ async function saveLeadProfile(user, data = {}) {
     classificacao,
     consultoria,
 
-    ...safeData
+    ...rawSafeData
   } = data || {};
+
+  let safeData = {
+    ...(rawSafeData || {})
+  };
+
+  const leadFinalizouPreCadastro =
+    currentLead &&
+    leadHasFinishedPreCadastro(currentLead) === true;
+
+  const tentativaDePerdaIndevida =
+    currentLead &&
+    leadFinalizouPreCadastro !== true &&
+    (
+      safeData.status === "perdido" ||
+      safeData.faseQualificacao === "perdido" ||
+      safeData.statusOperacional === "perdido" ||
+      safeData.faseFunil === "encerrado" ||
+      safeData.temperaturaComercial === "frio"
+    );
+
+  if (tentativaDePerdaIndevida) {
+    console.log("🛡️ BLOQUEIO saveLeadProfile: tentativa de marcar lead não finalizado como perdido/encerrado/frio. Convertendo para morno ativo.", {
+      user,
+      statusOriginal: safeData.status,
+      faseOriginal: safeData.faseQualificacao,
+      statusOperacionalOriginal: safeData.statusOperacional,
+      faseFunilOriginal: safeData.faseFunil,
+      temperaturaOriginal: safeData.temperaturaComercial,
+      recoveryAttempts: currentLead?.recoveryAttempts || 0,
+      afiliadoOferecidoComoAlternativa: currentLead?.afiliadoOferecidoComoAlternativa === true
+    });
+
+    safeData = {
+      ...safeData,
+      status: safeData.status === "perdido" ? "morno" : safeData.status,
+      faseQualificacao: safeData.faseQualificacao === "perdido" ? "morno" : safeData.faseQualificacao,
+      statusOperacional: "ativo",
+      faseFunil: currentLead?.faseFunil && currentLead.faseFunil !== "encerrado"
+        ? currentLead.faseFunil
+        : "beneficios",
+      temperaturaComercial: "morno",
+      ultimaTentativaPerdaBloqueadaEm: new Date(),
+      ultimaTentativaPerdaBloqueadaPayload: {
+        status: rawSafeData?.status || "",
+        faseQualificacao: rawSafeData?.faseQualificacao || "",
+        statusOperacional: rawSafeData?.statusOperacional || "",
+        faseFunil: rawSafeData?.faseFunil || "",
+        temperaturaComercial: rawSafeData?.temperaturaComercial || ""
+      }
+    };
+  }
+
   // DADOS QUE SÓ DEVEM EXISTIR NA CRIAÇÃO
-   
- const insertData = {
-  createdAt: new Date(),
-  supervisor: buildDefaultSupervisorAnalysis(),
-  classificacao: buildDefaultLeadClassification(),
-  consultoria: buildDefaultConsultantAdvice()
-};
-   
+  const insertData = {
+    createdAt: new Date(),
+    supervisor: buildDefaultSupervisorAnalysis(),
+    classificacao: buildDefaultLeadClassification(),
+    consultoria: buildDefaultConsultantAdvice()
+  };
+
   // STATUS INICIAL APENAS PARA LEAD NOVO
-  
-   if (!currentLead && !safeData.status) {
+  if (!currentLead && !safeData.status) {
     insertData.status = "novo";
   }
 
   // ETAPAS INICIAIS APENAS PARA LEAD NOVO
   if (!currentLead && !safeData.etapas) {
-  insertData.etapas = {
-    programa: false,
-    beneficios: false,
-    estoque: false,
-    responsabilidades: false,
-    investimento: false,
-    taxaPerguntada: false,
-    compromissoPerguntado: false,
-    compromisso: false
-  };
-}
-   if (!currentLead && safeData.taxaAlinhada === undefined) {
-  insertData.taxaAlinhada = false;
-}
+    insertData.etapas = {
+      programa: false,
+      beneficios: false,
+      estoque: false,
+      responsabilidades: false,
+      investimento: false,
+      taxaPerguntada: false,
+      compromissoPerguntado: false,
+      compromisso: false
+    };
+  }
 
-   if (!currentLead && safeData.taxaObjectionCount === undefined) {
-  insertData.taxaObjectionCount = 0;
-}
+  if (!currentLead && safeData.taxaAlinhada === undefined) {
+    insertData.taxaAlinhada = false;
+  }
+
+  if (!currentLead && safeData.taxaObjectionCount === undefined) {
+    insertData.taxaObjectionCount = 0;
+  }
 
   const lifecycleBase = {
     ...(currentLead || {}),
@@ -244,6 +295,22 @@ async function saveLeadProfile(user, data = {}) {
   };
 
   const lifecycleData = getLeadLifecycleFields(lifecycleBase);
+
+  if (tentativaDePerdaIndevida) {
+    lifecycleData.statusOperacional = "ativo";
+    lifecycleData.faseFunil =
+      safeData.faseFunil && safeData.faseFunil !== "encerrado"
+        ? safeData.faseFunil
+        : "beneficios";
+    lifecycleData.temperaturaComercial = "morno";
+
+    if (!lifecycleData.rotaComercial) {
+      lifecycleData.rotaComercial =
+        currentLead?.rotaComercial ||
+        currentLead?.origemConversao ||
+        "homologado";
+    }
+  }
 
   await db.collection("leads").updateOne(
     { user },
@@ -259,7 +326,6 @@ async function saveLeadProfile(user, data = {}) {
     { upsert: true }
   );
 }
-
 async function loadLeadProfile(user) {
   await connectMongo();
 
