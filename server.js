@@ -5732,6 +5732,150 @@ const VALID_UFS = [
   "RS", "RO", "RR", "SC", "SP", "SE", "TO"
 ];
 
+const MAX_REENGAGEMENT_ATTEMPTS_BEFORE_AFFILIATE = 3;
+const MAX_TOTAL_RECOVERY_ATTEMPTS = 6;
+
+function isLeadRejectingOrCooling(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const patterns = [
+    "nao tenho interesse",
+    "não tenho interesse",
+    "nao me interessa",
+    "não me interessa",
+    "sem interesse",
+    "nao quero",
+    "não quero",
+    "nao e pra mim",
+    "não é pra mim",
+    "nao faz sentido",
+    "não faz sentido",
+    "achei caro",
+    "muito caro",
+    "caro demais",
+    "taxa alta",
+    "nao tenho dinheiro",
+    "não tenho dinheiro",
+    "vou pensar",
+    "vou ver depois",
+    "talvez depois",
+    "agora nao",
+    "agora não",
+    "deixa pra depois",
+    "deixa para depois",
+    "nao posso agora",
+    "não posso agora"
+  ];
+
+  return patterns.some(pattern => t.includes(pattern));
+}
+
+function leadHasFinishedPreCadastro(lead = {}) {
+  return Boolean(
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.status === "enviado_crm"
+  );
+}
+
+function shouldRecoverLeadBeforeLoss({
+  text = "",
+  lead = {},
+  awaitingConfirmation = false
+} = {}) {
+  if (!isLeadRejectingOrCooling(text)) {
+    return false;
+  }
+
+  if (leadHasFinishedPreCadastro(lead)) {
+    return false;
+  }
+
+  if (lead?.aguardandoConfirmacaoCampo === true) {
+    return false;
+  }
+
+  if (awaitingConfirmation) {
+    return false;
+  }
+
+  if (lead?.faseQualificacao === "corrigir_dado") {
+    return false;
+  }
+
+  if (lead?.faseQualificacao === "corrigir_dado_final") {
+    return false;
+  }
+
+  if (lead?.faseQualificacao === "aguardando_valor_correcao_final") {
+    return false;
+  }
+
+  return true;
+}
+
+function buildHomologadoRecoveryResponse(attempt = 1, firstName = "") {
+  const namePart = firstName ? `${firstName}, ` : "";
+
+  if (attempt <= 1) {
+    return `${namePart}entendo sua posição 😊
+
+Mas antes de você descartar, deixa eu te explicar um ponto importante: o Parceiro Homologado não é só uma taxa.
+
+Você recebe estrutura, suporte, treinamento e um lote inicial em comodato para começar com produtos em mãos, sem precisar comprar esse estoque.
+
+A ideia é justamente te dar uma base para vender com mais segurança.
+
+O que mais te travou hoje: o valor da taxa, o modelo com estoque ou a insegurança de não vender?`;
+  }
+
+  if (attempt === 2) {
+    return `${namePart}super entendo você analisar com cuidado.
+
+O ponto principal é comparar o investimento com o que o programa entrega: suporte da indústria, treinamento, materiais e lote inicial em comodato representando mais de R$ 5.000,00 em preço de venda.
+
+E importante: pagamento não acontece agora. Só depois da análise interna e contrato.
+
+Se eu te mostrar um caminho mais simples para começar, sem estoque e sem taxa do Homologado, faria mais sentido pra você?`;
+  }
+
+  return `${namePart}pra não te deixar sem opção, existe também um caminho mais leve dentro da IQG 😊
+
+Se o investimento ou o estoque do Parceiro Homologado não fizer sentido agora, você pode começar pelo Programa de Afiliados.
+
+Nele você não precisa ter estoque, não compra produtos e não paga a taxa de adesão do Homologado.
+
+Quer que eu te explique essa alternativa?`;
+}
+
+function buildMandatoryAffiliateAlternativeResponse(firstName = "") {
+  const namePart = firstName ? `${firstName}, ` : "";
+
+  return `${namePart}entendo totalmente 😊
+
+Então talvez o melhor caminho agora seja começar pelo Programa de Afiliados IQG.
+
+Ele é separado do Parceiro Homologado: você não precisa ter estoque, não precisa comprar produtos e não paga a taxa de adesão do Homologado.
+
+Você faz o cadastro, gera seus links exclusivos e divulga os produtos online. Quando uma venda feita pelo seu link é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Esse caminho mais simples faria mais sentido pra você começar?`;
+}
+
 function isSoftUnderstandingConfirmation(text = "") {
   const t = String(text || "")
     .toLowerCase()
