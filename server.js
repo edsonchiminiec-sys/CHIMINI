@@ -7628,6 +7628,243 @@ function detectReplyMainTheme(text = "") {
   return "";
 }
 
+function detectLeadMessageThemes(text = "") {
+  const t = normalizeCommercialText(text);
+
+  const themes = [];
+
+  if (!t) {
+    return themes;
+  }
+
+  if (
+    t.includes("taxa") ||
+    t.includes("valor") ||
+    t.includes("preco") ||
+    t.includes("preço") ||
+    t.includes("investimento") ||
+    t.includes("1990") ||
+    t.includes("1.990") ||
+    t.includes("pagar") ||
+    t.includes("pagamento") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("parcel") ||
+    t.includes("caro")
+  ) {
+    themes.push("investimento");
+  }
+
+  if (
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("lote") ||
+    t.includes("kit") ||
+    t.includes("produto") ||
+    t.includes("produtos") ||
+    t.includes("reposicao") ||
+    t.includes("reposição") ||
+    t.includes("comprar estoque") ||
+    t.includes("comprar produto")
+  ) {
+    themes.push("estoque");
+  }
+
+  if (
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guardar") ||
+    t.includes("guarda") ||
+    t.includes("conservar") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("venda") ||
+    t.includes("vender") ||
+    t.includes("atuacao") ||
+    t.includes("atuação")
+  ) {
+    themes.push("responsabilidades");
+  }
+
+  if (
+    t.includes("afiliado") ||
+    t.includes("afiliados") ||
+    t.includes("link") ||
+    t.includes("comissao") ||
+    t.includes("comissão") ||
+    t.includes("divulgar") ||
+    t.includes("indicacao") ||
+    t.includes("indicação") ||
+    t.includes("minhaiqg")
+  ) {
+    themes.push("afiliado");
+  }
+
+  if (
+    t.includes("contrato") ||
+    t.includes("assinatura") ||
+    t.includes("assinar") ||
+    t.includes("juridico") ||
+    t.includes("jurídico")
+  ) {
+    themes.push("contrato");
+  }
+
+  if (
+    t.includes("cpf") ||
+    t.includes("telefone") ||
+    t.includes("celular") ||
+    t.includes("whatsapp") ||
+    t.includes("nome") ||
+    t.includes("cidade") ||
+    t.includes("estado") ||
+    t.includes("uf") ||
+    t.includes("dado") ||
+    t.includes("dados")
+  ) {
+    themes.push("dados");
+  }
+
+  if (
+    t.includes("como funciona") ||
+    t.includes("programa") ||
+    t.includes("parceria") ||
+    t.includes("homologado") ||
+    t.includes("homologacao") ||
+    t.includes("homologação")
+  ) {
+    themes.push("programa");
+  }
+
+  if (
+    t.includes("beneficio") ||
+    t.includes("benefício") ||
+    t.includes("beneficios") ||
+    t.includes("benefícios") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("material") ||
+    t.includes("materiais")
+  ) {
+    themes.push("beneficios");
+  }
+
+  return [...new Set(themes)];
+}
+
+function replyCoversLeadThemes({
+  leadText = "",
+  replyText = ""
+} = {}) {
+  const leadThemes = detectLeadMessageThemes(leadText);
+  const replyThemes = detectLeadMessageThemes(replyText);
+
+  if (leadThemes.length === 0) {
+    return {
+      hasThemesToCover: false,
+      covered: true,
+      missingThemes: [],
+      leadThemes,
+      replyThemes
+    };
+  }
+
+  const missingThemes = leadThemes.filter(theme => !replyThemes.includes(theme));
+
+  return {
+    hasThemesToCover: true,
+    covered: missingThemes.length === 0,
+    missingThemes,
+    leadThemes,
+    replyThemes
+  };
+}
+
+function buildUnansweredLeadThemeResponse({
+  leadText = "",
+  missingThemes = [],
+  currentLead = {}
+} = {}) {
+  const firstTheme = missingThemes[0] || "";
+
+  if (firstTheme === "investimento") {
+    return buildShortTaxObjectionResponse({
+      leadText
+    });
+  }
+
+  if (firstTheme === "estoque") {
+    return `Boa pergunta 😊
+
+O estoque inicial do Parceiro Homologado é cedido em comodato. Isso significa que você não compra esse estoque: ele continua sendo da IQG, mas fica com você para operação, demonstração e venda.
+
+Quando vender os produtos, você pode solicitar reposição também em comodato, conforme a operação, disponibilidade e alinhamento com a equipe IQG.
+
+Ficou claro esse ponto do estoque?`;
+  }
+
+  if (firstTheme === "responsabilidades") {
+    return `Sim, essa parte é importante 😊
+
+Como parceiro, você fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+E o resultado depende da sua atuação comercial: prospectar, atender clientes e conduzir as vendas com seriedade.
+
+Esse ponto das responsabilidades faz sentido pra você?`;
+  }
+
+  if (firstTheme === "afiliado") {
+    return buildAffiliateResponse(false);
+  }
+
+  if (firstTheme === "contrato") {
+    return `Posso te explicar sobre o contrato 😊
+
+A assinatura oficial acontece somente depois da análise cadastral da equipe IQG.
+
+Antes disso, eu consigo te orientar sobre as regras principais do programa, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou cobrança.
+
+Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
+  }
+
+  if (firstTheme === "dados") {
+    if (isDataFlowState(currentLead || {})) {
+      return buildDataFlowResumeMessage(currentLead || {});
+    }
+
+    return `Sobre os dados, a coleta só acontece na fase correta da pré-análise 😊
+
+Antes disso, preciso garantir que você entendeu o programa, benefícios, estoque, responsabilidades e investimento.
+
+Quer que eu siga pelo próximo ponto obrigatório?`;
+  }
+
+  if (firstTheme === "programa") {
+    return `Claro 😊
+
+O Programa Parceiro Homologado IQG é uma parceria comercial onde você vende produtos da indústria com suporte, treinamento e uma estrutura pensada para começar de forma organizada.
+
+A ideia é você atuar com produtos físicos, lote em comodato e acompanhamento da IQG, seguindo as regras do programa.
+
+Quer que eu te explique agora os principais benefícios?`;
+  }
+
+  if (firstTheme === "beneficios") {
+    return `O principal benefício é que você não começa sozinho 😊
+
+A IQG oferece suporte, materiais, treinamento e um lote inicial em comodato para você operar com mais segurança, sem precisar comprar estoque para iniciar.
+
+Quer que eu te explique agora como funciona esse estoque inicial?`;
+  }
+
+  return `Boa pergunta 😊
+
+Vou te responder esse ponto primeiro para não deixar nada solto.
+
+Você pode me confirmar se a sua dúvida principal agora é sobre o funcionamento do programa, estoque, investimento ou próximos passos?`;
+}
+
 function buildConversationMemoryForAgents({
   lead = {},
   history = [],
