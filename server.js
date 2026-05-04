@@ -447,19 +447,41 @@ function getLeadLifecycleFields(data = {}) {
     }
   }
 
-  if (
+    // 🔀 ROTA COMERCIAL — REGRA CENTRAL DE PERSISTÊNCIA
+  // Aqui protegemos o Mongo e o dashboard.
+  // Se a rota já veio definida como afiliado ou ambos, ela deve ser respeitada.
+  // Isso evita que o ciclo de vida recalcule tudo como "homologado" por padrão.
+  const rotaInformada = data.rotaComercial || "";
+  const origemConversao = data.origemConversao || "";
+
+  const origemAfiliado = [
+    "afiliado",
+    "interesse_direto",
+    "interesse_direto_afiliado",
+    "recuperado_objecao",
+    "recuperado_objecao_taxa_persistente"
+  ].includes(origemConversao);
+
+  const origemAmbos = [
+    "ambos",
+    "comparacao_homologado_afiliado"
+  ].includes(origemConversao);
+
+  if (rotaInformada === "ambos" || origemAmbos) {
+    result.rotaComercial = "ambos";
+  } else if (
+    rotaInformada === "afiliado" ||
     status === "afiliado" ||
     fase === "afiliado" ||
     data.interesseAfiliado === true ||
-    data.origemConversao === "afiliado" ||
-    data.origemConversao === "recuperado_objecao" ||
-    data.origemConversao === "interesse_direto"
+    origemAfiliado
   ) {
     result.rotaComercial = "afiliado";
-  } else if (status || fase || data.origemConversao) {
+  } else if (rotaInformada === "homologado") {
+    result.rotaComercial = "homologado";
+  } else if (status || fase || origemConversao) {
     result.rotaComercial = "homologado";
   }
-
   if (
     data.interesseReal === true ||
     ["quente", "pre_analise", "qualificado", "dados_confirmados"].includes(statusOuFase)
@@ -8202,6 +8224,19 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
     return `${prefixo}se quiser começar sem estoque e sem taxa de adesão do Homologado, o afiliado pode ser um bom primeiro passo. As informações e cadastro estão aqui: https://minhaiqg.com.br/`;
   }
 
+  const isAmbos =
+    rotaComercial === "ambos" ||
+    fase === "ambos" ||
+    faseAntiga === "ambos";
+
+  if (isAmbos) {
+    if (step === 1) {
+      return `${prefixo}ficou claro para você a diferença entre o Programa de Afiliados e o Parceiro Homologado? 😊`;
+    }
+
+    return `${prefixo}quer seguir pelo cadastro de afiliado, entender melhor o Parceiro Homologado ou avaliar os dois caminhos?`;
+  }
+   
   if (
     fase === "inicio" ||
     fase === "esclarecimento" ||
@@ -8326,6 +8361,9 @@ function getFinalFollowupMessage(lead = {}) {
     lead?.rotaComercial === "afiliado" ||
     lead?.faseQualificacao === "afiliado" ||
     lead?.status === "afiliado";
+     const jaEstaEmAmbos =
+    lead?.rotaComercial === "ambos" ||
+    lead?.origemConversao === "comparacao_homologado_afiliado";
 
   if (jaVirouParceiroConfirmado) {
     return `${prefixo}vou encerrar por aqui 😊
@@ -8335,6 +8373,23 @@ Sua pré-análise já ficou encaminhada para a equipe comercial da IQG.
 Se surgir alguma dúvida, fico à disposição.`;
   }
 
+  if (jaEstaEmAmbos) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Só reforçando a diferença:
+
+No Programa de Afiliados, você divulga por link, não precisa ter estoque e não tem a taxa de adesão do Parceiro Homologado.
+
+No Parceiro Homologado, o modelo é mais estruturado, com produtos físicos, lote em comodato, suporte, treinamento, contrato e taxa de adesão.
+
+Você pode avaliar só o afiliado, só o homologado ou os dois caminhos.
+
+Cadastro de afiliado:
+https://minhaiqg.com.br/
+
+Se quiser retomar depois o Parceiro Homologado, posso te explicar por aqui.`;
+  }
+   
   if (jaEstaEmAfiliado) {
     return `${prefixo}vou encerrar por aqui 😊
 
