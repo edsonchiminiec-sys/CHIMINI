@@ -6362,6 +6362,159 @@ function mentionsPaymentIntent(text = "") {
   );
 }
 
+function buildPreSdrConsultantFallbackAdvice({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const memory = buildConversationMemoryForAgents({
+    lead,
+    history,
+    lastUserText,
+    lastSdrText
+  });
+
+  const missingSteps = getMissingFunnelStepLabels(lead || {});
+  const isDataFlow = isDataFlowState(lead || {});
+  const hasPayment = mentionsPaymentIntent(lastUserText);
+  const hasQuestionOrObjection = isLeadQuestionObjectionOrCorrection(lastUserText);
+  const isShortNeutral = isShortNeutralLeadReply(lastUserText);
+  const currentStage = getCurrentFunnelStage(lead || {});
+
+  if (isDataFlow) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: "Responder somente se houver dúvida real do lead e retomar o ponto pendente da coleta/confirmação/correção de dados.",
+      abordagemSugerida: "Tom curto, seguro e objetivo. Não abrir nova rota comercial.",
+      argumentoPrincipal: "A conversa está em coleta, confirmação ou correção de dados; o foco é concluir esse ponto sem misturar temas.",
+      cuidadoPrincipal: "Não falar taxa, Afiliados, cadastro ou pré-análise fora do ponto pendente.",
+      ofertaMaisAdequada: lead?.rotaComercial || "homologado",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: como o lead está em fluxo de dados, a SDR deve preservar a coleta/correção e evitar qualquer rota comercial.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (hasPayment) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "corrigir_conducao_sdr",
+      proximaMelhorAcao: "Responder que pagamento não acontece agora e conduzir de volta para a etapa correta do funil.",
+      abordagemSugerida: "Tom calmo e seguro. Validar o interesse sem conduzir pagamento.",
+      argumentoPrincipal: "O pagamento só acontece depois da análise interna e assinatura do contrato.",
+      cuidadoPrincipal: "Não pedir pagamento, não enviar dados de pagamento e não tratar PIX/cartão como próximo passo imediato.",
+      ofertaMaisAdequada: "homologado",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead mencionou pagamento. A SDR deve frear com segurança e continuar o funil correto.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (isTaxaObjectionAgainstInvestment(lastUserText)) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "tratar_objecao_taxa",
+      proximaMelhorAcao: "Tratar a objeção de taxa com acolhimento e valor percebido, sem oferecer Afiliados cedo demais.",
+      abordagemSugerida: "Tom consultivo, curto e sem pressão.",
+      argumentoPrincipal: "A taxa não é compra de mercadoria, caução ou garantia; ela está ligada à ativação, suporte, treinamento e lote em comodato.",
+      cuidadoPrincipal: "Não transformar objeção de preço em Afiliado automaticamente. Não pedir dados.",
+      ofertaMaisAdequada: "homologado",
+      momentoIdealHumano: "se_houver_nova_objecao",
+      prioridadeComercial: "alta",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead trouxe resistência ao investimento. A SDR deve tratar a objeção sem pular etapas.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (isAffiliateIntent(lastUserText)) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "oferecer_afiliado",
+      proximaMelhorAcao: "Responder diretamente sobre o Programa de Afiliados, sem misturar com pré-análise do Homologado.",
+      abordagemSugerida: "Tom simples e direto.",
+      argumentoPrincipal: "Afiliados é um programa separado, por link, sem estoque e sem taxa de adesão do Homologado.",
+      cuidadoPrincipal: "Não falar lote em comodato, taxa do Homologado ou coleta de CPF.",
+      ofertaMaisAdequada: "afiliado",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead demonstrou intenção direta de Afiliados. A SDR deve responder somente sobre Afiliados.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (isCadastroOuParticipacaoIntent(lastUserText)) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: canStartDataCollection(lead || {})
+        ? "avancar_pre_analise"
+        : "manter_nutricao",
+      proximaMelhorAcao: canStartDataCollection(lead || {})
+        ? "Conduzir para início da pré-análise, pedindo apenas o nome completo."
+        : `Explicar que antes do cadastro faltam etapas obrigatórias: ${missingSteps.join(", ") || "nenhuma"}.`,
+      abordagemSugerida: "Tom positivo, mas sem pular etapas.",
+      argumentoPrincipal: canStartDataCollection(lead || {})
+        ? "Como as etapas obrigatórias já foram alinhadas, pode iniciar a coleta passo a passo."
+        : "O cadastro só deve avançar depois de alinhar os pontos obrigatórios do funil.",
+      cuidadoPrincipal: "Não pedir CPF ou outros dados antes da fase correta.",
+      ofertaMaisAdequada: lead?.rotaComercial || "homologado",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "alta",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead pediu cadastro/participação. A SDR deve conduzir com segurança, respeitando as pendências do funil.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (isShortNeutral) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "manter_nutricao",
+      proximaMelhorAcao: "Não repetir a mesma explicação. Conduzir para o próximo passo natural da fase atual.",
+      abordagemSugerida: "Tom curto e natural, com uma pergunta simples.",
+      argumentoPrincipal: "Resposta curta indica recebimento/entendimento, não intenção forte.",
+      cuidadoPrincipal: "Não iniciar pré-análise apenas com resposta curta.",
+      ofertaMaisAdequada: lead?.rotaComercial || "homologado",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead respondeu de forma curta/neutra. A SDR deve evitar loop e conduzir para a próxima etapa pendente.",
+      consultadoEm: new Date()
+    };
+  }
+
+  if (hasQuestionOrObjection) {
+    return {
+      ...buildDefaultConsultantAdvice(),
+      estrategiaRecomendada: "manter_nutricao",
+      proximaMelhorAcao: "Responder primeiro a dúvida ou manifestação atual do lead e depois conduzir para a etapa pendente.",
+      abordagemSugerida: "Tom consultivo, claro e objetivo.",
+      argumentoPrincipal: "A última mensagem do lead deve ser respondida antes de seguir roteiro.",
+      cuidadoPrincipal: "Não ignorar a pergunta, não repetir explicação longa e não pular etapa.",
+      ofertaMaisAdequada: lead?.rotaComercial || "homologado",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial: "media",
+      resumoConsultivo: "Fallback do Consultor Pré-SDR: lead trouxe dúvida/objeção. A SDR deve responder primeiro e conduzir em seguida.",
+      consultadoEm: new Date()
+    };
+  }
+
+  return {
+    ...buildDefaultConsultantAdvice(),
+    estrategiaRecomendada: "manter_nutricao",
+    proximaMelhorAcao: `Conduzir para a próxima etapa natural do funil. Etapa atual calculada: ${currentStage}. Pendências: ${missingSteps.join(", ") || "nenhuma"}.`,
+    abordagemSugerida: "Tom simples, humano e consultivo.",
+    argumentoPrincipal: "Manter continuidade sem pular etapas.",
+    cuidadoPrincipal: "Não pedir dados, não falar pagamento e não avançar para pré-análise se houver pendências.",
+    ofertaMaisAdequada: lead?.rotaComercial || "homologado",
+    momentoIdealHumano: "nao_necessario_agora",
+    prioridadeComercial: "media",
+    resumoConsultivo: `Fallback do Consultor Pré-SDR usando memória conversacional. Alertas: ${(memory?.alertasParaAgentes || []).join(" | ") || "sem alertas"}`,
+    consultadoEm: new Date()
+  };
+}
+
 function enforcePreSdrConsultantHardLimits({
   advice = {},
   lead = {},
@@ -11649,10 +11802,12 @@ const sdrConversationMemory = buildConversationMemoryForAgents({
   lastSdrText: getLastAssistantMessage(history)
 });
      
-// 🧠 CONSULTOR PRÉ-SDR
+// 🧠 CONSULTOR PRÉ-SDR OBRIGATÓRIO
 // A SDR não responde sozinha.
-// Antes da SDR responder, o Consultor Assistente analisa a mensagem do lead
-// e orienta o que responder e como responder.
+// Antes da SDR responder, o Consultor Assistente tenta orientar a resposta.
+// Se a chamada do Consultor falhar, o backend cria uma orientação fallback segura.
+// Assim a SDR sempre responde com uma diretriz, sem pedir para o lead repetir a mensagem.
+     
 let preSdrConsultantAdvice = null;
 
 const lastAssistantText =
@@ -11716,30 +11871,68 @@ await saveConsultantAdvice(from, preSdrConsultantAdvice);
   resumoConsultivo: preSdrConsultantAdvice?.resumoConsultivo || "-"
 });
 } catch (error) {
-  console.error("❌ Consultor PRÉ-SDR falhou. SDR não responderá sem orientação:", error.message);
+  console.error("⚠️ Consultor PRÉ-SDR falhou. Usando fallback seguro interno:", {
+    user: from,
+    erro: error.message,
+    ultimaMensagemLead: text
+  });
 
-  const consultantErrorMsg = `Tive uma instabilidade rápida para analisar sua mensagem com segurança 😊
+  preSdrConsultantAdvice = buildPreSdrConsultantFallbackAdvice({
+    lead: currentLead || {},
+    history,
+    lastUserText: text,
+    lastSdrText: lastAssistantText
+  });
 
-Pode me mandar novamente o ponto principal da sua dúvida? Assim eu te respondo certinho.`;
+  preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
+    advice: preSdrConsultantAdvice,
+    lead: currentLead || {},
+    lastUserText: text
+  });
 
-  await sendWhatsAppMessage(from, consultantErrorMsg);
-  await saveHistoryStep(from, history, text, consultantErrorMsg, !!message.audio?.id);
+  await saveConsultantAdvice(from, preSdrConsultantAdvice);
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
+  console.log("🧠 Consultor PRÉ-SDR fallback aplicado:", {
+    user: from,
+    estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    proximaMelhorAcao: preSdrConsultantAdvice?.proximaMelhorAcao || "-",
+    cuidadoPrincipal: preSdrConsultantAdvice?.cuidadoPrincipal || "-"
+  });
 }
-
-const preSdrConsultantContext = `ORIENTAÇÃO OBRIGATÓRIA DO CONSULTOR ASSISTENTE — USO INTERNO DA SDR
+const preSdrConsultantContext = `ORIENTAÇÃO HIERÁRQUICA OBRIGATÓRIA DO CONSULTOR PRÉ-SDR — USO INTERNO DA SDR
 
 Esta orientação veio ANTES da resposta da SDR.
-A SDR deve usar isso para decidir o que responder agora.
+
+REGRA DE HIERARQUIA:
+A SDR não deve decidir sozinha a condução comercial.
+A SDR deve executar a orientação abaixo como direção principal da resposta atual.
+
+Se houver conflito entre:
+1. o prompt geral da SDR;
+2. o histórico;
+3. a vontade aparente de avançar rápido;
+4. e a orientação do Consultor Pré-SDR;
+
+a SDR deve priorizar a orientação do Consultor Pré-SDR.
+
+Exceções:
+- Nunca violar regras duras do backend.
+- Nunca pedir pagamento.
+- Nunca aprovar lead.
+- Nunca prometer ganho.
+- Nunca pedir dados antes da fase correta.
+- Nunca misturar Afiliado com Homologado.
+- Nunca revelar que existe Consultor, Supervisor, Classificador, memória interna ou agentes internos.
+
+A resposta final ao lead deve seguir:
+1. responder primeiro a última mensagem real do lead;
+2. obedecer a próxima melhor ação do Consultor;
+3. respeitar o cuidado principal;
+4. usar o argumento principal quando fizer sentido;
+5. conduzir com apenas um próximo passo.
 
 Estratégia recomendada:
 ${preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado"}
-
 Próxima melhor ação:
 ${preSdrConsultantAdvice?.proximaMelhorAcao || "-"}
 
