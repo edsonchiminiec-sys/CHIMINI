@@ -5715,6 +5715,50 @@ function isCommercialProgressConfirmation(text = "") {
 
   return commercialPatterns.some(pattern => pattern.test(t));
 }
+
+function isCadastroOuParticipacaoIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const patterns = [
+    "como me cadastro",
+    "como eu me cadastro",
+    "quero me cadastrar",
+    "quero cadastrar",
+    "fazer cadastro",
+    "como faco o cadastro",
+    "como faço o cadastro",
+    "como faço para cadastrar",
+    "como faco para cadastrar",
+    "como faço para participar",
+    "como faco para participar",
+    "quero participar",
+    "quero entrar",
+    "como faço pra entrar",
+    "como faco pra entrar",
+    "como faço para entrar",
+    "como faco para entrar",
+    "o que preciso fazer para participar",
+    "oq preciso fazer para participar",
+    "o que eu preciso fazer para participar",
+    "oq eu preciso fazer para participar",
+    "qual o proximo passo",
+    "qual o próximo passo",
+    "como sigo",
+    "como seguir",
+    "podemos seguir"
+  ];
+
+  return patterns.some(pattern => t.includes(pattern));
+}
+
 function isStrongBuyIntent(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -5722,6 +5766,10 @@ function isStrongBuyIntent(text = "") {
     .replace(/[\u0300-\u036f]/g, "")
     .trim();
 
+  if (isCadastroOuParticipacaoIntent(text)) {
+    return true;
+  }
+   
   const patterns = [
     "vamos negociar",
     "vamos fechar",
@@ -5941,6 +5989,10 @@ function isExplicitPreAnalysisIntent(text = "") {
     .replace(/\s+/g, " ")
     .trim();
 
+  if (isCadastroOuParticipacaoIntent(text)) {
+    return true;
+  }
+   
   const patterns = [
     /^quero seguir$/,
     /^quero continuar$/,
@@ -6402,6 +6454,29 @@ function canAskForRealInterest(lead = {}) {
     e.compromisso === true &&
     lead.interesseReal !== true
   );
+}
+
+function buildCadastroIntentResponse(lead = {}, firstName = "") {
+  const namePart = firstName ? `${firstName}, ` : "";
+  const missingSteps = getMissingFunnelStepLabels(lead);
+
+  if (canStartDataCollection(lead)) {
+    return `${namePart}perfeito 😊
+
+Como os pontos principais já estão alinhados, podemos seguir com a pré-análise.
+
+Primeiro, pode me enviar seu nome completo?`;
+  }
+
+  return `${namePart}perfeito, eu te ajudo com isso 😊
+
+Para seguir com o cadastro do Parceiro Homologado, antes eu preciso alinhar alguns pontos obrigatórios com você: ${missingSteps.join(", ")}.
+
+Isso é importante para você entrar consciente, sem pular etapa e sem assumir compromisso antes de entender tudo.
+
+Vou seguir pelo próximo ponto agora:
+
+${getNextFunnelStepMessage(lead)}`;
 }
 
 // 👇 COLE AQUI EMBAIXO 👇
@@ -10304,11 +10379,52 @@ if (
     });
   }
 
-  currentLead = await loadLeadProfile(from);
+    currentLead = await loadLeadProfile(from);
+}
+
+// 🔥 RESPOSTA CONTROLADA PARA PEDIDO DE CADASTRO / PARTICIPAÇÃO
+if (
+  isCadastroOuParticipacaoIntent(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation &&
+  !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
+) {
+  const firstName = getFirstName(
+    currentLead?.nome ||
+    currentLead?.nomeWhatsApp ||
+    ""
+  );
+
+  const cadastroMsg = buildCadastroIntentResponse(currentLead, firstName);
+
+  await sendWhatsAppMessage(from, cadastroMsg);
+  await saveHistoryStep(from, history, text, cadastroMsg, !!message.audio?.id);
+
+  await saveLeadProfile(from, {
+    sinalInteresseInicial: true,
+    ultimaIntencaoForte: text,
+    status: currentLead?.status || "morno",
+    faseQualificacao: currentLead?.faseQualificacao || "morno",
+    ultimaMensagem: text
+  });
+
+  console.log("✅ Pedido de cadastro respondido com condução segura:", {
+    user: from,
+    ultimaMensagemLead: text,
+    podeColetarDados: canStartDataCollection(currentLead),
+    etapasPendentes: getMissingFunnelStepLabels(currentLead)
+  });
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
 }
      
      
 // 🔒 BLOQUEIO DE PRÉ-ANÁLISE PREMATURA
+     
 // Mesmo que o classificador diga "pre_analise",
 // o backend só aceita se o lead tiver intenção explícita
 // e todas as etapas obrigatórias estiverem concluídas.
