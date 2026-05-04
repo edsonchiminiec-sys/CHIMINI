@@ -4803,6 +4803,69 @@ function isNegativeConfirmation(text = "") {
     return false;
   }
 
+function isNoMeaningNoDoubt({
+  leadText = "",
+  history = []
+} = {}) {
+  const t = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const isSimpleNo = [
+    "nao",
+    "não",
+    "n",
+    "negativo"
+  ].includes(t);
+
+  if (!isSimpleNo) {
+    return false;
+  }
+
+  const lastAssistantMessage = getLastAssistantMessage(history);
+
+  const last = String(lastAssistantMessage || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const assistantAskedAboutDoubt =
+    last.includes("ficou alguma duvida") ||
+    last.includes("ficou alguma dúvida") ||
+    last.includes("tem alguma duvida") ||
+    last.includes("tem alguma dúvida") ||
+    last.includes("alguma duvida") ||
+    last.includes("alguma dúvida") ||
+    last.includes("ficou claro") ||
+    last.includes("conseguiu entender") ||
+    last.includes("fez sentido pra voce") ||
+    last.includes("fez sentido pra você") ||
+    last.includes("faz sentido pra voce") ||
+    last.includes("faz sentido pra você");
+
+  const assistantAskedDecision =
+    last.includes("quer seguir") ||
+    last.includes("podemos seguir") ||
+    last.includes("vamos seguir") ||
+    last.includes("quer avancar") ||
+    last.includes("quer avançar") ||
+    last.includes("seguir para a pre-analise") ||
+    last.includes("seguir para a pré-análise") ||
+    last.includes("seguir para pre analise") ||
+    last.includes("seguir para pré análise") ||
+    last.includes("tem interesse em seguir") ||
+    last.includes("voce tem interesse") ||
+    last.includes("você tem interesse");
+
+  return assistantAskedAboutDoubt && !assistantAskedDecision;
+}
+   
   // Evita interpretar frases como "não está errado" como negativa.
   if (
     t.includes("nao esta errado") ||
@@ -8290,6 +8353,19 @@ if (!currentLead) {
   });
 
   currentLead = await loadLeadProfile(from);
+}
+
+const noMeansNoDoubt = isNoMeaningNoDoubt({
+  leadText: text,
+  history
+});
+
+if (noMeansNoDoubt) {
+  console.log("✅ 'Não' interpretado como ausência de dúvida:", {
+    user: from
+  });
+
+  text = "não tenho dúvida";
 }
      
 const historyText = history
