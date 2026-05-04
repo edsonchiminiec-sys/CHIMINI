@@ -1395,6 +1395,147 @@ Responda somente JSON válido neste formato:
   }
 }
 
+function decideCommercialRouteFromSemanticIntent({
+  semanticIntent = null,
+  currentLead = {}
+} = {}) {
+  const fallback = {
+    rota: "nenhuma",
+    deveResponderAgora: false,
+    deveCompararProgramas: false,
+    deveManterHomologado: true,
+    origemConversao: currentLead?.origemConversao || "homologado",
+    motivo: "Sem intenção semântica suficiente para alterar rota comercial."
+  };
+
+  if (!semanticIntent) {
+    return fallback;
+  }
+
+  const confidence = semanticIntent?.confidence || "baixa";
+
+  const confiancaAceitavel =
+    confidence === "media" ||
+    confidence === "média" ||
+    confidence === "alta";
+
+  if (!confiancaAceitavel) {
+    return {
+      ...fallback,
+      motivo: "Classificador semântico retornou baixa confiança. Mantendo Homologado por segurança."
+    };
+  }
+
+  const querAfiliado = semanticIntent?.wantsAffiliate === true;
+  const querHomologado = semanticIntent?.wantsHomologado === true;
+  const querAmbos =
+    semanticIntent?.wantsBoth === true ||
+    (querAfiliado && querHomologado);
+
+  const temObjecaoBloqueante = semanticIntent?.blockingObjection === true;
+  const temObjecaoPreco = semanticIntent?.priceObjection === true;
+  const temObjecaoEstoque = semanticIntent?.stockObjection === true;
+
+  const pediuHumano = semanticIntent?.humanRequest === true;
+
+  // Caso 1:
+  // Lead quer claramente comparar ou entender os dois caminhos.
+  // Não joga direto para Afiliado.
+  if (querAmbos) {
+    return {
+      rota: "ambos",
+      deveResponderAgora: true,
+      deveCompararProgramas: true,
+      deveManterHomologado: false,
+      origemConversao: "comparacao_homologado_afiliado",
+      motivo: "Lead demonstrou intenção de comparar ou considerar Afiliado e Homologado."
+    };
+  }
+
+  // Caso 2:
+  // Lead quer claramente Afiliado, e não Homologado.
+  if (querAfiliado && !querHomologado) {
+    return {
+      rota: "afiliado",
+      deveResponderAgora: true,
+      deveCompararProgramas: false,
+      deveManterHomologado: false,
+      origemConversao: "interesse_direto_afiliado",
+      motivo: "Lead demonstrou intenção clara pelo Programa de Afiliados."
+    };
+  }
+
+  // Caso 3:
+  // Lead quer Homologado.
+  if (querHomologado && !querAfiliado) {
+    return {
+      rota: "homologado",
+      deveResponderAgora: false,
+      deveCompararProgramas: false,
+      deveManterHomologado: true,
+      origemConversao: "homologado",
+      motivo: "Lead demonstrou intenção clara pelo Parceiro Homologado."
+    };
+  }
+
+  // Caso 4:
+  // Objeção de preço sozinha não pode virar Afiliado.
+  if (temObjecaoBloqueante && temObjecaoPreco && !querAfiliado && !querAmbos) {
+    return {
+      rota: "homologado",
+      deveResponderAgora: false,
+      deveCompararProgramas: false,
+      deveManterHomologado: true,
+      origemConversao: "objecao_taxa_homologado",
+      motivo: "Lead tem objeção de preço, mas não pediu Afiliado. Manter tratamento da taxa no Homologado."
+    };
+  }
+
+  // Caso 5:
+  // Objeção de estoque sem intenção clara de Afiliado ainda exige cautela.
+  // Não muda rota sozinho.
+  if (temObjecaoBloqueante && temObjecaoEstoque && !querAfiliado && !querAmbos) {
+    return {
+      rota: "homologado",
+      deveResponderAgora: false,
+      deveCompararProgramas: false,
+      deveManterHomologado: true,
+      origemConversao: "objecao_estoque_homologado",
+      motivo: "Lead tem objeção de estoque, mas ainda não pediu claramente Afiliado. Responder objeção antes de trocar rota."
+    };
+  }
+
+  // Caso 6:
+  // Pedido de humano não é Afiliado nem Homologado.
+  if (pediuHumano) {
+    return {
+      rota: "nenhuma",
+      deveResponderAgora: false,
+      deveCompararProgramas: false,
+      deveManterHomologado: true,
+      origemConversao: currentLead?.origemConversao || "homologado",
+      motivo: "Lead pediu humano. Não alterar rota comercial automaticamente."
+    };
+  }
+
+  return fallback;
+}
+
+function buildBothProgramsComparisonResponse() {
+  return `São dois caminhos diferentes 😊
+
+No Programa de Afiliados, você divulga produtos online por link exclusivo, sem estoque e sem investimento inicial do Homologado. Quando uma venda é feita pelo seu link e validada, você recebe comissão.
+
+No Parceiro Homologado, o modelo é mais estruturado: envolve produtos físicos, lote em comodato, suporte comercial, treinamento, contrato, responsabilidades e taxa de adesão.
+
+Você pode participar só do afiliado, só do homologado ou dos dois, dependendo do seu objetivo.
+
+O cadastro de afiliado é por aqui:
+https://minhaiqg.com.br/
+
+Você quer seguir pelo cadastro de afiliado ou quer que eu continue te explicando o Parceiro Homologado também?`;
+}
+
 async function runConsultantAfterClassifier({
   user,
   lead = {},
