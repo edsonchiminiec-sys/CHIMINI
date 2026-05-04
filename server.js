@@ -970,7 +970,18 @@ Regras:
 - não orientar rota comercial, Afiliados, taxa ou cadastro;
 - orientar resposta curta e retomada do dado pendente.
 
-5. Nunca revele ao lead que existe memória conversacional, agente historiador, supervisor, classificador ou consultor interno.
+5. Se memoriaConversacional.ultimaInteracao.leadFezPerguntaOuObjecao for true:
+- identificar o tema da pergunta/objeção;
+- orientar a SDR a responder esse tema primeiro;
+- não permitir que a SDR apenas avance fase;
+- não permitir que a SDR ignore a dúvida para seguir roteiro.
+
+6. Se memoriaConversacional.ultimaInteracao.temasMensagemAtualLead tiver temas:
+- usar esses temas para priorizar a resposta;
+- se houver mais de um tema, orientar resposta organizada em uma única mensagem;
+- não responder somente o último tema.
+
+7. Nunca revele ao lead que existe memória conversacional, agente historiador, supervisor, classificador ou consultor interno.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 PRIORIDADE MÁXIMA — ÚLTIMA MENSAGEM DO LEAD
@@ -7865,6 +7876,135 @@ Vou te responder esse ponto primeiro para não deixar nada solto.
 Você pode me confirmar se a sua dúvida principal agora é sobre o funcionamento do programa, estoque, investimento ou próximos passos?`;
 }
 
+function enforceLeadQuestionWasAnswered({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {}
+} = {}) {
+  const leadHadQuestionOrObjection = isLeadQuestionObjectionOrCorrection(leadText);
+
+  if (!leadHadQuestionOrObjection) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const coverage = replyCoversLeadThemes({
+    leadText,
+    replyText: respostaFinal
+  });
+
+  if (!coverage.hasThemesToCover || coverage.covered) {
+    return {
+      changed: false,
+      respostaFinal,
+      coverage
+    };
+  }
+
+  const safeResponse = buildUnansweredLeadThemeResponse({
+    leadText,
+    missingThemes: coverage.missingThemes,
+    currentLead
+  });
+
+  return {
+    changed: true,
+    respostaFinal: safeResponse,
+    reason: {
+      tipo: "pergunta_ou_objecao_nao_respondida",
+      leadThemes: coverage.leadThemes,
+      replyThemes: coverage.replyThemes,
+      missingThemes: coverage.missingThemes
+    }
+  };
+}
+
+function buildUnansweredLeadThemeResponse({
+  leadText = "",
+  missingThemes = [],
+  currentLead = {}
+} = {}) {
+  const firstTheme = missingThemes[0] || "";
+
+  if (firstTheme === "investimento") {
+    return buildShortTaxObjectionResponse({
+      leadText
+    });
+  }
+
+  if (firstTheme === "estoque") {
+    return `Boa pergunta 😊
+
+O estoque inicial do Parceiro Homologado é cedido em comodato. Isso significa que você não compra esse estoque: ele continua sendo da IQG, mas fica com você para operação, demonstração e venda.
+
+Quando vender os produtos, você pode solicitar reposição também em comodato, conforme a operação, disponibilidade e alinhamento com a equipe IQG.
+
+Ficou claro esse ponto do estoque?`;
+  }
+
+  if (firstTheme === "responsabilidades") {
+    return `Sim, essa parte é importante 😊
+
+Como parceiro, você fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
+
+E o resultado depende da sua atuação comercial: prospectar, atender clientes e conduzir as vendas com seriedade.
+
+Esse ponto das responsabilidades faz sentido pra você?`;
+  }
+
+  if (firstTheme === "afiliado") {
+    return buildAffiliateResponse(false);
+  }
+
+  if (firstTheme === "contrato") {
+    return `Posso te explicar sobre o contrato 😊
+
+A assinatura oficial acontece somente depois da análise cadastral da equipe IQG.
+
+Antes disso, eu consigo te orientar sobre as regras principais do programa, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou cobrança.
+
+Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
+  }
+
+  if (firstTheme === "dados") {
+    if (isDataFlowState(currentLead || {})) {
+      return buildDataFlowResumeMessage(currentLead || {});
+    }
+
+    return `Sobre os dados, a coleta só acontece na fase correta da pré-análise 😊
+
+Antes disso, preciso garantir que você entendeu o programa, benefícios, estoque, responsabilidades e investimento.
+
+Quer que eu siga pelo próximo ponto obrigatório?`;
+  }
+
+  if (firstTheme === "programa") {
+    return `Claro 😊
+
+O Programa Parceiro Homologado IQG é uma parceria comercial onde você vende produtos da indústria com suporte, treinamento e uma estrutura pensada para começar de forma organizada.
+
+A ideia é você atuar com produtos físicos, lote em comodato e acompanhamento da IQG, seguindo as regras do programa.
+
+Quer que eu te explique agora os principais benefícios?`;
+  }
+
+  if (firstTheme === "beneficios") {
+    return `O principal benefício é que você não começa sozinho 😊
+
+A IQG oferece suporte, materiais, treinamento e um lote inicial em comodato para você operar com mais segurança, sem precisar comprar estoque para iniciar.
+
+Quer que eu te explique agora como funciona esse estoque inicial?`;
+  }
+
+  return `Boa pergunta 😊
+
+Vou te responder esse ponto primeiro para não deixar nada solto.
+
+Você pode me confirmar se a sua dúvida principal agora é sobre o funcionamento do programa, estoque, investimento ou próximos passos?`;
+}
+
 function buildConversationMemoryForAgents({
   lead = {},
   history = [],
@@ -7897,11 +8037,11 @@ function buildConversationMemoryForAgents({
 
   const etapas = lead?.etapas || {};
 
-  const lastAssistantTheme = detectReplyMainTheme(lastSdrText || getLastAssistantMessage(history));
+    const lastAssistantTheme = detectReplyMainTheme(lastSdrText || getLastAssistantMessage(history));
   const currentLeadTheme = detectReplyMainTheme(lastUserText);
+  const currentLeadThemes = detectLeadMessageThemes(lastUserText);
 
   const leadReplyWasShortNeutral = isShortNeutralLeadReply(lastUserText);
-
   const possibleRepetitionRisk =
     leadReplyWasShortNeutral &&
     lastAssistantTheme &&
@@ -7974,15 +8114,17 @@ function buildConversationMemoryForAgents({
         assistantText.includes("minhaiqg.com.br")
     },
 
-    ultimaInteracao: {
+       ultimaInteracao: {
       ultimaMensagemLead: lastUserText || "",
       ultimaRespostaSdr: lastSdrText || getLastAssistantMessage(history) || "",
       temaUltimaRespostaSdr: lastAssistantTheme || "",
       temaMensagemAtualLead: currentLeadTheme || "",
+      temasMensagemAtualLead: currentLeadThemes,
+      leadFezPerguntaOuObjecao: isLeadQuestionObjectionOrCorrection(lastUserText),
       leadRespondeuCurtoNeutro: leadReplyWasShortNeutral,
       riscoRepeticaoMesmoTema: Boolean(possibleRepetitionRisk)
     },
-
+     
     pendencias: {
       etapasPendentes: missingSteps,
       podeIniciarColetaDados: canStartDataCollection(lead || {}),
@@ -12762,6 +12904,24 @@ if (consultantDirectionGuard.changed) {
   ) {
     actions.push(consultantDirectionGuard.fileKey);
   }
+}
+
+// ❓ TRAVA DE PERGUNTA/OBJEÇÃO NÃO RESPONDIDA
+// Se o lead perguntou ou trouxe objeção e a SDR não cobriu o tema,
+// o backend corrige antes de aplicar a disciplina final do funil.
+const unansweredQuestionGuard = enforceLeadQuestionWasAnswered({
+  leadText: text,
+  respostaFinal,
+  currentLead
+});
+
+if (unansweredQuestionGuard.changed) {
+  console.log("❓ Resposta ajustada porque pergunta/objeção do lead não foi respondida:", {
+    user: from,
+    reason: unansweredQuestionGuard.reason
+  });
+
+  respostaFinal = unansweredQuestionGuard.respostaFinal;
 }
      
 // 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
