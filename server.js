@@ -2708,6 +2708,170 @@ function containsInternalContextLeak(text = "") {
   return forbiddenTerms.some(term => normalized.includes(term));
 }
 
+async function runFinalRouteMixGuard({
+  lead = {},
+  leadText = "",
+  respostaFinal = "",
+  semanticIntent = null,
+  commercialRouteDecision = null
+} = {}) {
+  const fallback = {
+    changed: false,
+    respostaFinal,
+    motivo: "Fallback: trava anti-mistura não executada ou falhou."
+  };
+
+  if (!respostaFinal || !String(respostaFinal).trim()) {
+    return fallback;
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é uma trava final de qualidade da SDR IA da IQG.
+
+Você NÃO conversa com o lead diretamente.
+Você NÃO muda status.
+Você NÃO salva dados.
+Você NÃO envia CRM.
+Você apenas audita a resposta final que a SDR pretende enviar.
+
+Sua missão:
+Detectar se a resposta mistura indevidamente os dois programas da IQG.
+
+A IQG possui dois caminhos diferentes:
+
+1. Parceiro Homologado IQG
+- Produto físico.
+- Lote em comodato.
+- Suporte, treinamento, contrato e taxa de adesão.
+- Pode ter pré-análise.
+- Pode coletar nome, CPF, telefone, cidade e estado somente na fase correta.
+- Taxa de adesão é do Homologado, não do Afiliado.
+
+2. Programa de Afiliados IQG
+- Divulgação por link.
+- Sem estoque.
+- Sem lote em comodato.
+- Sem taxa de adesão do Homologado.
+- Sem pré-análise do Homologado.
+- Não deve pedir CPF, cidade, estado ou telefone neste fluxo.
+- Cadastro pelo link https://minhaiqg.com.br/.
+
+Regras críticas:
+
+1. Se a rota for "afiliado":
+A resposta NÃO pode conduzir para pré-análise do Homologado.
+A resposta NÃO pode pedir CPF, telefone, cidade, estado ou nome completo.
+A resposta NÃO pode falar como se o afiliado recebesse estoque ou lote em comodato.
+A resposta NÃO pode falar taxa de R$ 1.990 como se fosse do afiliado.
+A resposta deve focar em link, cadastro, divulgação e comissão validada.
+
+2. Se a rota for "homologado":
+A resposta NÃO deve oferecer Afiliado do nada.
+A resposta só pode falar Afiliado se o lead perguntou claramente sobre Afiliado, comparação, link, comissão online, vender sem estoque ou os dois caminhos.
+Objeção de taxa, preço alto ou dúvida sobre pagamento NÃO significa automaticamente Afiliado.
+Se a dúvida for sobre taxa, responder dentro do Homologado.
+
+3. Se a rota for "ambos":
+A resposta pode comparar os dois caminhos.
+Mas deve separar claramente:
+- Afiliado: link, sem estoque, sem taxa do Homologado.
+- Homologado: produto físico, comodato, suporte, treinamento, contrato e taxa.
+Não pode dizer que Afiliado passa pela pré-análise do Homologado.
+Não pode dizer que a taxa do Homologado vale para o Afiliado.
+
+4. Se a resposta estiver boa:
+Retorne changed false e mantenha a resposta igual.
+
+5. Se a resposta estiver misturada:
+Retorne changed true e escreva uma correctedReply curta, natural, em estilo WhatsApp, corrigindo a mistura.
+
+6. Não use linguagem interna.
+Não fale "rota", "backend", "classificador", "trava", "CRM interno", "supervisor" ou "agente".
+
+7. Não invente informações comerciais.
+
+Responda somente JSON válido neste formato:
+
+{
+  "changed": false,
+  "hasRouteMix": false,
+  "motivo": "",
+  "correctedReply": ""
+}
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: leadText || "",
+              respostaPretendidaSdr: respostaFinal || "",
+              lead: {
+                status: lead?.status || "",
+                faseQualificacao: lead?.faseQualificacao || "",
+                statusOperacional: lead?.statusOperacional || "",
+                faseFunil: lead?.faseFunil || "",
+                rotaComercial: lead?.rotaComercial || "",
+                origemConversao: lead?.origemConversao || "",
+                interesseAfiliado: lead?.interesseAfiliado === true,
+                interesseReal: lead?.interesseReal === true,
+                aguardandoConfirmacaoCampo: lead?.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: lead?.aguardandoConfirmacao === true,
+                campoEsperado: lead?.campoEsperado || "",
+                etapas: lead?.etapas || {}
+              },
+              semanticIntent: semanticIntent || {},
+              commercialRouteDecision: commercialRouteDecision || {}
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro na trava final anti-mistura:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawText);
+
+    const correctedReply = String(parsed?.correctedReply || "").trim();
+
+    if (parsed?.changed === true && correctedReply) {
+      return {
+        changed: true,
+        respostaFinal: correctedReply,
+        motivo: parsed?.motivo || "Resposta corrigida por mistura entre Afiliado e Homologado."
+      };
+    }
+
+    return {
+      changed: false,
+      respostaFinal,
+      motivo: parsed?.motivo || "Resposta aprovada pela trava anti-mistura."
+    };
+  } catch (error) {
+    console.error("Falha na trava final anti-mistura:", error.message);
+    return fallback;
+  }
+}
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
