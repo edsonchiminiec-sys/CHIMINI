@@ -10502,14 +10502,17 @@ if (state.closed && leadJaEstaPosCrm) {
 // Evita tentativa insegura de identificar lead por message.to no webhook.
 
      
-     // BLOQUEIO DESATIVADO PARA TESTE.
-// Se o número que está testando for igual ao CONSULTANT_PHONE,
-// o bot recebia a mensagem e parava aqui sem responder.
-// if (from === process.env.CONSULTANT_PHONE) {
-//   console.log("⛔ Mensagem ignorada: número é CONSULTANT_PHONE");
-//   return;
-// }
+     const fromDigits = onlyDigits(from);
+const consultantDigits = onlyDigits(process.env.CONSULTANT_PHONE || "");
 
+if (consultantDigits && fromDigits === consultantDigits) {
+  console.log("⛔ Mensagem ignorada: número é CONSULTANT_PHONE", {
+    from,
+    consultantPhone: process.env.CONSULTANT_PHONE
+  });
+
+  return;
+}
      
 clearTimers(from);
 
