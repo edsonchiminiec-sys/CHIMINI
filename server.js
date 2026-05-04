@@ -79,11 +79,15 @@ async function ensureIndexes() {
     { unique: true }
   );
 
-     await db.collection("incoming_message_buffers").createIndex(
+  await db.collection("incoming_message_buffers").createIndex(
     { updatedAt: 1 },
     { expireAfterSeconds: 300 }
   );
-   
+
+  await db.collection("internal_alert_locks").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 3600 }
+  );
 }
 
 async function updateLeadStatus(user, status) {
