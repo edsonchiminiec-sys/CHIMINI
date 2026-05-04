@@ -2773,6 +2773,40 @@ async function sendSupervisorInternalAlert({
       return;
     }
 
+await connectMongo();
+
+const leadKey = lead.user || lead.telefoneWhatsApp || lead.telefone || "sem_user";
+const alertId = `supervisor_alert:${leadKey}`;
+
+const now = new Date();
+
+const recentAlert = await db.collection("internal_alert_locks").findOne({
+  _id: alertId,
+  createdAt: {
+    $gte: new Date(Date.now() - 15 * 60 * 1000)
+  }
+});
+
+if (recentAlert) {
+  console.log("🔕 Alerta Supervisor não enviado: alerta recente já existe para este lead.", {
+    user: leadKey
+  });
+  return;
+}
+
+await db.collection("internal_alert_locks").updateOne(
+  { _id: alertId },
+  {
+    $set: {
+      createdAt: now,
+      user: leadKey,
+      riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+      necessitaHumano: supervisorAnalysis?.necessitaHumano === true
+    }
+  },
+  { upsert: true }
+);
+     
     const message = buildSupervisorInternalAlertMessage({
       lead,
       supervisorAnalysis
