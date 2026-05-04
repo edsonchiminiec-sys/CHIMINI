@@ -10420,6 +10420,19 @@ if (!message) {
   return res.sendStatus(200);
 }
 
+     if (isLikelyAutoReplyMessage(text)) {
+  console.log("🤖 Mensagem automática detectada e ignorada:", {
+    from,
+    text
+  });
+
+  if (messageId) {
+    await claimMessage(messageId).catch(() => {});
+  }
+
+  return res.sendStatus(200);
+}
+
 console.log("✅ Mensagem recebida do WhatsApp:", {
   id: message.id,
   from: message.from,
