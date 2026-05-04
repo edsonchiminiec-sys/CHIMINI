@@ -7876,6 +7876,100 @@ Vou te responder esse ponto primeiro para não deixar nada solto.
 Você pode me confirmar se a sua dúvida principal agora é sobre o funcionamento do programa, estoque, investimento ou próximos passos?`;
 }
 
+function buildMultiThemeLeadResponse({
+  leadText = "",
+  themes = [],
+  currentLead = {}
+} = {}) {
+  const uniqueThemes = [...new Set(themes || [])];
+
+  if (uniqueThemes.length <= 1) {
+    return buildUnansweredLeadThemeResponse({
+      leadText,
+      missingThemes: uniqueThemes,
+      currentLead
+    });
+  }
+
+  const parts = [];
+
+  if (uniqueThemes.includes("investimento")) {
+    parts.push(`Sobre a taxa/investimento: existe a taxa de adesão e implantação de R$ 1.990,00.
+
+Ela não é compra de mercadoria, caução ou garantia. Ela faz parte da ativação no programa, suporte, treinamento e liberação do lote em comodato.
+
+O pagamento não acontece agora: só depois da análise interna e assinatura do contrato.`);
+  }
+
+  if (uniqueThemes.includes("estoque")) {
+    parts.push(`Sobre o estoque: o lote inicial é cedido em comodato.
+
+Isso significa que você não compra esse estoque. Ele continua sendo da IQG, mas fica com você para operação, demonstração e venda.
+
+Quando vender os produtos, você pode solicitar reposição também em comodato, conforme operação, disponibilidade e alinhamento com a equipe IQG.`);
+  }
+
+  if (uniqueThemes.includes("responsabilidades")) {
+    parts.push(`Sobre as responsabilidades: o parceiro fica responsável pela guarda, conservação dos produtos e comunicação correta das vendas.
+
+E o resultado depende da atuação comercial do parceiro nas vendas.`);
+  }
+
+  if (uniqueThemes.includes("afiliado")) {
+    parts.push(`Sobre Afiliados: é um programa separado do Parceiro Homologado.
+
+No Afiliado, você divulga por link, não precisa ter estoque e não paga a taxa de adesão do Homologado.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/`);
+  }
+
+  if (uniqueThemes.includes("contrato")) {
+    parts.push(`Sobre contrato: a assinatura oficial acontece somente depois da análise cadastral da equipe IQG.
+
+Antes disso, eu consigo te orientar sobre regras, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou cobrança.`);
+  }
+
+  if (uniqueThemes.includes("dados")) {
+    if (isDataFlowState(currentLead || {})) {
+      parts.push(`Sobre os dados: vamos manter o ponto pendente da pré-análise para não misturar as etapas.
+
+${buildDataFlowResumeMessage(currentLead || {})}`);
+    } else {
+      parts.push(`Sobre dados/cadastro: a coleta só acontece na fase correta da pré-análise.
+
+Antes disso, preciso garantir que você entendeu programa, benefícios, estoque, responsabilidades e investimento.`);
+    }
+  }
+
+  if (uniqueThemes.includes("programa")) {
+    parts.push(`Sobre o programa: o Parceiro Homologado IQG é uma parceria comercial onde você vende produtos da indústria com suporte, treinamento e uma estrutura pensada para começar de forma organizada.`);
+  }
+
+  if (uniqueThemes.includes("beneficios")) {
+    parts.push(`Sobre os benefícios: você não começa sozinho.
+
+A IQG oferece suporte, materiais, treinamento e lote inicial em comodato para operar com mais segurança, sem precisar comprar estoque para iniciar.`);
+  }
+
+  const responseParts = parts.filter(Boolean);
+
+  if (responseParts.length === 0) {
+    return buildUnansweredLeadThemeResponse({
+      leadText,
+      missingThemes: uniqueThemes,
+      currentLead
+    });
+  }
+
+  return `Ótimas perguntas, vou te responder por partes 👇
+
+${responseParts.join("\n\n")}
+
+Agora me diz: desses pontos, o que mais pesa na sua decisão hoje?`;
+}
+
+
 function enforceLeadQuestionWasAnswered({
   leadText = "",
   respostaFinal = "",
@@ -7903,9 +7997,9 @@ function enforceLeadQuestionWasAnswered({
     };
   }
 
-  const safeResponse = buildUnansweredLeadThemeResponse({
+    const safeResponse = buildMultiThemeLeadResponse({
     leadText,
-    missingThemes: coverage.missingThemes,
+    themes: coverage.missingThemes,
     currentLead
   });
 
@@ -7916,7 +8010,8 @@ function enforceLeadQuestionWasAnswered({
       tipo: "pergunta_ou_objecao_nao_respondida",
       leadThemes: coverage.leadThemes,
       replyThemes: coverage.replyThemes,
-      missingThemes: coverage.missingThemes
+      missingThemes: coverage.missingThemes,
+      respostaMultiTema: coverage.missingThemes.length > 1
     }
   };
 }
@@ -12405,11 +12500,11 @@ Exceções:
 
 A resposta final ao lead deve seguir:
 1. responder primeiro a última mensagem real do lead;
-2. obedecer a próxima melhor ação do Consultor;
-3. respeitar o cuidado principal;
-4. usar o argumento principal quando fizer sentido;
-5. conduzir com apenas um próximo passo.
-
+2. se a mensagem do lead tiver múltiplos temas ou perguntas, responder todos em uma única mensagem organizada;
+3. obedecer a próxima melhor ação do Consultor;
+4. respeitar o cuidado principal;
+5. usar o argumento principal quando fizer sentido;
+6. conduzir com apenas um próximo passo.
 Estratégia recomendada:
 ${preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado"}
 Próxima melhor ação:
@@ -12477,23 +12572,16 @@ body: JSON.stringify({
     role: "system",
     content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
   },
-  {
-    role: "system",
-    content: `MEMÓRIA CONVERSACIONAL INTERNA — NÃO MOSTRAR AO LEAD
-
-Use esta memória apenas para evitar repetição, respeitar etapas e manter continuidade.
-
-${JSON.stringify(sdrConversationMemory, null, 2)}
-
-Regras:
+  Regras:
 - Não diga ao lead que existe memória interna.
 - Não cite "memória", "histórico interno", "consultor", "supervisor" ou "classificador".
 - Se houver risco de repetição, não repita a explicação completa.
 - Se o lead respondeu curto, conduza com uma pergunta simples.
 - Se houver etapas pendentes, não conduza para pré-análise/coleta.
-- Responda primeiro a dúvida atual do lead.`
-  },
-
+- Responda primeiro a dúvida atual do lead.
+- Se a última mensagem do lead tiver mais de um tema em temasMensagemAtualLead, responda todos os temas em uma única mensagem organizada.
+- Não responda somente a última pergunta se houver perguntas anteriores na mesma mensagem agrupada.
+- Depois de responder todos os temas, conduza com apenas uma pergunta final.`
      
   {
     role: "system",
