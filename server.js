@@ -6435,15 +6435,25 @@ Faz sentido pra você nesse formato?`,
     };
   }
 
-  if (lastTheme === "investimento") {
+ if (lastTheme === "investimento") {
+  if (currentLead?.taxaAlinhada !== true) {
     return {
-      message: `Perfeito 😊 Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante:
+      message: `Só antes de seguir, quero confirmar se a parte do investimento ficou clara.
 
-Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+A taxa de adesão e implantação é de R$ 1.990,00, não é compra de mercadoria, caução ou garantia, e só é tratada depois da análise interna e da assinatura do contrato.
+
+Você consegue me confirmar se esse investimento faz sentido pra você?`,
       fileKey: null
     };
   }
 
+  return {
+    message: `Show! Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante:
+
+Você está de acordo que o resultado depende da sua atuação nas vendas?`,
+    fileKey: null
+  };
+}
   if (lastTheme === "compromisso") {
     return {
       message: `Perfeito 😊 Então faz sentido seguirmos para a pré-análise agora?`,
