@@ -2861,6 +2861,106 @@ function containsInternalContextLeak(text = "") {
   return forbiddenTerms.some(term => normalized.includes(term));
 }
 
+function enforceConsultantDirectionOnFinalReply({
+  respostaFinal = "",
+  consultantAdvice = {},
+  currentLead = {},
+  leadText = ""
+} = {}) {
+  const resposta = normalizeCommercialText(respostaFinal);
+  const estrategia = consultantAdvice?.estrategiaRecomendada || "";
+  const cuidado = normalizeCommercialText(consultantAdvice?.cuidadoPrincipal || "");
+  const proximaAcao = normalizeCommercialText(consultantAdvice?.proximaMelhorAcao || "");
+
+  if (!resposta) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const respostaPedeDados = replyAsksPersonalData(respostaFinal);
+  const respostaMencionaPreAnalise =
+    /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
+
+  const respostaFalaAfiliado =
+    resposta.includes("afiliado") ||
+    resposta.includes("minhaiqg.com.br") ||
+    resposta.includes("link exclusivo");
+
+  const respostaFalaTaxaOuPagamento =
+    replyMentionsInvestment(respostaFinal) ||
+    mentionsPaymentIntent(respostaFinal);
+
+  const consultorBloqueouAvanco =
+    estrategia === "manter_nutricao" ||
+    estrategia === "tratar_objecao_taxa" ||
+    estrategia === "reduzir_desconfianca" ||
+    estrategia === "corrigir_conducao_sdr" ||
+    cuidado.includes("nao pedir dados") ||
+    cuidado.includes("não pedir dados") ||
+    cuidado.includes("nao avancar") ||
+    cuidado.includes("não avançar") ||
+    proximaAcao.includes("nao avancar") ||
+    proximaAcao.includes("não avançar");
+
+  if (
+    consultorBloqueouAvanco &&
+    (respostaPedeDados || respostaMencionaPreAnalise) &&
+    !canStartDataCollection(currentLead || {})
+  ) {
+    const safe = getSafeCurrentPhaseResponse(currentLead || {});
+
+    return {
+      changed: true,
+      respostaFinal: safe.message,
+      reason: {
+        tipo: "consultor_bloqueou_avanco_mas_sdr_tentou_avancar",
+        estrategia,
+        cuidadoPrincipal: consultantAdvice?.cuidadoPrincipal || "",
+        proximaMelhorAcao: consultantAdvice?.proximaMelhorAcao || ""
+      },
+      fileKey: safe.fileKey
+    };
+  }
+
+  if (
+    estrategia === "oferecer_afiliado" &&
+    (respostaFalaTaxaOuPagamento || respostaMencionaPreAnalise || respostaPedeDados)
+  ) {
+    return {
+      changed: true,
+      respostaFinal: buildAffiliateResponse(false),
+      reason: {
+        tipo: "consultor_orientou_afiliado_mas_sdr_misturou_homologado",
+        estrategia
+      }
+    };
+  }
+
+  if (
+    estrategia === "tratar_objecao_taxa" &&
+    respostaFalaAfiliado &&
+    !isClearAffiliateFallbackIntent(leadText)
+  ) {
+    return {
+      changed: true,
+      respostaFinal: buildShortTaxObjectionResponse({
+        leadText
+      }),
+      reason: {
+        tipo: "consultor_orientou_taxa_mas_sdr_ofereceu_afiliado_cedo",
+        estrategia
+      }
+    };
+  }
+
+  return {
+    changed: false,
+    respostaFinal
+  };
+}
+
 async function runFinalRouteMixGuard({
   lead = {},
   leadText = "",
@@ -11959,9 +12059,15 @@ ${preSdrConsultantAdvice?.resumoConsultivo || "-"}
 
 REGRAS OBRIGATÓRIAS PARA A SDR:
 
-- A SDR só pode conduzir para pré-análise se o lead demonstrar intenção explícita, como "quero seguir", "vamos seguir", "pode iniciar", "quero entrar" ou equivalente.
-- Se o lead apenas confirmou entendimento, a SDR deve avançar para a próxima explicação necessária do funil, não para coleta de dados.
-- Responder primeiro a manifestação real do lead.
+- A orientação do Consultor Pré-SDR é a direção principal da resposta atual.
+- A SDR não pode contradizer a estratégia recomendada, a próxima melhor ação ou o cuidado principal.
+- Se o Consultor orientar "tratar objeção", a SDR não pode ignorar a objeção e seguir roteiro.
+- Se o Consultor orientar "não avançar", a SDR não pode conduzir para pré-análise.
+- Se o Consultor orientar "manter nutrição", a SDR não pode pedir dados.
+- Se o Consultor orientar "oferecer afiliado", a SDR deve falar somente do Programa de Afiliados, sem misturar taxa, comodato ou pré-análise do Homologado.
+- Se o Consultor orientar "corrigir condução", a SDR deve corrigir a conversa com naturalidade, sem dizer que errou.
+- A SDR só pode conduzir para pré-análise se o lead demonstrar intenção explícita, como "quero seguir", "vamos seguir", "pode iniciar", "quero entrar" ou equivalente, e se o backend/fase permitir.
+- Se o lead apenas confirmou entendimento, a SDR deve avançar para a próxima explicação necessária do funil, não para coleta de dados.- Responder primeiro a manifestação real do lead.
 - Se o lead fez pergunta, responder a pergunta antes de conduzir.
 - Se o lead mandou áudio, considerar a transcrição como a mensagem principal.
 - Não ignorar objeção, dúvida, reclamação ou correção do lead.
