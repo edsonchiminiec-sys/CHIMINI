@@ -5875,6 +5875,16 @@ E o pagamento só acontece depois da análise interna e da assinatura do contrat
 Faz sentido pra você nesse formato?`;
 }
 
+if (lead.taxaAlinhada !== true) {
+  return `Antes de falar da próxima etapa, quero só confirmar se o investimento ficou claro pra você 😊
+
+A taxa de adesão e implantação é de R$ 1.990,00 e ela só é tratada depois da análise interna e da assinatura do contrato.
+
+Ela não é compra de mercadoria, caução ou garantia. Ela faz parte da ativação no programa, suporte, treinamento e liberação do lote em comodato.
+
+Você consegue me confirmar se essa parte do investimento faz sentido pra você?`;
+}
+   
   if (!e.compromisso) {
     return "Antes de avançarmos, só preciso confirmar um ponto importante 😊\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
   }
@@ -6107,6 +6117,19 @@ Faz sentido pra você nesse formato?`,
     };
   }
 
+if (lead.taxaAlinhada !== true) {
+  return {
+    message: `Antes de seguirmos, quero só confirmar se o investimento ficou claro pra você 😊
+
+A taxa de adesão e implantação é de R$ 1.990,00 e só é tratada depois da análise interna e da assinatura do contrato.
+
+Ela não é compra de mercadoria, caução ou garantia. Ela faz parte da ativação no programa, suporte, treinamento e liberação do lote em comodato.
+
+Você consegue me confirmar se essa parte do investimento faz sentido pra você?`,
+    fileKey: null
+  };
+}
+   
   if (!e.compromisso) {
     return {
       message: `Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante 😊
