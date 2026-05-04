@@ -7301,6 +7301,80 @@ function applyTaxObjectionAntiRepetitionGuard({
   };
 }
 
+function isTaxaQuestionIntent(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const patterns = [
+    "qual a taxa",
+    "qual é a taxa",
+    "qual e a taxa",
+    "como e a taxa",
+    "como é a taxa",
+    "tem taxa",
+    "existe taxa",
+    "tem alguma taxa",
+    "qual valor da taxa",
+    "valor da taxa",
+    "taxa de adesao",
+    "taxa de adesão",
+    "quanto e a taxa",
+    "quanto é a taxa",
+    "quanto custa",
+    "qual o valor",
+    "qual valor",
+    "qual investimento",
+    "investimento",
+    "adesao",
+    "adesão",
+    "1990",
+    "1.990",
+    "r$ 1990",
+    "r$ 1.990",
+    "pagar taxa",
+    "tenho que pagar",
+    "como pago",
+    "parcelamento",
+    "parcela",
+    "cartao",
+    "cartão",
+    "pix"
+  ];
+
+  return patterns.some(pattern => t.includes(pattern));
+}
+
+function buildFullTaxExplanationResponse(firstName = "") {
+  const namePart = firstName ? `${firstName}, ` : "";
+
+  return `${namePart}vou te explicar com total transparência 😊
+
+Existe uma taxa de adesão e implantação de R$ 1.990,00.
+
+Mas é importante entender o contexto: esse valor não é compra de mercadoria, não é caução e não é garantia.
+
+Ele faz parte da ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
+
+Pra você ter uma referência prática: só o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+
+Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, a margem é de 40%. Se vender com ágio, acima do preço sugerido, essa diferença fica com o parceiro, então a margem pode ser maior.
+
+As primeiras vendas podem ajudar a recuperar esse investimento inicial, mas isso depende da sua atuação comercial, prospecção e vendas realizadas.
+
+O investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199,00 no cartão, dependendo da disponibilidade no momento.
+
+E um ponto importante de segurança: o pagamento só acontece depois da análise interna e da assinatura do contrato.
+
+Faz sentido pra você olhando por esse contexto?`;
+}
+
 function isTaxaObjectionAgainstInvestment(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -10231,6 +10305,63 @@ if (
 
   await sendWhatsAppMessage(from, affiliateMsg);
   await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+// 💰 RESPOSTA CONTROLADA PARA PERGUNTA SOBRE TAXA / INVESTIMENTO
+if (
+  isTaxaQuestionIntent(text) &&
+  !isTaxaObjectionAgainstInvestment(text) &&
+  !isAffiliateIntent(text) &&
+  currentLead?.dadosConfirmadosPeloLead !== true &&
+  currentLead?.crmEnviado !== true &&
+  currentLead?.statusOperacional !== "enviado_crm" &&
+  currentLead?.faseFunil !== "crm" &&
+  currentLead?.faseQualificacao !== "enviado_crm" &&
+  currentLead?.status !== "enviado_crm" &&
+  currentLead?.aguardandoConfirmacaoCampo !== true &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final"
+) {
+  const firstName = getFirstName(
+    currentLead?.nome ||
+    currentLead?.nomeWhatsApp ||
+    ""
+  );
+
+  const taxaMsg = buildFullTaxExplanationResponse(firstName);
+
+  await saveLeadProfile(from, {
+    status: "qualificando",
+    faseQualificacao: "qualificando",
+    taxaAlinhada: false,
+    ultimaPerguntaTaxa: text,
+    ultimaMensagem: text,
+    etapas: {
+      ...(currentLead?.etapas || {}),
+      investimento: true,
+      taxaPerguntada: true
+    }
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("💰 Pergunta de taxa respondida com explicação completa:", {
+    user: from,
+    ultimaMensagemLead: text
+  });
+
+  await sendWhatsAppMessage(from, taxaMsg);
+  await saveHistoryStep(from, history, text, taxaMsg, !!message.audio?.id);
 
   scheduleLeadFollowups(from);
 
