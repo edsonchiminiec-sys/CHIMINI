@@ -10635,14 +10635,15 @@ if (
 
   const bothMsg = buildBothProgramsComparisonResponse();
 
-  await sendWhatsAppMessage(from, bothMsg);
-  await saveHistoryStep(from, history, text, bothMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+    await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: bothMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
@@ -10669,14 +10670,15 @@ if (
 
   const affiliateMsg = buildAffiliateResponse(false);
 
-  await sendWhatsAppMessage(from, affiliateMsg);
-  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+    await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: affiliateMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
@@ -10958,14 +10960,15 @@ if (
     ultimaMensagemLead: text
   });
 
-  await sendWhatsAppMessage(from, recoveryMsg);
-  await saveHistoryStep(from, history, text, recoveryMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+   await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: recoveryMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
