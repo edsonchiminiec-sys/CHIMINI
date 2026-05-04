@@ -5909,38 +5909,156 @@ function isLeadRejectingOrCooling(text = "") {
 
   if (!t) return false;
 
+  // Evita falso positivo:
+  // Se a SDR perguntou "ficou alguma dúvida?" e o lead respondeu "não",
+  // isso significa "não tenho dúvida", não rejeição.
+  const respostasCurtasQueNaoSaoRejeicao = [
+    "nao",
+    "não",
+    "n",
+    "ok",
+    "sim",
+    "s",
+    "entendi",
+    "certo",
+    "show",
+    "beleza",
+    "perfeito"
+  ];
+
+  if (respostasCurtasQueNaoSaoRejeicao.includes(t)) {
+    return false;
+  }
+
   const patterns = [
+    // rejeição direta
     "nao tenho interesse",
     "não tenho interesse",
     "nao me interessa",
     "não me interessa",
     "sem interesse",
+    "perdi o interesse",
     "nao quero",
     "não quero",
+    "nao quero mais",
+    "não quero mais",
+    "nao vou querer",
+    "não vou querer",
+    "nao pretendo seguir",
+    "não pretendo seguir",
+    "nao quero seguir",
+    "não quero seguir",
+    "nao quero continuar",
+    "não quero continuar",
+
+    // não faz sentido / não é para mim
     "nao e pra mim",
     "não é pra mim",
+    "nao eh pra mim",
     "nao faz sentido",
     "não faz sentido",
+    "nao vejo sentido",
+    "não vejo sentido",
+    "nao serve pra mim",
+    "não serve pra mim",
+    "nao combina comigo",
+    "não combina comigo",
+
+    // abandono natural de WhatsApp
+    "deixamos",
+    "deixa",
+    "deixa assim",
+    "deixa quieto",
+    "deixa pra la",
+    "deixa pra lá",
+    "deixa para la",
+    "deixa para lá",
+    "vamos deixar",
+    "melhor deixar",
+    "melhor deixar assim",
+    "pode deixar",
+    "fica assim",
+    "fica pra proxima",
+    "fica pra próxima",
+    "fica para proxima",
+    "fica para próxima",
+    "fica para depois",
+    "fica pra depois",
+
+    // pedido de encerramento
+    "encerra",
+    "pode encerrar",
+    "pode finalizar",
+    "finaliza",
+    "finalizar",
+    "cancela",
+    "cancelar",
+    "pode cancelar",
+    "encerra ai",
+    "encerra aí",
+    "fecha ai",
+    "fecha aí",
+    "fecha por enquanto",
+
+    // adiamento / esfriamento
+    "vou pensar",
+    "vou analisar",
+    "vou avaliar",
+    "vou ver depois",
+    "vejo depois",
+    "talvez depois",
+    "mais pra frente",
+    "mais para frente",
+    "outro momento",
+    "outra hora",
+    "agora nao",
+    "agora não",
+    "agora nao da",
+    "agora não dá",
+    "nao posso agora",
+    "não posso agora",
+    "nao consigo agora",
+    "não consigo agora",
+
+    // preço / taxa / dinheiro
     "achei caro",
     "muito caro",
     "caro demais",
     "taxa alta",
+    "valor alto",
+    "achei alto",
+    "muito alto",
+    "ficou pesado",
+    "pesado pra mim",
+    "pesado para mim",
     "nao tenho dinheiro",
     "não tenho dinheiro",
-    "vou pensar",
-    "vou ver depois",
-    "talvez depois",
-    "agora nao",
-    "agora não",
-    "deixa pra depois",
-    "deixa para depois",
-    "nao posso agora",
-    "não posso agora"
+    "sem dinheiro",
+    "sem dinheiro agora",
+    "nao tenho esse valor",
+    "não tenho esse valor",
+    "nao consigo pagar",
+    "não consigo pagar",
+    "nao posso pagar",
+    "não posso pagar",
+
+    // rejeição do modelo
+    "nao quero estoque",
+    "não quero estoque",
+    "nao quero produto fisico",
+    "não quero produto físico",
+    "nao quero mexer com estoque",
+    "não quero mexer com estoque",
+    "nao quero pagar taxa",
+    "não quero pagar taxa",
+    "nao quero pagar adesao",
+    "não quero pagar adesão",
+    "nao quero adesao",
+    "não quero adesão"
   ];
 
   return patterns.some(pattern => t.includes(pattern));
 }
-
 function leadHasFinishedPreCadastro(lead = {}) {
   return Boolean(
     lead?.dadosConfirmadosPeloLead === true ||
@@ -7452,51 +7570,170 @@ function isTaxaObjectionAgainstInvestment(text = "") {
 
   if (!t) return false;
 
+  // Evita falso positivo quando o lead está apenas perguntando sobre a taxa.
+  // Exemplo: "qual é a taxa?", "tem taxa?", "como funciona o parcelamento?"
+  const parecePerguntaNeutra =
+    t.includes("qual a taxa") ||
+    t.includes("qual e a taxa") ||
+    t.includes("como e a taxa") ||
+    t.includes("tem taxa") ||
+    t.includes("existe taxa") ||
+    t.includes("qual o valor") ||
+    t.includes("quanto custa") ||
+    t.includes("como funciona o parcelamento") ||
+    t.includes("parcela em quantas vezes") ||
+    t.includes("da pra parcelar") ||
+    t.includes("dá pra parcelar");
+
+  const temSinalDeResistencia =
+    t.includes("caro") ||
+    t.includes("alto") ||
+    t.includes("pesado") ||
+    t.includes("dificil") ||
+    t.includes("difícil") ||
+    t.includes("complicado") ||
+    t.includes("sem condicoes") ||
+    t.includes("sem condições") ||
+    t.includes("nao tenho") ||
+    t.includes("não tenho") ||
+    t.includes("nao consigo") ||
+    t.includes("não consigo") ||
+    t.includes("nao posso") ||
+    t.includes("não posso") ||
+    t.includes("nao rola") ||
+    t.includes("não rola") ||
+    t.includes("nao fecha") ||
+    t.includes("não fecha") ||
+    t.includes("inviavel") ||
+    t.includes("inviável") ||
+    t.includes("absurdo") ||
+    t.includes("salgado");
+
+  if (parecePerguntaNeutra && !temSinalDeResistencia) {
+    return false;
+  }
+
   const objectionPatterns = [
+    // preço alto
     "achei caro",
     "muito caro",
     "ta caro",
     "tá caro",
+    "esta caro",
+    "está caro",
+    "caro pra mim",
+    "caro para mim",
+    "caro demais",
     "taxa cara",
     "taxa alta",
     "valor alto",
     "achei alto",
     "muito alto",
     "ficou alto",
+    "ficou caro",
     "ficou pesado",
     "pesado pra mim",
     "pesado para mim",
+    "meio pesado",
+    "salgado",
+    "valor salgado",
+    "taxa salgada",
+    "absurdo",
+
+    // dificuldade / inviabilidade
+    "fica dificil",
+    "fica difícil",
+    "fica meio dificil",
+    "fica meio difícil",
+    "fica complicado",
+    "complicado pra mim",
+    "complicado para mim",
+    "dificil pra mim",
+    "difícil pra mim",
+    "dificil para mim",
+    "difícil para mim",
+    "sem condicoes",
+    "sem condições",
+    "sem condicao",
+    "sem condição",
+    "nao tenho condicoes",
+    "não tenho condições",
+    "nao tenho condicao",
+    "não tenho condição",
+    "inviavel",
+    "inviável",
+    "nao fica viavel",
+    "não fica viável",
+    "nao fecha pra mim",
+    "não fecha pra mim",
+    "nao fecha para mim",
+    "não fecha para mim",
+    "nao rola",
+    "não rola",
+    "ai nao rola",
+    "aí não rola",
+
+    // falta de dinheiro
     "nao tenho dinheiro",
     "não tenho dinheiro",
     "sem dinheiro",
     "sem dinheiro agora",
+    "sem grana",
+    "sem grana agora",
+    "nao tenho grana",
+    "não tenho grana",
     "nao tenho esse valor",
     "não tenho esse valor",
+    "nao tenho como pagar",
+    "não tenho como pagar",
     "nao consigo pagar",
     "não consigo pagar",
     "nao posso pagar",
     "não posso pagar",
+    "apertado agora",
+    "estou apertado",
+    "to apertado",
+    "tô apertado",
+    "estou sem dinheiro",
+    "to sem dinheiro",
+    "tô sem dinheiro",
+
+    // rejeição da taxa
     "nao quero pagar taxa",
     "não quero pagar taxa",
+    "nao quero pagar essa taxa",
+    "não quero pagar essa taxa",
     "nao quero pagar adesao",
     "não quero pagar adesão",
     "nao quero adesao",
     "não quero adesão",
-    "por que pagar",
-    "porque pagar",
-    "pra que pagar",
-    "para que pagar",
+    "nao quero investimento",
+    "não quero investimento",
+    "nao pago taxa",
+    "não pago taxa",
+    "nao pago adesao",
+    "não pago adesão",
+
+    // formas coloquiais com taxa
+    "bah pagar taxa",
+    "bah pagar 1990",
+    "bah pagar 1 990",
+    "bah pagar 1.990",
+    "mas pagar taxa",
     "mas pagar 1990",
     "mas pagar 1 990",
     "mas pagar 1.990",
-    "pagar 1990",
-    "pagar 1 990",
-    "pagar 1.990",
+    "essa taxa",
+    "essa taxa ai",
+    "essa taxa aí",
     "taxa de 1990",
     "taxa de 1 990",
     "taxa de 1.990",
-    "absurdo",
-    "salgado"
+    "pagar 1990",
+    "pagar 1 990",
+    "pagar 1.990",
+    "r$ 1990",
+    "r$ 1.990"
   ];
 
   return objectionPatterns.some(pattern => t.includes(pattern));
