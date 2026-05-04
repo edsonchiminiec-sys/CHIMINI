@@ -9799,7 +9799,7 @@ if (leadTemObjecaoTaxaControlada) {
 }
      
      const leadTravouAntesDoCrm =
-    isClearAffiliateFallbackIntent(text) &&
+  false &&
   currentLead?.dadosConfirmadosPeloLead !== true &&
   currentLead?.crmEnviado !== true &&
   currentLead?.statusOperacional !== "enviado_crm" &&
