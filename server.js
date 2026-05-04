@@ -6666,6 +6666,23 @@ async function saveHistoryStep(from, history, userText, botText, isAudio = false
   await saveConversation(from, history);
 }
 
+function buildBackendDecision({
+  tipo = "",
+  motivo = "",
+  acao = "",
+  mensagemLead = "",
+  detalhes = {}
+} = {}) {
+  return {
+    tipo,
+    motivo,
+    acao,
+    mensagemLead: String(mensagemLead || "").slice(0, 1000),
+    detalhes: detalhes || {},
+    registradaEm: new Date()
+  };
+}
+
 async function finalizeHandledResponse({
   from,
   history = [],
@@ -10607,6 +10624,7 @@ const commercialRouteDecision = decideCommercialRouteFromSemanticIntent({
   currentLead: currentLead || {}
 });
 
+     
 console.log("🔀 Decisão central de rota comercial:", {
   user: from,
   ultimaMensagemLead: text,
@@ -10626,11 +10644,21 @@ if (
     awaitingConfirmation
   })
 ) {
-   await saveLeadProfile(from, {
+     await saveLeadProfile(from, {
     rotaComercial: "ambos",
     interesseAfiliado: true,
     origemConversao: commercialRouteDecision.origemConversao,
-    ultimaMensagem: text
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "rota_ambos",
+      motivo: commercialRouteDecision.motivo || "lead_pediu_comparacao_entre_programas",
+      acao: "responder_comparacao_homologado_afiliado",
+      mensagemLead: text,
+      detalhes: {
+        origemConversao: commercialRouteDecision.origemConversao,
+        rota: commercialRouteDecision.rota
+      }
+    })
   });
 
   const bothMsg = buildBothProgramsComparisonResponse();
@@ -10656,7 +10684,7 @@ if (
     awaitingConfirmation
   })
 ) {
-   await saveLeadProfile(from, {
+     await saveLeadProfile(from, {
     status: "afiliado",
     faseQualificacao: "afiliado",
     statusOperacional: "ativo",
@@ -10664,8 +10692,19 @@ if (
     rotaComercial: "afiliado",
     temperaturaComercial: "morno",
     interesseAfiliado: true,
+    afiliadoOferecidoComoAlternativa: true,
     origemConversao: commercialRouteDecision.origemConversao,
-    ultimaMensagem: text
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "rota_afiliado_direto",
+      motivo: commercialRouteDecision.motivo || "lead_demonstrou_intencao_clara_afiliado",
+      acao: "responder_afiliado_direto",
+      mensagemLead: text,
+      detalhes: {
+        origemConversao: commercialRouteDecision.origemConversao,
+        rota: commercialRouteDecision.rota
+      }
+    })
   });
 
   const affiliateMsg = buildAffiliateResponse(false);
@@ -10703,19 +10742,28 @@ if (
 
   const taxaMsg = buildFullTaxExplanationResponse(firstName);
 
-  await saveLeadProfile(from, {
+    await saveLeadProfile(from, {
     status: "qualificando",
     faseQualificacao: "qualificando",
     taxaAlinhada: false,
     ultimaPerguntaTaxa: text,
     ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "pergunta_taxa",
+      motivo: "lead_perguntou_taxa_ou_investimento",
+      acao: "responder_explicacao_completa_taxa",
+      mensagemLead: text,
+      detalhes: {
+        etapaInvestimentoMarcada: true,
+        taxaPerguntadaMarcada: true
+      }
+    }),
     etapas: {
       ...(currentLead?.etapas || {}),
       investimento: true,
       taxaPerguntada: true
     }
   });
-
   currentLead = await loadLeadProfile(from);
 
   console.log("💰 Pergunta de taxa respondida com explicação completa:", {
@@ -10754,11 +10802,23 @@ if (leadTemObjecaoTaxaControlada) {
   const taxaObjectionCountAtual = Number(currentLead?.taxaObjectionCount || 0);
   const novaContagemObjecaoTaxa = taxaObjectionCountAtual + 1;
 
-  await saveLeadProfile(from, {
+    await saveLeadProfile(from, {
     taxaObjectionCount: novaContagemObjecaoTaxa,
-    ultimaObjecaoTaxa: text
+    ultimaObjecaoTaxa: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "objecao_taxa",
+      motivo: "lead_demonstrou_resistencia_ao_investimento",
+      acao: novaContagemObjecaoTaxa <= 3
+        ? "tratar_objecao_mantendo_homologado"
+        : "oferecer_afiliado_por_objecao_persistente",
+      mensagemLead: text,
+      detalhes: {
+        taxaObjectionCountAnterior: taxaObjectionCountAtual,
+        taxaObjectionCountNovo: novaContagemObjecaoTaxa,
+        limiteAntesAfiliado: 3
+      }
+    })
   });
-
   currentLead = await loadLeadProfile(from);
 
   if (novaContagemObjecaoTaxa <= 3) {
@@ -10784,14 +10844,28 @@ if (leadTemObjecaoTaxaControlada) {
     return;
   }
 
-  await saveLeadProfile(from, {
+    await saveLeadProfile(from, {
     status: "afiliado",
     faseQualificacao: "afiliado",
+    statusOperacional: "ativo",
+    faseFunil: "afiliado",
+    temperaturaComercial: "morno",
+    rotaComercial: "afiliado",
     interesseAfiliado: true,
+    afiliadoOferecidoComoAlternativa: true,
     origemConversao: "recuperado_objecao_taxa_persistente",
-    ultimaMensagem: text
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "oferta_afiliado",
+      motivo: "objecao_persistente_taxa_homologado",
+      acao: "apresentar_afiliado_como_alternativa",
+      mensagemLead: text,
+      detalhes: {
+        taxaObjectionCount: novaContagemObjecaoTaxa,
+        origemConversao: "recuperado_objecao_taxa_persistente"
+      }
+    })
   });
-
   const affiliateMsg = buildAffiliateAfterTaxObjectionsResponse();
 
   console.log("🔁 Afiliados oferecido após objeção persistente da taxa:", {
@@ -10936,7 +11010,7 @@ if (
     ? buildMandatoryAffiliateAlternativeResponse(firstName)
     : buildHomologadoRecoveryResponse(novoRecoveryAttempts, firstName);
 
-  await saveLeadProfile(from, {
+    await saveLeadProfile(from, {
     status: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
     faseQualificacao: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
     statusOperacional: "ativo",
@@ -10950,9 +11024,21 @@ if (
       : currentLead?.origemConversao || "homologado",
     recoveryAttempts: novoRecoveryAttempts,
     ultimaRejeicaoOuEsfriamento: text,
-    ultimaMensagem: text
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "recuperacao_comercial",
+      motivo: "lead_rejeitou_ou_esfriou_antes_do_precadastro",
+      acao: deveOferecerAfiliadoAgora
+        ? "oferecer_afiliado_como_alternativa"
+        : "tentar_reaquecer_homologado",
+      mensagemLead: text,
+      detalhes: {
+        recoveryAttemptsAnterior: recoveryAttemptsAtual,
+        recoveryAttemptsNovo: novoRecoveryAttempts,
+        ofereceuAfiliado: deveOferecerAfiliadoAgora
+      }
+    })
   });
-
   console.log("🔥 Lead não foi perdido. Recuperação comercial acionada antes do cadastro:", {
     user: from,
     recoveryAttempts: novoRecoveryAttempts,
@@ -10990,17 +11076,25 @@ if (
 
   const cadastroMsg = buildCadastroIntentResponse(currentLead, firstName);
 
-  await sendWhatsAppMessage(from, cadastroMsg);
-  await saveHistoryStep(from, history, text, cadastroMsg, !!message.audio?.id);
-
-  await saveLeadProfile(from, {
+      await saveLeadProfile(from, {
     sinalInteresseInicial: true,
     ultimaIntencaoForte: text,
     status: currentLead?.status || "morno",
     faseQualificacao: currentLead?.faseQualificacao || "morno",
-    ultimaMensagem: text
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "pedido_cadastro",
+      motivo: "lead_pediu_cadastro_ou_participacao",
+      acao: canStartDataCollection(currentLead)
+        ? "iniciar_ou_orientar_pre_analise"
+        : "explicar_etapas_pendentes_antes_cadastro",
+      mensagemLead: text,
+      detalhes: {
+        podeColetarDados: canStartDataCollection(currentLead),
+        etapasPendentes: getMissingFunnelStepLabels(currentLead)
+      }
+    })
   });
-
   console.log("✅ Pedido de cadastro respondido com condução segura:", {
     user: from,
     ultimaMensagemLead: text,
@@ -11008,9 +11102,15 @@ if (
     etapasPendentes: getMissingFunnelStepLabels(currentLead)
   });
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+  await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: cadastroMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
