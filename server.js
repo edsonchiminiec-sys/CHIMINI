@@ -6211,11 +6211,22 @@ Você está de acordo que o resultado depende da sua atuação nas vendas?`,
   }
 
   if (lead.interesseReal !== true) {
+  if (lead.sinalInteresseInicial === true) {
     return {
-      message: `Perfeito 😊 Pelo que conversamos até aqui, faz sentido seguir para a pré-análise agora?`,
+      message: `Você tinha comentado que queria seguir, e isso é ótimo 😊
+
+Agora que já alinhamos os pontos obrigatórios, posso seguir com a pré-análise?
+
+Só reforçando: essa etapa ainda não é aprovação automática e não envolve pagamento neste momento.`,
       fileKey: null
     };
   }
+
+  return {
+    message: `Pelo que conversamos até aqui, faz sentido seguir para a pré-análise agora?`,
+    fileKey: null
+  };
+}
 
   return {
     message: `Perfeito 😊 Vamos seguir então.
