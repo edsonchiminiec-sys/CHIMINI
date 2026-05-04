@@ -10982,8 +10982,8 @@ if (
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-  const statusMap = {
-    frio: "perdido",
+    const statusMap = {
+    frio: "morno",
     morno: "morno",
     qualificando: "qualificando",
     pre_analise: "pre_analise",
@@ -10991,7 +10991,7 @@ if (
   };
 
   const faseMap = {
-    frio: "perdido",
+    frio: "morno",
     morno: "morno",
     qualificando: "qualificando",
     pre_analise: "pre_analise",
@@ -11001,8 +11001,27 @@ if (
   const statusUpdateData = {
     status: statusMap[leadStatusSeguro] || leadStatusSeguro,
     faseQualificacao: faseMap[leadStatusSeguro] || leadStatusSeguro,
-    origemConversao: leadStatusSeguro === "afiliado" ? "afiliado" : "homologado"
+    origemConversao: leadStatusSeguro === "afiliado"
+      ? "afiliado"
+      : currentLead?.origemConversao || "homologado"
   };
+
+  if (leadStatusSeguro === "frio") {
+    statusUpdateData.statusOperacional = "ativo";
+    statusUpdateData.temperaturaComercial = "morno";
+    statusUpdateData.faseFunil =
+      currentLead?.faseFunil && currentLead.faseFunil !== "encerrado"
+        ? currentLead.faseFunil
+        : "beneficios";
+    statusUpdateData.ultimaClassificacaoFriaBloqueadaEm = new Date();
+    statusUpdateData.ultimaClassificacaoFriaBloqueadaMensagem = text;
+
+    console.log("🛡️ Classificação frio convertida para morno ativo. Lead não será perdido automaticamente.", {
+      user: from,
+      ultimaMensagemLead: text,
+      leadStatusSeguro
+    });
+  }
 
   if (leadStatusSeguro === "pre_analise") {
     statusUpdateData.interesseReal = true;
