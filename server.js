@@ -10769,14 +10769,15 @@ if (leadTemObjecaoTaxaControlada) {
       decisao: "manter_homologado"
     });
 
-    await sendWhatsAppMessage(from, msg);
-    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-    scheduleLeadFollowups(from);
-
-    if (messageId) {
-      markMessageAsProcessed(messageId);
-    }
+        await finalizeHandledResponse({
+      from,
+      history,
+      userText: text,
+      botText: msg,
+      isAudio: !!message.audio?.id,
+      messageId,
+      shouldScheduleFollowups: true
+    });
 
     return;
   }
@@ -10798,14 +10799,15 @@ if (leadTemObjecaoTaxaControlada) {
     decisao: "oferecer_afiliado"
   });
 
-  await sendWhatsAppMessage(from, affiliateMsg);
-  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+    await finalizeHandledResponse({
+    from,
+    history,
+    userText: text,
+    botText: affiliateMsg,
+    isAudio: !!message.audio?.id,
+    messageId,
+    shouldScheduleFollowups: true
+  });
 
   return;
 }
