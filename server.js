@@ -910,7 +910,7 @@ Você NÃO altera status.
 Você NÃO envia dados ao CRM.
 Você NÃO promete aprovação, ganho ou resultado.
 
-Você deve analisar a ÚLTIMA MENSAGEM DO LEAD, o histórico e o estágio atual do funil para orientar:
+Você deve analisar a ÚLTIMA MENSAGEM DO LEAD, o histórico, a memória conversacional interna e o estágio atual do funil para orientar:
 
 - qual dúvida ou manifestação do lead deve ser respondida primeiro;
 - qual assunto deve ser evitado nesta resposta;
@@ -936,6 +936,41 @@ Analisar o contexto comercial do lead e recomendar:
 - momento ideal para humano;
 - prioridade comercial;
 - resumo consultivo.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+MEMÓRIA CONVERSACIONAL INTERNA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Você receberá um campo chamado memoriaConversacional.
+
+Use esse campo para entender:
+
+- quais temas já foram explicados;
+- qual foi o tema da última resposta da SDR;
+- se o lead respondeu apenas de forma curta/neutra;
+- se existe risco de repetição;
+- quais etapas ainda estão pendentes;
+- se o lead está em coleta, confirmação ou correção de dados.
+
+Regras:
+
+1. Se memoriaConversacional.ultimaInteracao.riscoRepeticaoMesmoTema for true:
+- orientar a SDR a NÃO repetir a mesma explicação;
+- recomendar condução para o próximo passo natural;
+- se ainda houver dúvida, responder de forma resumida.
+
+2. Se memoriaConversacional.ultimaInteracao.leadRespondeuCurtoNeutro for true:
+- não interpretar como avanço forte automaticamente;
+- orientar a SDR a validar ou conduzir com pergunta simples.
+
+3. Se memoriaConversacional.pendencias.etapasPendentes tiver itens:
+- não orientar pré-análise/coleta antes de resolver essas pendências.
+
+4. Se memoriaConversacional.pendencias.emColetaOuConfirmacao for true:
+- não orientar rota comercial, Afiliados, taxa ou cadastro;
+- orientar resposta curta e retomada do dado pendente.
+
+5. Nunca revele ao lead que existe memória conversacional, agente historiador, supervisor, classificador ou consultor interno.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 PRIORIDADE MÁXIMA — ÚLTIMA MENSAGEM DO LEAD
@@ -1277,6 +1312,13 @@ async function runConsultantAssistant({
       }))
     : [];
 
+  const conversationMemory = buildConversationMemoryForAgents({
+    lead,
+    history,
+    lastUserText,
+    lastSdrText
+  });
+   
   const consultantPayload = {
     lead: {
       user: lead.user || "",
@@ -1293,8 +1335,9 @@ async function runConsultantAssistant({
       crmEnviado: lead.crmEnviado === true,
       etapas: lead.etapas || {}
     },
-    supervisor: supervisorAnalysis || {},
+        supervisor: supervisorAnalysis || {},
     classificacao: classification || {},
+    memoriaConversacional: conversationMemory,
     ultimaMensagemLead: lastUserText || "",
     ultimaRespostaSdr: lastSdrText || "",
     historicoRecente: recentHistory
@@ -2077,7 +2120,6 @@ async function runClassifier({
     ultimaRespostaSdr: lastSdrText || "",
     historicoRecente: recentHistory
   };
-
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -7333,6 +7375,148 @@ function detectReplyMainTheme(text = "") {
   return "";
 }
 
+function buildConversationMemoryForAgents({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const assistantMessages = Array.isArray(history)
+    ? history
+        .filter(message => message?.role === "assistant")
+        .map(message => message?.content || "")
+    : [];
+
+  const userMessages = Array.isArray(history)
+    ? history
+        .filter(message => message?.role === "user")
+        .map(message => message?.content || "")
+    : [];
+
+  const assistantText = assistantMessages
+    .join("\n")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const userTextHistory = userMessages
+    .join("\n")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const etapas = lead?.etapas || {};
+
+  const lastAssistantTheme = detectReplyMainTheme(lastSdrText || getLastAssistantMessage(history));
+  const currentLeadTheme = detectReplyMainTheme(lastUserText);
+
+  const leadReplyWasShortNeutral = isShortNeutralLeadReply(lastUserText);
+
+  const possibleRepetitionRisk =
+    leadReplyWasShortNeutral &&
+    lastAssistantTheme &&
+    currentLeadTheme &&
+    lastAssistantTheme === currentLeadTheme;
+
+  const missingSteps = getMissingFunnelStepLabels(lead || {});
+
+  return {
+    etapaAtualCalculada: getCurrentFunnelStage(lead || {}),
+    faseQualificacao: lead?.faseQualificacao || "",
+    status: lead?.status || "",
+    faseFunil: lead?.faseFunil || "",
+    statusOperacional: lead?.statusOperacional || "",
+    rotaComercial: lead?.rotaComercial || lead?.origemConversao || "homologado",
+    temperaturaComercial: lead?.temperaturaComercial || "indefinida",
+
+    etapasBackend: {
+      programa: etapas.programa === true,
+      beneficios: etapas.beneficios === true,
+      estoque: etapas.estoque === true,
+      responsabilidades: etapas.responsabilidades === true,
+      investimento: etapas.investimento === true,
+      taxaPerguntada: etapas.taxaPerguntada === true,
+      compromissoPerguntado: etapas.compromissoPerguntado === true,
+      compromisso: etapas.compromisso === true
+    },
+
+    sinaisHistorico: {
+      programaJaExplicado:
+        etapas.programa === true ||
+        assistantText.includes("parceria comercial") ||
+        assistantText.includes("programa parceiro homologado"),
+
+      beneficiosJaExplicados:
+        etapas.beneficios === true ||
+        (
+          assistantText.includes("suporte") &&
+          (
+            assistantText.includes("treinamento") ||
+            assistantText.includes("materiais")
+          )
+        ),
+
+      estoqueJaExplicado:
+        etapas.estoque === true ||
+        assistantText.includes("comodato") ||
+        assistantText.includes("lote inicial") ||
+        assistantText.includes("estoque"),
+
+      responsabilidadesJaExplicadas:
+        etapas.responsabilidades === true ||
+        assistantText.includes("responsabilidade") ||
+        assistantText.includes("guarda") ||
+        assistantText.includes("conservacao") ||
+        assistantText.includes("conservação"),
+
+      investimentoJaExplicado:
+        etapas.investimento === true ||
+        assistantText.includes("1.990") ||
+        assistantText.includes("1990") ||
+        assistantText.includes("taxa de adesao") ||
+        assistantText.includes("taxa de adesão") ||
+        assistantText.includes("investimento"),
+
+      afiliadoJaApresentado:
+        lead?.interesseAfiliado === true ||
+        lead?.rotaComercial === "afiliado" ||
+        assistantText.includes("programa de afiliados") ||
+        assistantText.includes("minhaiqg.com.br")
+    },
+
+    ultimaInteracao: {
+      ultimaMensagemLead: lastUserText || "",
+      ultimaRespostaSdr: lastSdrText || getLastAssistantMessage(history) || "",
+      temaUltimaRespostaSdr: lastAssistantTheme || "",
+      temaMensagemAtualLead: currentLeadTheme || "",
+      leadRespondeuCurtoNeutro: leadReplyWasShortNeutral,
+      riscoRepeticaoMesmoTema: Boolean(possibleRepetitionRisk)
+    },
+
+    pendencias: {
+      etapasPendentes: missingSteps,
+      podeIniciarColetaDados: canStartDataCollection(lead || {}),
+      podePerguntarInteresseReal: canAskForRealInterest(lead || {}),
+      emColetaOuConfirmacao: isDataFlowState(lead || {}),
+      preCadastroFinalizado: leadHasFinishedPreCadastro(lead || {})
+    },
+
+    alertasParaAgentes: [
+      possibleRepetitionRisk
+        ? "Lead respondeu de forma curta/neutra e existe risco de repetir o mesmo tema. Evitar repetir explicação; conduzir para o próximo passo natural."
+        : "",
+      leadReplyWasShortNeutral
+        ? "Resposta curta do lead deve ser tratada como entendimento/recebimento, não como intenção forte automática."
+        : "",
+      missingSteps.length > 0
+        ? `Ainda existem etapas pendentes antes da pré-análise: ${missingSteps.join(", ")}.`
+        : "",
+      isDataFlowState(lead || {})
+        ? "Lead está em coleta/confirmação/correção de dados. Não acionar rota comercial, taxa, afiliado ou cadastro."
+        : ""
+    ].filter(Boolean)
+  };
+}
 
 function applyAntiRepetitionGuard({
   leadText = "",
@@ -11458,6 +11642,13 @@ const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
   lead: currentLead
 });
 
+const sdrConversationMemory = buildConversationMemoryForAgents({
+  lead: currentLead || {},
+  history,
+  lastUserText: text,
+  lastSdrText: getLastAssistantMessage(history)
+});
+     
 // 🧠 CONSULTOR PRÉ-SDR
 // A SDR não responde sozinha.
 // Antes da SDR responder, o Consultor Assistente analisa a mensagem do lead
@@ -11608,6 +11799,24 @@ body: JSON.stringify({
     role: "system",
     content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
   },
+  {
+    role: "system",
+    content: `MEMÓRIA CONVERSACIONAL INTERNA — NÃO MOSTRAR AO LEAD
+
+Use esta memória apenas para evitar repetição, respeitar etapas e manter continuidade.
+
+${JSON.stringify(sdrConversationMemory, null, 2)}
+
+Regras:
+- Não diga ao lead que existe memória interna.
+- Não cite "memória", "histórico interno", "consultor", "supervisor" ou "classificador".
+- Se houver risco de repetição, não repita a explicação completa.
+- Se o lead respondeu curto, conduza com uma pergunta simples.
+- Se houver etapas pendentes, não conduza para pré-análise/coleta.
+- Responda primeiro a dúvida atual do lead.`
+  },
+
+     
   {
     role: "system",
     content: `DADOS DE CONTEXTO DO LEAD:
