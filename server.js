@@ -859,6 +859,17 @@ function markMessageAsProcessed(messageId) {
   processedMessages.set(messageId, Date.now());
 }
 
+function markMessageIdsAsProcessed(messageIds = []) {
+  const ids = Array.isArray(messageIds)
+    ? messageIds
+    : [messageIds];
+
+  for (const id of ids) {
+    if (id) {
+      markMessageAsProcessed(id);
+    }
+  }
+}
 
 /* =========================
    FILES
@@ -6991,40 +7002,26 @@ function buildBackendDecision({
 
 async function finalizeHandledResponse({
   from,
-  history = [],
-  userText = "",
-  botText = "",
+  history,
+  userText,
+  botText,
   isAudio = false,
   messageId = null,
-  shouldScheduleFollowups = true,
-  shouldMarkProcessed = true
+  messageIds = [],
+  shouldScheduleFollowups = false
 } = {}) {
-  if (!from || !botText) {
-    console.warn("⚠️ finalizeHandledResponse chamado sem from ou botText:", {
-      from,
-      hasBotText: Boolean(botText)
-    });
-
-    return;
-  }
-
   await sendWhatsAppMessage(from, botText);
-
-  await saveHistoryStep(
-    from,
-    history,
-    userText,
-    botText,
-    isAudio
-  );
+  await saveHistoryStep(from, history, userText, botText, isAudio);
 
   if (shouldScheduleFollowups) {
     scheduleLeadFollowups(from);
   }
 
-  if (shouldMarkProcessed && messageId) {
-    markMessageAsProcessed(messageId);
-  }
+  const idsToMark = Array.isArray(messageIds) && messageIds.length > 0
+    ? messageIds
+    : [messageId].filter(Boolean);
+
+  markMessageIdsAsProcessed(idsToMark);
 }
 
 function canStartDataCollection(lead = {}) {
@@ -7041,6 +7038,7 @@ function canStartDataCollection(lead = {}) {
     lead.interesseReal === true
   );
 }
+
 function canAskForRealInterest(lead = {}) {
   const e = lead.etapas || {};
 
@@ -10566,6 +10564,12 @@ if (!buffered.shouldContinue) {
 // A primeira requisição continua com todas as mensagens juntas.
 text = buffered.text;
 
+// IDs de todas as mensagens agrupadas no buffer.
+// Importante para marcar o grupo inteiro como processado ao finalizar.
+const bufferedMessageIds = Array.isArray(buffered.messageIds) && buffered.messageIds.length > 0
+  ? buffered.messageIds
+  : [messageId].filter(Boolean);
+     
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
 
@@ -11581,6 +11585,7 @@ if (
     botText: bothMsg,
     isAudio: !!message.audio?.id,
     messageId,
+       messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -11627,6 +11632,7 @@ if (
     botText: affiliateMsg,
     isAudio: !!message.audio?.id,
     messageId,
+       messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -11689,6 +11695,7 @@ if (
     botText: taxaMsg,
     isAudio: !!message.audio?.id,
     messageId,
+       messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -11749,6 +11756,7 @@ if (leadTemObjecaoTaxaControlada) {
       botText: msg,
       isAudio: !!message.audio?.id,
       messageId,
+           messageIds: bufferedMessageIds,
       shouldScheduleFollowups: true
     });
 
@@ -11793,6 +11801,7 @@ if (leadTemObjecaoTaxaControlada) {
     botText: affiliateMsg,
     isAudio: !!message.audio?.id,
     messageId,
+       messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -11964,6 +11973,7 @@ if (
     botText: recoveryMsg,
     isAudio: !!message.audio?.id,
     messageId,
+      messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -12020,6 +12030,7 @@ if (
     botText: cadastroMsg,
     isAudio: !!message.audio?.id,
     messageId,
+     messageIds: bufferedMessageIds,
     shouldScheduleFollowups: true
   });
 
@@ -13266,13 +13277,9 @@ for (const key of fileKeys) {
 // 🔥 follow-up sempre ativo após resposta da IA
 scheduleLeadFollowups(from);
 
-    if (messageId) {
-      processingMessages.delete(messageId);
-      processedMessages.set(messageId, Date.now());
-    }
+    markMessageIdsAsProcessed(bufferedMessageIds);
 
-    return;
-
+return;
   } catch (error) {
     if (messageId) {
       processingMessages.delete(messageId);
