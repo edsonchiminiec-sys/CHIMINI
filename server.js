@@ -725,7 +725,14 @@ await db.collection("incoming_message_buffers").updateOne(
     _id: bufferId
   });
 
-  const finalBuffer = claimResult?.value || buffer;
+  const finalBuffer = claimResult?.value || claimResult;
+
+if (!finalBuffer) {
+  return {
+    shouldContinue: false,
+    text: ""
+  };
+}
 
   const finalText = Array.isArray(finalBuffer.messages)
     ? finalBuffer.messages
@@ -982,9 +989,14 @@ Se o lead está morno:
 - Recomendar reforço de valor e próxima pergunta simples.
 - Evitar coleta de dados prematura.
 
-Se o lead está frio:
-- Recomendar encerramento leve ou rota alternativa, sem insistência.
-
+Se o lead está frio, rejeitou, disse que não tem interesse, achou caro, quer deixar para depois ou esfriou:
+- NÃO recomendar perda imediata.
+- NÃO recomendar encerramento definitivo.
+- Recomendar tentativa de reativação comercial com tom leve, consultivo e sem pressão.
+- Primeiro tentar entender o motivo da trava.
+- Se a trava for taxa, estoque, produto físico, risco, dinheiro ou insegurança, recomendar reforçar valor percebido do Homologado.
+- Se o lead continuar travado ou demonstrar rejeição, recomendar apresentar obrigatoriamente o Programa de Afiliados IQG como alternativa mais leve, sem estoque e sem taxa de adesão do Homologado.
+- Afiliado não é perda. Afiliado é recuperação de lead.
 Se o Supervisor detectar erro da SDR:
 - Priorizar correção de condução.
 - Recomendar retomada simples e clara.
@@ -1087,8 +1099,7 @@ REGRAS IMPORTANTES
 
 12. O Programa de Afiliados deve ser apresentado como rota alternativa sem estoque, sem taxa de adesão do Homologado e com cadastro pelo link https://minhaiqg.com.br/.
 
-13. A SDR não deve usar Afiliados para fugir da objeção cedo demais. Primeiro deve tentar tratar a objeção do Homologado com valor percebido. Se o lead continuar travado, aí sim apresentar Afiliados.
-
+13. A SDR não deve usar Afiliados para fugir da primeira objeção cedo demais. Primeiro deve tentar tratar a objeção do Homologado com valor percebido. Porém, se o lead rejeitar, esfriar, disser que não tem interesse, achar caro, quiser deixar para depois ou continuar travado, a SDR deve apresentar o Programa de Afiliados como alternativa obrigatória antes de qualquer encerramento.
 14. Se recomendar Afiliados, orientar a SDR a explicar tudo em uma única mensagem curta: diferença entre os programas, ausência de estoque, ausência de taxa do Homologado, divulgação por link, comissão por vendas validadas e link de cadastro.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -3800,16 +3811,39 @@ Sinais:
 Ação:
 → reforçar valor
 
-━━━━━━━━━━━━━━━━━━━━━━━
-❄️ LEAD FRIO
-━━━━━━━━━━━━━━━━━━━━━━━
+❄️ LEAD FRIO / LEAD TRAVADO / LEAD QUASE PERDIDO
 
 Sinais:
-- rejeita tudo
-- quer dinheiro fácil
+- diz que não tem interesse
+- achou caro
+- quer deixar para depois
+- está inseguro
+- rejeitou o investimento
+- não quer estoque
+- não quer produto físico
+- está em dúvida se vale a pena
 
 Ação:
-→ não insistir
+→ nunca abandonar de primeira
+→ não marcar como perda
+→ tentar reaquecer com uma pergunta simples
+→ entender o motivo da trava
+→ reforçar valor percebido se a objeção for sobre taxa, estoque ou risco
+→ se continuar travado, apresentar obrigatoriamente o Programa de Afiliados como alternativa mais simples
+
+Mensagem base para recuperação:
+"Entendo totalmente 😊
+
+Se o ponto que te travou foi o investimento, o estoque ou o modelo do Parceiro Homologado, talvez faça mais sentido começar pelo Programa de Afiliados IQG.
+
+Ele é separado do Homologado: você não precisa ter estoque, não precisa comprar produtos e não paga a taxa de adesão do Homologado.
+
+Você faz o cadastro, gera seus links exclusivos e divulga online. Quando uma venda pelo seu link é validada, você recebe comissão.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Esse caminho mais simples faria mais sentido pra você começar?"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧾 CONTRATO
