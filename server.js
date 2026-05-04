@@ -9357,12 +9357,37 @@ if (
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
 ) {
-  await saveLeadProfile(from, {
-    interesseReal: true,
-    faseQualificacao: "qualificando",
-    status: "qualificando"
+  const podeVirarInteresseRealAgora = canStartDataCollection({
+    ...(currentLead || {}),
+    interesseReal: true
   });
+
+  if (podeVirarInteresseRealAgora) {
+    await saveLeadProfile(from, {
+      interesseReal: true,
+      faseQualificacao: "qualificando",
+      status: "qualificando"
+    });
+  } else {
+    await saveLeadProfile(from, {
+      sinalInteresseInicial: true,
+      ultimaIntencaoForte: text,
+      faseQualificacao: currentLead?.faseQualificacao || "morno",
+      status: currentLead?.status || "morno"
+    });
+
+    console.log("🟡 Interesse forte registrado, mas pré-análise ainda bloqueada:", {
+      user: from,
+      ultimaMensagemLead: text,
+      etapas: currentLead?.etapas || {},
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      motivo: "Lead demonstrou interesse, mas ainda faltam etapas obrigatórias antes de interesseReal."
+    });
+  }
+
+  currentLead = await loadLeadProfile(from);
 }
+     
      
 // 🔒 BLOQUEIO DE PRÉ-ANÁLISE PREMATURA
 // Mesmo que o classificador diga "pre_analise",
@@ -9880,7 +9905,8 @@ const leadConfirmouCiencia =
     historyText.includes("depende da sua atuacao nas vendas")
   );
 
-const podeIniciarColeta = canStartDataCollection(currentLead);
+const podeIniciarColeta = canStartDataCollection(currentLead) &&
+  currentLead?.interesseReal === true;
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
