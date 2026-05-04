@@ -658,30 +658,31 @@ async function collectBufferedText(from, text, messageId) {
 
   const bufferId = from;
 
-  await db.collection("incoming_message_buffers").updateOne(
-    { _id: bufferId },
-    {
-      $setOnInsert: {
-        _id: bufferId,
-        user: from,
-        messages: [],
-        messageIds: [],
-        startedAtMs: nowMs,
-        createdAt: now
-      },
-      $set: {
-        lastAtMs: nowMs,
-        updatedAt: now,
-        processing: false
-      },
-      $push: {
-        messages: cleanText,
-        ...(messageId ? { messageIds: messageId } : {})
-      }
-    },
-    { upsert: true }
-  );
+  const pushData = {
+  messages: cleanText
+};
 
+if (messageId) {
+  pushData.messageIds = messageId;
+}
+
+await db.collection("incoming_message_buffers").updateOne(
+  { _id: bufferId },
+  {
+    $setOnInsert: {
+      user: from,
+      startedAtMs: nowMs,
+      createdAt: now
+    },
+    $set: {
+      lastAtMs: nowMs,
+      updatedAt: now
+    },
+    $push: pushData
+  },
+  { upsert: true }
+);
+   
   await delay(TYPING_DEBOUNCE_MS);
 
   const buffer = await db.collection("incoming_message_buffers").findOne({
