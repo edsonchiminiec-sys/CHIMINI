@@ -7781,6 +7781,13 @@ function normalizeTextForIntent(text = "") {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+// ⚠️ FUNÇÃO AUXILIAR ANTIGA
+// Não usar esta função para decidir sozinha que o lead virou Afiliado.
+// A decisão oficial de rota comercial agora é feita por:
+// decideCommercialRouteFromSemanticIntent().
+// Esta função pode permanecer apenas como apoio secundário em travas antigas,
+// mas não deve comandar status, fase ou rota comercial.
+
 function isAffiliateIntent(text = "") {
   const t = normalizeTextForIntent(text);
 
@@ -7804,6 +7811,11 @@ function isAffiliateIntent(text = "") {
     t.includes("vender por link")
   );
 }
+
+// ⚠️ FUNÇÃO AUXILIAR ANTIGA
+// Não usar para converter lead em Afiliado automaticamente.
+// Objeção de taxa, estoque ou investimento deve ser tratada primeiro no Homologado.
+// Só a rota semântica central pode mudar a rota para Afiliado ou Ambos.
 
 function isAffiliateAlternativeOpportunity(text = "") {
   const t = normalizeTextForIntent(text);
@@ -7886,6 +7898,11 @@ function isPreCrmBlockingObjection(text = "") {
     t.includes("não é pra mim")
   );
 }
+
+// ⚠️ FUNÇÃO AUXILIAR ANTIGA
+// Esta função não deve mais acionar mudança automática de rota.
+// Ela pode ser mantida por enquanto para compatibilidade,
+// mas a decisão real deve vir de decideCommercialRouteFromSemanticIntent().
 
 function isClearAffiliateFallbackIntent(text = "") {
   const t = normalizeTextForIntent(text);
@@ -7979,16 +7996,17 @@ Acesse o portal para fazer seu cadastro e consultar mais informações do progra
 function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
 
-// 🔥 PRIORIDADE MÁXIMA — intenção de afiliado
-if (isAffiliateIntent(text)) {
-  return "afiliado";
-}
-
-// 🔥 OPORTUNIDADE — alternativa ao homologado
-if (isAffiliateAlternativeOpportunity(text)) {
-  return "afiliado";
-}
-
+// 🔀 AFILIADO NÃO É MAIS DECIDIDO AQUI
+// Antes, esta função podia transformar o lead em Afiliado usando palavras-chave.
+// Agora, Afiliado é decidido apenas pela rota semântica central:
+// decideCommercialRouteFromSemanticIntent().
+//
+// Motivo:
+// Evita misturar objeção de taxa, rejeição de estoque ou frases soltas com intenção real de Afiliado.
+//
+// Esta função classifyLead continua servindo para sinais gerais:
+// frio, morno, qualificando e pre_analise.
+   
   const hasInterest =
   isExplicitPreAnalysisIntent(text) ||
   t.includes("quero começar") ||
@@ -9854,43 +9872,7 @@ if (leadTemObjecaoTaxaControlada) {
   return;
 }
      
-     const leadTravouAntesDoCrm =
-  false &&
-  currentLead?.dadosConfirmadosPeloLead !== true &&
-  currentLead?.crmEnviado !== true &&
-  currentLead?.statusOperacional !== "enviado_crm" &&
-  currentLead?.faseFunil !== "crm" &&
-  currentLead?.faseQualificacao !== "enviado_crm" &&
-  currentLead?.status !== "enviado_crm" &&
-  currentLead?.aguardandoConfirmacaoCampo !== true &&
-  !awaitingConfirmation &&
-  currentLead?.faseQualificacao !== "corrigir_dado" &&
-  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
-  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
-
-     if (leadTravouAntesDoCrm) {
-  await saveLeadProfile(from, {
-    status: "afiliado",
-    faseQualificacao: "afiliado",
-    interesseAfiliado: true,
-    origemConversao: "recuperado_objecao",
-    ultimaMensagem: text
-  });
-
-  const affiliateRecoveryMsg = buildAffiliateRecoveryResponse();
-
-  await sendWhatsAppMessage(from, affiliateRecoveryMsg);
-  await saveHistoryStep(from, history, text, affiliateRecoveryMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
-}
-
+     
 // ✅ CONFIRMAÇÃO ESPECÍFICA DA TAXA / INVESTIMENTO
 // Só marca taxaAlinhada quando:
 // 1. o investimento já foi explicado;
@@ -9938,16 +9920,6 @@ if (
   });
 
   currentLead = await loadLeadProfile(from);
-}
-
-if (leadStatus === "afiliado") {
-  console.log("🚫 leadStatus afiliado ignorado pelo roteador antigo:", {
-    user: from,
-    ultimaMensagemLead: text,
-    motivo: "A rota de Afiliado agora é decidida por decideCommercialRouteFromSemanticIntent()."
-  });
-
-  leadStatusSeguro = null;
 }
      
 // 🔥 ATUALIZA STATUS / FASE DO CRM COM BASE NA CLASSIFICAÇÃO
