@@ -6455,96 +6455,6 @@ function detectReplyMainTheme(text = "") {
   return "";
 }
 
-function buildContinuationAfterRepeatedTheme({
-  lastTheme = "",
-  currentLead = {}
-} = {}) {
-  if (lastTheme === "programa") {
-    return {
-      message: `Ótimo 😊 O próximo ponto são os benefícios.
-
-Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orientação para te ajudar a vender com mais segurança.
-
-Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
-
-Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
-      fileKey: "folder"
-    };
-  }
-
-  if (lastTheme === "beneficios") {
-    return {
-      message: `Perfeito 😊 Agora o próximo ponto é o estoque inicial.
-
-Você começa com um lote estratégico de produtos em comodato. Isso significa que o estoque não é comprado por você: ele continua sendo da IQG, mas fica com você para operação, pronta-entrega e demonstração.
-
-Faz sentido essa parte do comodato pra você?`,
-      fileKey: null
-    };
-  }
-
-  if (lastTheme === "estoque") {
-    return {
-      message: `Show 😊 Agora preciso alinhar a parte das responsabilidades.
-
-Como o lote fica em comodato, o parceiro fica responsável pela guarda, conservação dos produtos e pela comunicação correta das vendas.
-
-Esse ponto é importante porque o resultado depende da atuação do parceiro nas vendas.
-
-Ficou claro pra você?`,
-      fileKey: null
-    };
-  }
-
-  if (lastTheme === "responsabilidades") {
-    return {
-      message: `Perfeito 😊 Agora sim posso te explicar o investimento com transparência.
-
-Existe um investimento de adesão e implantação de R$ 1.990.
-
-Mas é importante entender: esse valor não é compra de mercadoria, não é caução e não é garantia.
-
-Ele é para ativação no programa, acesso à estrutura, suporte, treinamentos e liberação do lote inicial em comodato para você começar a operar.
-
-Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000 em preço de venda ao consumidor final.
-
-Esse investimento pode ser feito via PIX ou parcelado em até 10x de R$ 199 no cartão, dependendo da disponibilidade no momento.
-
-E o pagamento só acontece depois da análise interna e da assinatura do contrato, tá?
-
-Faz sentido pra você nesse formato?`,
-      fileKey: null
-    };
-  }
-
- if (lastTheme === "investimento") {
-  if (currentLead?.taxaAlinhada !== true) {
-    return {
-      message: `Só antes de seguir, quero confirmar se a parte do investimento ficou clara.
-
-A taxa de adesão e implantação é de R$ 1.990,00, não é compra de mercadoria, caução ou garantia, e só é tratada depois da análise interna e da assinatura do contrato.
-
-Você consegue me confirmar se esse investimento faz sentido pra você?`,
-      fileKey: null
-    };
-  }
-
-  return {
-    message: `Show! Antes de seguirmos para a pré-análise, só preciso confirmar um ponto importante:
-
-Você está de acordo que o resultado depende da sua atuação nas vendas?`,
-    fileKey: null
-  };
-}
-  if (lastTheme === "compromisso") {
-    return {
-      message: `Perfeito 😊 Então faz sentido seguirmos para a pré-análise agora?`,
-      fileKey: null
-    };
-  }
-
-  return getSafeCurrentPhaseResponse(currentLead);
-}
    
   const leadReplyWasShort = isShortNeutralLeadReply(leadText);
 
@@ -6589,6 +6499,233 @@ Você está de acordo que o resultado depende da sua atuação nas vendas?`,
     },
     respostaFinal: continuation.message,
     fileKey: continuation.fileKey
+  };
+}
+
+function applyAntiRepetitionGuard({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {},
+  history = []
+} = {}) {
+  const lastAssistantMessage = getLastAssistantMessage(history);
+
+  if (!lastAssistantMessage) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const leadReplyWasShort = isShortNeutralLeadReply(leadText);
+
+  if (!leadReplyWasShort) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const lastTheme = detectReplyMainTheme(lastAssistantMessage);
+  const currentTheme = detectReplyMainTheme(respostaFinal);
+
+  if (!lastTheme || !currentTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const repeatedSameTheme = lastTheme === currentTheme;
+
+  if (!repeatedSameTheme) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const continuation = buildContinuationAfterRepeatedTheme({
+    lastTheme,
+    currentLead
+  });
+
+  return {
+    changed: true,
+    reason: {
+      leadReplyWasShort,
+      lastTheme,
+      currentTheme,
+      repeatedSameTheme
+    },
+    respostaFinal: continuation.message,
+    fileKey: continuation.fileKey
+  };
+}
+
+function leadMentionedTaxObjection(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (
+    t.includes("taxa") ||
+    t.includes("1990") ||
+    t.includes("1 990") ||
+    t.includes("1.990") ||
+    t.includes("valor") ||
+    t.includes("investimento") ||
+    t.includes("caro") ||
+    t.includes("pagar") ||
+    t.includes("pagamento") ||
+    t.includes("pix") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("parcelar") ||
+    t.includes("parcelado") ||
+    t.includes("10x") ||
+    t.includes("nao tenho esse valor") ||
+    t.includes("não tenho esse valor") ||
+    t.includes("sem dinheiro") ||
+    t.includes("achei alto") ||
+    t.includes("muito alto")
+  );
+}
+
+function historyAlreadyExplainedInvestment(history = []) {
+  if (!Array.isArray(history)) return false;
+
+  const historyText = history
+    .filter(message => message?.role === "assistant")
+    .slice(-8)
+    .map(message => message?.content || "")
+    .join(" ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    (
+      historyText.includes("r$ 1.990") ||
+      historyText.includes("1.990") ||
+      historyText.includes("1990")
+    ) &&
+    (
+      historyText.includes("nao e compra de mercadoria") ||
+      historyText.includes("nao e caucao") ||
+      historyText.includes("nao e garantia") ||
+      historyText.includes("lote inicial") ||
+      historyText.includes("mais de r$ 5.000") ||
+      historyText.includes("mais de 5.000") ||
+      historyText.includes("10x")
+    )
+  );
+}
+
+function buildShortTaxObjectionResponse({ leadText = "" } = {}) {
+  const t = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (
+    t.includes("parcel") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("10x")
+  ) {
+    return `Sim, existe possibilidade de parcelamento no cartão em até 10x de R$ 199,00, dependendo da disponibilidade no momento.
+
+E só reforçando: esse pagamento não acontece agora. Ele só vem depois da análise interna e da assinatura do contrato.
+
+Assim fica mais viável pra você analisar?`;
+  }
+
+  if (
+    t.includes("pix") ||
+    t.includes("pagar") ||
+    t.includes("pagamento")
+  ) {
+    return `O pagamento não acontece agora, tá? 😊
+
+Primeiro vem a análise interna e, se fizer sentido seguir, a assinatura do contrato. Só depois disso a parte do investimento é tratada.
+
+Neste momento, o mais importante é você entender se o modelo faz sentido pra você. Faz sentido nesse formato?`;
+  }
+
+  if (
+    t.includes("caro") ||
+    t.includes("alto") ||
+    t.includes("nao tenho esse valor") ||
+    t.includes("não tenho esse valor") ||
+    t.includes("sem dinheiro")
+  ) {
+    return `Entendo sua análise 😊
+
+O ponto principal é não olhar a taxa isolada: ela não é compra de mercadoria, caução ou garantia. Ela está ligada à entrada na estrutura, suporte e liberação do lote em comodato, que representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+
+Mas precisa fazer sentido pra você também. Nesse formato, você prefere entender melhor a margem ou acha que o investimento fica inviável agora?`;
+  }
+
+  return `Sim, existe a taxa de adesão e implantação de R$ 1.990,00.
+
+Só reforçando de forma direta: ela não é compra de mercadoria, caução ou garantia. Ela faz parte da ativação no programa, suporte e liberação do lote em comodato, que representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+
+Faz sentido pra você olhando por esse lado?`;
+}
+
+function applyTaxObjectionAntiRepetitionGuard({
+  leadText = "",
+  respostaFinal = "",
+  currentLead = {},
+  history = []
+} = {}) {
+  const leadFalouDeTaxa = leadMentionedTaxObjection(leadText);
+  const investimentoJaExplicado = historyAlreadyExplainedInvestment(history);
+
+  if (!leadFalouDeTaxa || !investimentoJaExplicado) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  const respostaIaFicouLonga =
+    String(respostaFinal || "").length > 650;
+
+  const respostaIaRepetiuArgumentos =
+    replyMentionsInvestment(respostaFinal) &&
+    (
+      String(respostaFinal || "").includes("não é compra de mercadoria") ||
+      String(respostaFinal || "").includes("não é caução") ||
+      String(respostaFinal || "").includes("não é garantia") ||
+      String(respostaFinal || "").includes("mais de R$ 5.000") ||
+      String(respostaFinal || "").includes("margem") ||
+      String(respostaFinal || "").includes("10x")
+    );
+
+  if (!respostaIaFicouLonga && !respostaIaRepetiuArgumentos) {
+    return {
+      changed: false,
+      respostaFinal
+    };
+  }
+
+  return {
+    changed: true,
+    reason: {
+      leadFalouDeTaxa,
+      investimentoJaExplicado,
+      respostaIaFicouLonga,
+      respostaIaRepetiuArgumentos
+    },
+    respostaFinal: buildShortTaxObjectionResponse({
+      leadText
+    })
   };
 }
 
