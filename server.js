@@ -212,6 +212,10 @@ async function saveLeadProfile(user, data = {}) {
   insertData.taxaAlinhada = false;
 }
 
+   if (!currentLead && safeData.taxaObjectionCount === undefined) {
+  insertData.taxaObjectionCount = 0;
+}
+
   const lifecycleBase = {
     ...(currentLead || {}),
     ...insertData,
@@ -6683,6 +6687,121 @@ function applyTaxObjectionAntiRepetitionGuard({
   };
 }
 
+function isTaxaObjectionAgainstInvestment(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const objectionPatterns = [
+    "achei caro",
+    "muito caro",
+    "ta caro",
+    "tá caro",
+    "taxa cara",
+    "taxa alta",
+    "valor alto",
+    "achei alto",
+    "muito alto",
+    "ficou alto",
+    "ficou pesado",
+    "pesado pra mim",
+    "pesado para mim",
+    "nao tenho dinheiro",
+    "não tenho dinheiro",
+    "sem dinheiro",
+    "sem dinheiro agora",
+    "nao tenho esse valor",
+    "não tenho esse valor",
+    "nao consigo pagar",
+    "não consigo pagar",
+    "nao posso pagar",
+    "não posso pagar",
+    "nao quero pagar taxa",
+    "não quero pagar taxa",
+    "nao quero pagar adesao",
+    "não quero pagar adesão",
+    "nao quero adesao",
+    "não quero adesão",
+    "por que pagar",
+    "porque pagar",
+    "pra que pagar",
+    "para que pagar",
+    "mas pagar 1990",
+    "mas pagar 1 990",
+    "mas pagar 1.990",
+    "pagar 1990",
+    "pagar 1 990",
+    "pagar 1.990",
+    "taxa de 1990",
+    "taxa de 1 990",
+    "taxa de 1.990",
+    "absurdo",
+    "salgado"
+  ];
+
+  return objectionPatterns.some(pattern => t.includes(pattern));
+}
+
+function buildTaxObjectionAttemptResponse(count = 1) {
+  if (count === 1) {
+    return `Entendo sua análise 😊
+
+O ponto principal é não olhar a taxa isolada. Ela não é compra de mercadoria, caução ou garantia.
+
+Ela faz parte da ativação no programa, suporte, treinamento e liberação do lote inicial em comodato, que representa mais de R$ 5.000,00 em preço de venda ao consumidor.
+
+Além disso, o pagamento não acontece agora: primeiro vem a análise interna e a assinatura do contrato.
+
+Olhando por esse lado, faz sentido pra você avaliar o modelo?`;
+  }
+
+  if (count === 2) {
+    return `Faz sentido você olhar com cuidado, porque é um investimento importante 😊
+
+A diferença é que, no Parceiro Homologado, você não começa comprando estoque. O lote é cedido em comodato pela IQG, e isso reduz bastante a barreira para começar com produto em mãos.
+
+Quando o parceiro vende seguindo o preço sugerido, a margem é de 40%. Se vender com ágio, acima do preço sugerido, essa diferença fica com o parceiro.
+
+Não é promessa de ganho, porque depende da sua atuação nas vendas, mas é justamente por isso que a análise precisa considerar a estrutura completa, não só a taxa.
+
+Você quer que eu te explique melhor a parte da margem ou a parte do lote em comodato?`;
+  }
+
+  return `Entendo totalmente sua preocupação 😊
+
+Vou ser bem direta: o Parceiro Homologado faz mais sentido para quem quer atuar de forma ativa, com produtos em mãos, suporte da indústria e possibilidade de vender com margem.
+
+A taxa existe porque envolve ativação, suporte, treinamento e estrutura, mas ela só é tratada depois da análise interna e da assinatura do contrato.
+
+Se mesmo assim esse investimento não fizer sentido pra você agora, tudo bem. Antes de eu te mostrar outro caminho, só me confirma: a sua trava principal é realmente a taxa de adesão?`;
+}
+
+function buildAffiliateAfterTaxObjectionsResponse() {
+  return `Entendi 😊
+
+Como a taxa de adesão do Parceiro Homologado ficou como uma trava pra você, talvez faça mais sentido começar por outro caminho da IQG: o Programa de Afiliados.
+
+Ele é diferente do Parceiro Homologado.
+
+No Afiliado:
+• você não precisa ter estoque;
+• não recebe lote em comodato;
+• não tem a taxa de adesão do Homologado;
+• divulga os produtos por link;
+• recebe comissão por vendas validadas.
+
+O cadastro é feito por aqui:
+https://minhaiqg.com.br/
+
+Se depois você quiser algo mais estruturado, com produtos em mãos, suporte e lote em comodato, aí podemos retomar o Parceiro Homologado.`;
+}
+
 function isRepeatedDigits(value = "") {
   return /^(\d)\1+$/.test(value);
 }
@@ -9163,6 +9282,88 @@ const podeConfirmarInteresseRealAgora =
   return;
 }
 
+// 🧱 CONTADOR DE OBJEÇÕES DA TAXA
+// A SDR deve tentar sustentar o Parceiro Homologado por até 3 objeções reais.
+// Só depois de objeção persistente contra a taxa, apresenta Afiliados como alternativa.
+const leadTemObjecaoTaxaControlada =
+  currentLead?.etapas?.investimento === true &&
+  currentLead?.taxaAlinhada !== true &&
+  isTaxaObjectionAgainstInvestment(text) &&
+  !isAffiliateIntent(text) &&
+  currentLead?.dadosConfirmadosPeloLead !== true &&
+  currentLead?.crmEnviado !== true &&
+  currentLead?.statusOperacional !== "enviado_crm" &&
+  currentLead?.faseFunil !== "crm" &&
+  currentLead?.faseQualificacao !== "enviado_crm" &&
+  currentLead?.status !== "enviado_crm" &&
+  currentLead?.aguardandoConfirmacaoCampo !== true &&
+  !awaitingConfirmation &&
+  currentLead?.faseQualificacao !== "corrigir_dado" &&
+  currentLead?.faseQualificacao !== "corrigir_dado_final" &&
+  currentLead?.faseQualificacao !== "aguardando_valor_correcao_final";
+
+if (leadTemObjecaoTaxaControlada) {
+  const taxaObjectionCountAtual = Number(currentLead?.taxaObjectionCount || 0);
+  const novaContagemObjecaoTaxa = taxaObjectionCountAtual + 1;
+
+  await saveLeadProfile(from, {
+    taxaObjectionCount: novaContagemObjecaoTaxa,
+    ultimaObjecaoTaxa: text
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  if (novaContagemObjecaoTaxa <= 3) {
+    const msg = buildTaxObjectionAttemptResponse(novaContagemObjecaoTaxa);
+
+    console.log("🧱 Objeção de taxa tratada antes de oferecer Afiliados:", {
+      user: from,
+      taxaObjectionCount: novaContagemObjecaoTaxa,
+      ultimaObjecaoTaxa: text,
+      decisao: "manter_homologado"
+    });
+
+    await sendWhatsAppMessage(from, msg);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+    scheduleLeadFollowups(from);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return;
+  }
+
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    interesseAfiliado: true,
+    origemConversao: "recuperado_objecao_taxa_persistente",
+    ultimaMensagem: text
+  });
+
+  const affiliateMsg = buildAffiliateAfterTaxObjectionsResponse();
+
+  console.log("🔁 Afiliados oferecido após objeção persistente da taxa:", {
+    user: from,
+    taxaObjectionCount: novaContagemObjecaoTaxa,
+    ultimaObjecaoTaxa: text,
+    decisao: "oferecer_afiliado"
+  });
+
+  await sendWhatsAppMessage(from, affiliateMsg);
+  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+     
      const leadTravouAntesDoCrm =
     isClearAffiliateFallbackIntent(text) &&
   currentLead?.dadosConfirmadosPeloLead !== true &&
@@ -9213,14 +9414,15 @@ if (
   isTaxaAlinhadaConfirmation(text) &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !awaitingConfirmation
-) {
-  await saveLeadProfile(from, {
-    taxaAlinhada: true,
-    etapas: {
-      ...(currentLead?.etapas || {}),
-      taxaPerguntada: false
-    }
-  });
+) {await saveLeadProfile(from, {
+  taxaAlinhada: true,
+  taxaObjectionCount: 0,
+  ultimaObjecaoTaxa: null,
+  etapas: {
+    ...(currentLead?.etapas || {}),
+    taxaPerguntada: false
+  }
+});
 
   currentLead = await loadLeadProfile(from);
 }     
