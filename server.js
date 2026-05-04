@@ -12583,7 +12583,13 @@ body: JSON.stringify({
     role: "system",
     content: sdrInternalStrategicContext || "Sem contexto estratégico interno adicional disponível neste momento."
   },
-  Regras:
+  {
+    role: "system",
+    content: `MEMÓRIA CONVERSACIONAL INTERNA — USO INTERNO DA SDR
+
+${JSON.stringify(sdrConversationMemory, null, 2)}
+
+Regras:
 - Não diga ao lead que existe memória interna.
 - Não cite "memória", "histórico interno", "consultor", "supervisor" ou "classificador".
 - Se houver risco de repetição, não repita a explicação completa.
@@ -12593,11 +12599,12 @@ body: JSON.stringify({
 - Se a última mensagem do lead tiver mais de um tema em temasMensagemAtualLead, responda todos os temas em uma única mensagem organizada.
 - Não responda somente a última pergunta se houver perguntas anteriores na mesma mensagem agrupada.
 - Depois de responder todos os temas, conduza com apenas uma pergunta final.`
-     
+  },
   {
     role: "system",
     content: `DADOS DE CONTEXTO DO LEAD:
 Nome informal do WhatsApp: ${currentLead?.nomeWhatsApp || "-"}
+...
 Nome já informado: ${currentLead?.nome || "-"}
 Gênero provável: ${currentLead?.generoProvavel || extractedData?.generoProvavel || "indefinido"}
 
