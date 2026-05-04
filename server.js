@@ -10583,10 +10583,12 @@ console.log("🔀 Decisão central de rota comercial:", {
 if (
   commercialRouteDecision.rota === "ambos" &&
   commercialRouteDecision.deveCompararProgramas === true &&
-  !currentLead?.aguardandoConfirmacaoCampo &&
-  !awaitingConfirmation
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  })
 ) {
-  await saveLeadProfile(from, {
+   await saveLeadProfile(from, {
     rotaComercial: "ambos",
     interesseAfiliado: true,
     origemConversao: commercialRouteDecision.origemConversao,
@@ -10610,10 +10612,12 @@ if (
 if (
   commercialRouteDecision.rota === "afiliado" &&
   commercialRouteDecision.deveResponderAgora === true &&
-  !currentLead?.aguardandoConfirmacaoCampo &&
-  !awaitingConfirmation
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  })
 ) {
-  await saveLeadProfile(from, {
+   await saveLeadProfile(from, {
     status: "afiliado",
     faseQualificacao: "afiliado",
     statusOperacional: "ativo",
