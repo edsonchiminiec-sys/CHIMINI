@@ -9638,6 +9638,84 @@ const podeConfirmarInteresseRealAgora =
   return;
 }
 
+// 🔀 DECISÃO CENTRAL DE ROTA COMERCIAL
+// A partir daqui, Afiliado/Homologado não deve ser decidido só por palavra-chave.
+// Usamos a interpretação semântica do GPT e o backend apenas aplica regras duras.
+const commercialRouteDecision = decideCommercialRouteFromSemanticIntent({
+  semanticIntent,
+  currentLead: currentLead || {}
+});
+
+console.log("🔀 Decisão central de rota comercial:", {
+  user: from,
+  ultimaMensagemLead: text,
+  rota: commercialRouteDecision.rota,
+  deveResponderAgora: commercialRouteDecision.deveResponderAgora,
+  deveCompararProgramas: commercialRouteDecision.deveCompararProgramas,
+  deveManterHomologado: commercialRouteDecision.deveManterHomologado,
+  origemConversao: commercialRouteDecision.origemConversao,
+  motivo: commercialRouteDecision.motivo
+});
+
+if (
+  commercialRouteDecision.rota === "ambos" &&
+  commercialRouteDecision.deveCompararProgramas === true &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    rotaComercial: "ambos",
+    interesseAfiliado: true,
+    origemConversao: commercialRouteDecision.origemConversao,
+    ultimaMensagem: text
+  });
+
+  const bothMsg = buildBothProgramsComparisonResponse();
+
+  await sendWhatsAppMessage(from, bothMsg);
+  await saveHistoryStep(from, history, text, bothMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
+if (
+  commercialRouteDecision.rota === "afiliado" &&
+  commercialRouteDecision.deveResponderAgora === true &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    statusOperacional: "ativo",
+    faseFunil: "afiliado",
+    rotaComercial: "afiliado",
+    temperaturaComercial: "morno",
+    interesseAfiliado: true,
+    origemConversao: commercialRouteDecision.origemConversao,
+    ultimaMensagem: text
+  });
+
+  const affiliateMsg = buildAffiliateResponse(false);
+
+  await sendWhatsAppMessage(from, affiliateMsg);
+  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
+
+  scheduleLeadFollowups(from);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+     
 // 🧱 CONTADOR DE OBJEÇÕES DA TAXA
 // A SDR deve tentar sustentar o Parceiro Homologado por até 3 objeções reais.
 // Só depois de objeção persistente contra a taxa, apresenta Afiliados como alternativa.
