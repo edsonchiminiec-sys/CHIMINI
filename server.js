@@ -9543,6 +9543,7 @@ if (changedConfirmedData) {
 }
 
 const leadStatus = classifyLead(text, extractedData, history);
+     let leadStatusSeguro = leadStatus;
 const strongIntent = isStrongBuyIntent(text);
 const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
 const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
@@ -9885,30 +9886,15 @@ if (
 }
 
 if (leadStatus === "afiliado") {
-  const isAlternative = isAffiliateAlternativeOpportunity(text);
+  console.log("🚫 leadStatus afiliado ignorado pelo roteador antigo:", {
+    user: from,
+    ultimaMensagemLead: text,
+    motivo: "A rota de Afiliado agora é decidida por decideCommercialRouteFromSemanticIntent()."
+  });
 
-await saveLeadProfile(from, {
-  status: "afiliado",
-  faseQualificacao: "afiliado",
-  interesseAfiliado: true,
-  origemConversao: isAffiliateAlternativeOpportunity(text) ? "recuperado_objecao" : "interesse_direto",
-  ultimaMensagem: text
-});
-
-  const affiliateMsg = buildAffiliateResponse(isAlternative);
-
-  await sendWhatsAppMessage(from, affiliateMsg);
-  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
-
-  scheduleLeadFollowups(from);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
+  leadStatusSeguro = null;
 }
-
+     
 // 🔥 ATUALIZA STATUS / FASE DO CRM COM BASE NA CLASSIFICAÇÃO
 // Antes o sistema classificava, mas não salvava no Mongo.
 // Por isso o dashboard não mudava de status.
@@ -9964,8 +9950,6 @@ const podeAceitarPreAnaliseAgora = Boolean(
     interesseReal: true
   })
 );
-
-let leadStatusSeguro = leadStatus;
 
 if (leadStatus === "pre_analise" && !podeAceitarPreAnaliseAgora) {
   console.log("🚫 Pré-análise bloqueada pelo backend:", {
