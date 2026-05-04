@@ -207,6 +207,10 @@ async function saveLeadProfile(user, data = {}) {
     };
   }
 
+   if (!currentLead && safeData.taxaAlinhada === undefined) {
+  insertData.taxaAlinhada = false;
+}
+
   const lifecycleBase = {
     ...(currentLead || {}),
     ...insertData,
@@ -4900,6 +4904,41 @@ function isCommitmentConfirmation(text = "") {
   return commitmentPatterns.some(pattern => pattern.test(t));
 }
 
+function isTaxaAlinhadaConfirmation(text = "") {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const taxaAlinhadaPatterns = [
+    /^sim entendi a taxa$/,
+    /^entendi a taxa$/,
+    /^sim ficou claro a taxa$/,
+    /^ficou claro a taxa$/,
+    /^sim ficou claro o investimento$/,
+    /^ficou claro o investimento$/,
+    /^sim faz sentido o investimento$/,
+    /^faz sentido o investimento$/,
+    /^sim faz sentido nesse formato$/,
+    /^faz sentido nesse formato$/,
+    /^sim estou ciente da taxa$/,
+    /^estou ciente da taxa$/,
+    /^sim estou de acordo com a taxa$/,
+    /^estou de acordo com a taxa$/,
+    /^sim estou de acordo com o investimento$/,
+    /^estou de acordo com o investimento$/,
+    /^sim entendi o investimento$/,
+    /^entendi o investimento$/,
+    /^combinado entendi a taxa$/,
+    /^combinado entendi o investimento$/
+  ];
+
+  return taxaAlinhadaPatterns.some(pattern => pattern.test(t));
+}
+
 function isSimpleGreetingOnly(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -5763,16 +5802,16 @@ function canStartDataCollection(lead = {}) {
   const e = lead.etapas || {};
 
   return Boolean(
-    e.programa &&
-    e.beneficios &&
-    e.estoque &&
-    e.responsabilidades &&
-    e.investimento &&
-    e.compromisso &&
+    e.programa === true &&
+    e.beneficios === true &&
+    e.estoque === true &&
+    e.responsabilidades === true &&
+    e.investimento === true &&
+    lead.taxaAlinhada === true &&
+    e.compromisso === true &&
     lead.interesseReal === true
   );
 }
-
 function canAskForRealInterest(lead = {}) {
   const e = lead.etapas || {};
 
@@ -8947,6 +8986,24 @@ if (podeConfirmarInteresseRealAgora) {
   return;
 }
 
+// ✅ CONFIRMAÇÃO ESPECÍFICA DA TAXA / INVESTIMENTO
+// Só marca taxaAlinhada quando o lead confirma claramente que entendeu
+// ou concorda com o investimento. Respostas fracas como "ok", "sim"
+// ou "entendi" não bastam para liberar pré-análise.
+if (
+  currentLead?.etapas?.investimento === true &&
+  currentLead?.taxaAlinhada !== true &&
+  isTaxaAlinhadaConfirmation(text) &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !awaitingConfirmation
+) {
+  await saveLeadProfile(from, {
+    taxaAlinhada: true
+  });
+
+  currentLead = await loadLeadProfile(from);
+}
+     
      // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
 // Só marca compromisso como concluído quando:
 // 1. a SDR já perguntou sobre o resultado depender da atuação;
