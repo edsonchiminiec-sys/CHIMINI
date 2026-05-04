@@ -7014,6 +7014,166 @@ function isLeadQuestionObjectionOrCorrection(text = "") {
   return hasQuestion || hasObjection || hasCorrection;
 }
 
+async function runDataFlowSemanticRouter({
+  currentLead = {},
+  history = [],
+  userText = ""
+} = {}) {
+  const fallback = {
+    tipoMensagem: "indefinido",
+    deveResponderAntesDeColetar: false,
+    deveProsseguirComColeta: true,
+    motivo: "Fallback local: roteador semântico não executado ou falhou."
+  };
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-8).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é um roteador semântico interno da SDR IA da IQG.
+
+Sua função é analisar a ÚLTIMA mensagem do lead quando a conversa está em coleta ou confirmação de dados.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve resposta final.
+Você NÃO altera status.
+Você NÃO salva dados.
+Você apenas decide como o backend deve tratar a mensagem.
+
+Contexto:
+A SDR pode estar pedindo nome, CPF, telefone, cidade, estado ou confirmação dos dados.
+Mesmo nessa fase, o lead pode fazer dúvidas comerciais, objeções, pedir explicação, corrigir dado ou pedir humano.
+
+Decida semanticamente o tipo da mensagem, como um humano entenderia.
+
+Tipos permitidos:
+
+- "dado_cadastral"
+Quando o lead apenas enviou o dado esperado ou algum dado pessoal útil para o pré-cadastro.
+
+- "confirmacao_positiva"
+Quando o lead confirma que um dado ou todos os dados estão corretos.
+
+- "confirmacao_negativa"
+Quando o lead diz que um dado ou todos os dados estão incorretos.
+
+- "correcao_dado"
+Quando o lead quer corrigir nome, CPF, telefone, cidade ou estado.
+
+- "pergunta_comercial"
+Quando o lead faz uma pergunta sobre programa, taxa, estoque, contrato, comodato, margem, pagamento, afiliado, próximos passos ou qualquer dúvida comercial.
+
+- "objecao_comercial"
+Quando o lead demonstra trava, insegurança, discordância, medo, preço alto, confusão ou resistência.
+
+- "pedido_humano"
+Quando o lead pede atendente, consultor, vendedor, humano ou alguém da equipe.
+
+- "misto"
+Quando a mensagem mistura dado cadastral com pergunta, objeção ou correção.
+
+- "indefinido"
+Quando não há confiança suficiente.
+
+Regras de decisão:
+
+1. Se houver pergunta, objeção, reclamação ou pedido de explicação, a SDR deve responder antes de continuar a coleta.
+
+2. Se a mensagem for apenas dado cadastral, o backend pode prosseguir com a coleta normalmente.
+
+3. Se a mensagem for confirmação positiva ou negativa, o backend pode prosseguir com a confirmação normalmente.
+
+4. Se a mensagem for correção de dado, o backend pode usar o fluxo de correção.
+
+5. Se for "misto", a SDR deve responder primeiro a dúvida ou objeção e depois retomar a coleta. Não salve dado misturado automaticamente.
+
+6. Não dependa de palavras exatas. Interprete intenção, contexto e significado.
+
+Responda somente JSON válido neste formato:
+
+{
+  "tipoMensagem": "indefinido",
+  "deveResponderAntesDeColetar": false,
+  "deveProsseguirComColeta": true,
+  "motivo": ""
+}
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: userText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                faseQualificacao: currentLead?.faseQualificacao || "",
+                faseFunil: currentLead?.faseFunil || "",
+                campoEsperado: currentLead?.campoEsperado || "",
+                campoPendente: currentLead?.campoPendente || "",
+                aguardandoConfirmacaoCampo: currentLead?.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: currentLead?.aguardandoConfirmacao === true
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro no roteador semântico da coleta:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawText);
+
+    const allowedTypes = [
+      "dado_cadastral",
+      "confirmacao_positiva",
+      "confirmacao_negativa",
+      "correcao_dado",
+      "pergunta_comercial",
+      "objecao_comercial",
+      "pedido_humano",
+      "misto",
+      "indefinido"
+    ];
+
+    const tipoMensagem = allowedTypes.includes(parsed?.tipoMensagem)
+      ? parsed.tipoMensagem
+      : "indefinido";
+
+    return {
+      tipoMensagem,
+      deveResponderAntesDeColetar: parsed?.deveResponderAntesDeColetar === true,
+      deveProsseguirComColeta: parsed?.deveProsseguirComColeta !== false,
+      motivo: parsed?.motivo || ""
+    };
+  } catch (error) {
+    console.error("Falha no roteador semântico da coleta:", error.message);
+    return fallback;
+  }
+}
+
 function isLeadQuestionDuringDataFlow(text = "", currentLead = {}) {
   const cleanText = String(text || "").trim();
 
@@ -8414,6 +8574,61 @@ if (noMeansNoDoubt) {
   });
 
   text = "não tenho dúvida";
+}
+
+// 🧠 ROTEADOR SEMÂNTICO DA COLETA / CONFIRMAÇÃO
+// Objetivo:
+// Durante o pré-cadastro, o backend continua protegendo a coleta,
+// mas a SDR não pode ficar muda, cega ou surda.
+// Se o lead fizer pergunta, objeção, reclamação ou misturar dúvida com dado,
+// a SDR responde primeiro e depois retoma o ponto pendente.
+const dataFlowSemanticStateCheck = isDataFlowState(currentLead || {});
+
+if (dataFlowSemanticStateCheck) {
+  const dataFlowRouter = await runDataFlowSemanticRouter({
+    currentLead: currentLead || {},
+    history,
+    userText: text
+  });
+
+  console.log("🧠 Roteador semântico da coleta:", {
+    user: from,
+    ultimaMensagemLead: text,
+    faseAtual: currentLead?.faseQualificacao || "-",
+    campoEsperado: currentLead?.campoEsperado || "-",
+    campoPendente: currentLead?.campoPendente || "-",
+    tipoMensagem: dataFlowRouter?.tipoMensagem || "indefinido",
+    deveResponderAntesDeColetar: dataFlowRouter?.deveResponderAntesDeColetar === true,
+    deveProsseguirComColeta: dataFlowRouter?.deveProsseguirComColeta !== false,
+    motivo: dataFlowRouter?.motivo || "-"
+  });
+
+  const tiposQueDevemResponderAntes = [
+    "pergunta_comercial",
+    "objecao_comercial",
+    "pedido_humano",
+    "misto"
+  ];
+
+  if (
+    dataFlowRouter?.deveResponderAntesDeColetar === true ||
+    tiposQueDevemResponderAntes.includes(dataFlowRouter?.tipoMensagem)
+  ) {
+    const msg = await answerDataFlowQuestion({
+      currentLead: currentLead || {},
+      history,
+      userText: text
+    });
+
+    await sendWhatsAppMessage(from, msg);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return;
+  }
 }
      
 const historyText = history
