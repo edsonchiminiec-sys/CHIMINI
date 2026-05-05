@@ -686,6 +686,18 @@ Você é a Especialista Comercial Oficial da IQG no WhatsApp.
 Fale em português do Brasil, natural, consultiva, direta e humana.
 Responda em até 3 blocos curtos, salvo se o lead fez várias perguntas.
 
+MEMÓRIA COMERCIAL:
+Você receberá um campo chamado memoriaComercial.
+Use essa memória como fonte principal para evitar repetição.
+
+Regras:
+- Se um material já foi enviado, não ofereça nem envie novamente, salvo pedido explícito do lead.
+- Se uma pergunta já foi respondida, não repita a explicação completa; responda de forma curta e avance.
+- Se o lead fez uma pergunta nova, responda essa pergunta primeiro.
+- Se o lead respondeu apenas "ok", "sim", "entendi" ou algo curto, não repetir a última explicação.
+- Use o resumoConversa para entender a jornada do lead.
+- Nunca diga ao lead que existe memória, resumo, histórico interno ou sistema.
+
 REGRAS ABSOLUTAS:
 - Nunca prometa ganho, renda garantida ou aprovação.
 - Nunca peça pagamento.
@@ -1234,9 +1246,26 @@ app.get("/dashboard", async (req, res) => {
     const senha = req.query.senha ? `&senha=${encodeURIComponent(req.query.senha)}` : "";
     const rows = leads.map(l => {
       const user = encodeURIComponent(l.user);
-      return `<tr><td>${html(l.status)}</td><td>${html(l.faseFunil)}</td><td>${html(l.temperaturaComercial)}</td><td>${html(l.rotaComercial)}</td><td>${html(l.nome || l.nomeWhatsApp || "-")}</td><td>${html(l.telefone || l.telefoneWhatsApp || l.user)}</td><td>${html(l.cpf || "-")}</td><td>${html(l.cidade || "-")}</td><td>${html(l.estado || "-")}</td><td>${formatDate(l.updatedAt)}</td><td><a href="/conversation/${user}?senha=${encodeURIComponent(req.query.senha || "")}">Conversa</a> | <a href="/lead/${user}/status/em_atendimento?senha=${encodeURIComponent(req.query.senha || "")}">Atender</a> | <a href="/lead/${user}/status/fechado?senha=${encodeURIComponent(req.query.senha || "")}">Fechar</a></td></tr>`;
+      return `<tr>
+  <td>${html(l.status)}</td>
+  <td>${html(l.faseFunil)}</td>
+  <td>${html(l.temperaturaComercial)}</td>
+  <td>${html(l.rotaComercial)}</td>
+  <td>${html(l.nome || l.nomeWhatsApp || "-")}</td>
+  <td>${html(l.telefone || l.telefoneWhatsApp || l.user)}</td>
+  <td>${html(l.cpf || "-")}</td>
+  <td>${html(l.cidade || "-")}</td>
+  <td>${html(l.estado || "-")}</td>
+  <td style="min-width:360px;white-space:normal;line-height:1.35">${html(l.resumoConversa || "-")}</td>
+  <td>${formatDate(l.updatedAt)}</td>
+  <td>
+    <a href="/conversation/${user}?senha=${encodeURIComponent(req.query.senha || "")}">Conversa</a> |
+    <a href="/lead/${user}/status/em_atendimento?senha=${encodeURIComponent(req.query.senha || "")}">Atender</a> |
+    <a href="/lead/${user}/status/fechado?senha=${encodeURIComponent(req.query.senha || "")}">Fechar</a>
+  </td>
+</tr>`;
     }).join("");
-    res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CRM IQG</title><style>body{font-family:Arial;margin:0;background:#f3f4f6;color:#111827}header{background:#111827;color:white;padding:22px}.wrap{padding:22px;overflow:auto}form{background:white;padding:14px;border-radius:10px;margin-bottom:14px}input,select,button{padding:9px;margin:4px}table{border-collapse:collapse;width:100%;background:white}th,td{border-bottom:1px solid #e5e7eb;padding:9px;text-align:left;font-size:13px}th{background:#f9fafb}</style></head><body><header><h1>CRM IQG — Leads</h1></header><div class="wrap"><form><input name="q" placeholder="Buscar" value="${html(q)}"><select name="status"><option value="">Todos status</option>${Object.values(STATUS).map(s => `<option value="${s}" ${s===status?"selected":""}>${s}</option>`).join("")}</select>${req.query.senha ? `<input type="hidden" name="senha" value="${html(req.query.senha)}">` : ""}<button>Filtrar</button></form><p>Exibindo ${leads.length} lead(s).</p><table><thead><tr><th>Status</th><th>Funil</th><th>Temp.</th><th>Rota</th><th>Nome</th><th>Telefone</th><th>CPF</th><th>Cidade</th><th>UF</th><th>Atualizado</th><th>Ação</th></tr></thead><tbody>${rows || "<tr><td colspan='11'>Nenhum lead encontrado.</td></tr>"}</tbody></table></div></body></html>`);
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CRM IQG</title><style>body{font-family:Arial;margin:0;background:#f3f4f6;color:#111827}header{background:#111827;color:white;padding:22px}.wrap{padding:22px;overflow:auto}form{background:white;padding:14px;border-radius:10px;margin-bottom:14px}input,select,button{padding:9px;margin:4px}table{border-collapse:collapse;width:100%;background:white}th,td{border-bottom:1px solid #e5e7eb;padding:9px;text-align:left;font-size:13px}th{background:#f9fafb}</style></head><body><header><h1>CRM IQG — Leads</h1></header><div class="wrap"><form><input name="q" placeholder="Buscar" value="${html(q)}"><select name="status"><option value="">Todos status</option>${Object.values(STATUS).map(s => `<option value="${s}" ${s===status?"selected":""}>${s}</option>`).join("")}</select>${req.query.senha ? `<input type="hidden" name="senha" value="${html(req.query.senha)}">` : ""}<button>Filtrar</button></form><p>Exibindo ${leads.length} lead(s).</p><table><thead><tr><th>Status</th><th>Funil</th><th>Temp.</th><th>Rota</th><th>Nome</th><th>Telefone</th><th>CPF</th><th>Cidade</th><th>UF</th><th>Resumo da conversa</th><th>Atualizado</th><th>Ação</th></tr></thead><tbody>${rows || "<tr><td colspan='12'>Nenhum lead encontrado.</td></tr>"}</tbody></table></div></body></html>`);
   } catch (error) {
     console.error("Erro no dashboard:", error);
     res.status(500).send("Erro ao carregar dashboard.");
