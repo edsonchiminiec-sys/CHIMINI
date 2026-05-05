@@ -10420,19 +10420,6 @@ if (!message) {
   return res.sendStatus(200);
 }
 
-     if (isLikelyAutoReplyMessage(text)) {
-  console.log("🤖 Mensagem automática detectada e ignorada:", {
-    from,
-    text
-  });
-
-  if (messageId) {
-    await claimMessage(messageId).catch(() => {});
-  }
-
-  return res.sendStatus(200);
-}
-
 console.log("✅ Mensagem recebida do WhatsApp:", {
   id: message.id,
   from: message.from,
@@ -10560,6 +10547,18 @@ if (message.text?.body) {
   return;
 }
 
+// 🤖 BLOQUEIO DE RESPOSTAS AUTOMÁTICAS DE OUTROS BOTS
+if (isLikelyAutoReplyMessage(text)) {
+  console.log("🤖 Mensagem automática detectada e ignorada:", {
+    from,
+    text
+  });
+
+  markMessageIdsAsProcessed([messageId]);
+
+  return;
+}
+     
 // 🔥 AGORA TEXTO E ÁUDIO PASSAM PELO MESMO BUFFER
 // Isso evita respostas duplicadas quando o lead manda várias mensagens ou vários áudios seguidos.
 const buffered = await collectBufferedText(from, text, messageId);
