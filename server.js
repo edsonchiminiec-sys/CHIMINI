@@ -827,6 +827,45 @@ Retorne somente JSON válido:
 }
 `;
 
+async function updateConversationSummary({ lead = {}, history = [], userText = "", assistantText = "" }) {
+  const fallbackResumo = lead.resumoConversa || "";
+
+  const payload = {
+    resumoAnterior: lead.resumoConversa || "",
+    ultimaMensagemLead: userText || "",
+    ultimaRespostaSdr: assistantText || "",
+    materiaisJaEnviados: lead.sentFiles || {},
+    statusAtual: lead.status || "",
+    faseFunil: lead.faseFunil || "",
+    rotaComercial: lead.rotaComercial || "",
+    historicoRecente: (history || []).slice(-10).map(m => ({
+      role: m.role,
+      content: m.content
+    }))
+  };
+
+  const result = await callOpenAIJson(
+    CONVERSATION_SUMMARY_SYSTEM_PROMPT,
+    payload,
+    {
+      resumoConversa: fallbackResumo,
+      ultimoTemaRespondido: lead.ultimoTemaRespondido || "",
+      ultimaPerguntaRespondida: lead.ultimaPerguntaRespondida || "",
+      riscoRepeticao: false,
+      observacaoMemoria: "Resumo não atualizado por falha no Historiador Comercial."
+    }
+  );
+
+  return {
+    resumoConversa: cleanText(result.resumoConversa || fallbackResumo).slice(0, 1800),
+    ultimoTemaRespondido: cleanText(result.ultimoTemaRespondido || lead.ultimoTemaRespondido || "").slice(0, 180),
+    ultimaPerguntaRespondida: cleanText(result.ultimaPerguntaRespondida || lead.ultimaPerguntaRespondida || "").slice(0, 240),
+    riscoRepeticao: result.riscoRepeticao === true,
+    observacaoMemoria: cleanText(result.observacaoMemoria || "").slice(0, 300),
+    resumoAtualizadoEm: now()
+  };
+}
+
 async function buildReply({ user, lead, history, userText }) {
   if (detectsBothIntent(userText)) return buildBothProgramsResponse();
   if (detectsAffiliateIntent(userText) && !detectsHomologadoIntent(userText)) return buildAffiliateResponse(false);
@@ -1082,13 +1121,24 @@ async function processIncomingMessage({ from, text, messageId, isAudio, profileN
   const finalText = clean || getSafeFunnelMessage(lead);
 
   await sendWhatsAppMessage(from, finalText);
-  await appendHistory(from, "user", text);
-  await appendHistory(from, "assistant", finalText);
-  await handleBusinessFiles(from, guarded, actions);
+await appendHistory(from, "user", text);
+const updatedHistory = await appendHistory(from, "assistant", finalText);
+await handleBusinessFiles(from, guarded, actions);
 
-  const patch = inferLeadPatchFromTextAndReply(lead, text, guarded);
-  await saveLead(from, patch);
+const summaryPatch = await updateConversationSummary({
+  lead,
+  history: updatedHistory,
+  userText: text,
+  assistantText: finalText
+});
 
+const patch = {
+  ...inferLeadPatchFromTextAndReply(lead, text, guarded),
+  ...summaryPatch
+};
+
+await saveLead(from, patch);
+  
   const refreshed = await loadLead(from);
   if (canStartDataCollection(refreshed) && /\b(quero|vamos|seguir|pode|sim|tenho interesse|iniciar|começar|comecar)\b/i.test(text) && !isDataState(refreshed)) {
     await saveLead(from, { status: STATUS.COLETANDO, faseQualificacao: STATUS.COLETANDO, interesseReal: true, campoEsperado: "nome" });
