@@ -217,27 +217,52 @@ function lifecycleFields(lead = {}) {
 
 async function saveLead(user, patch = {}) {
   await connectMongo();
+
   const current = await loadLead(user);
+
   const safe = { ...(patch || {}) };
   delete safe._id;
   delete safe.createdAt;
 
-  const merged = { ...(current || {}), user, ...safe };
+  const merged = {
+    ...(current || {}),
+    user,
+    ...safe
+  };
+
   const lifecycle = lifecycleFields(merged);
+
+  const setData = {
+    user,
+    ...safe,
+    ...lifecycle,
+    updatedAt: now()
+  };
+
+  const insertData = {
+    createdAt: now(),
+    sentFiles: {},
+    recoveryAttempts: 0,
+    crmEnviado: false
+  };
+
+  if (safe.status === undefined) {
+    insertData.status = STATUS.NOVO;
+  }
+
+  if (safe.faseQualificacao === undefined) {
+    insertData.faseQualificacao = STATUS.INICIO;
+  }
+
+  if (safe.etapas === undefined) {
+    insertData.etapas = defaultEtapas();
+  }
 
   await db.collection("leads").updateOne(
     { user },
     {
-      $set: { user, ...safe, ...lifecycle, updatedAt: now() },
-      $setOnInsert: {
-        createdAt: now(),
-        status: safe.status || STATUS.NOVO,
-        faseQualificacao: safe.faseQualificacao || STATUS.INICIO,
-        etapas: safe.etapas || defaultEtapas(),
-        sentFiles: {},
-        recoveryAttempts: 0,
-        crmEnviado: false
-      }
+      $set: setData,
+      $setOnInsert: insertData
     },
     { upsert: true }
   );
