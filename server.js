@@ -726,13 +726,24 @@ function buildSdrPayload({ lead, history, userText }) {
       taxaAlinhada: lead.taxaAlinhada === true,
       interesseReal: lead.interesseReal === true,
       sentFiles: lead.sentFiles || {},
+      resumoConversa: lead.resumoConversa || "",
+      ultimaPerguntaRespondida: lead.ultimaPerguntaRespondida || "",
+      ultimoTemaRespondido: lead.ultimoTemaRespondido || "",
       proximaEtapaObrigatoria: nextFunnelStep(lead)
     },
+    memoriaComercial: {
+      resumoConversa: lead.resumoConversa || "",
+      materiaisJaEnviados: lead.sentFiles || {},
+      ultimaPerguntaRespondida: lead.ultimaPerguntaRespondida || "",
+      ultimoTemaRespondido: lead.ultimoTemaRespondido || ""
+    },
     ultimaMensagemLead: userText,
-    historicoRecente: (history || []).slice(-12).map(m => ({ role: m.role, content: m.content }))
+    historicoRecente: (history || []).slice(-12).map(m => ({
+      role: m.role,
+      content: m.content
+    }))
   };
 }
-
 function extractActions(reply = "") {
   const actions = [];
   const clean = String(reply || "").replace(/\[ACTION:SEND_([A-Z_]+)\]/g, (_, key) => {
