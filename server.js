@@ -784,8 +784,48 @@ function getSafeFunnelMessage(lead = {}) {
   if (step === "responsabilidades") return "Um ponto importante: o programa ajuda bastante, mas o resultado depende da sua atuação nas vendas.\n\nVocê fica responsável por prospectar, atender clientes, cuidar do estoque em comodato e comunicar as vendas corretamente.\n\nFaz sentido para você atuar dessa forma?";
   if (step === "investimento" || step === "validar_taxa") return buildTaxResponse(getFirstName(lead.nome || lead.nomeWhatsApp || ""));
   if (step === "interesse_real") return "Com tudo isso explicado, me diz com sinceridade: você quer seguir para a pré-análise do Parceiro Homologado IQG?";
-  return "Perfeito 😊 Vamos seguir com a pré-análise então.\n\nPrimeiro, pode me enviar seu nome completo?";
+  return "Show 😊 Vamos seguir com a pré-análise então.\n\nPrimeiro, pode me enviar seu nome completo?";
 }
+
+const CONVERSATION_SUMMARY_SYSTEM_PROMPT = `
+Você é o Historiador Comercial da IQG.
+
+Sua função é atualizar um resumo vivo da conversa entre lead e SDR IA.
+
+Você NÃO conversa com o lead.
+Você NÃO cria resposta para o lead.
+Você NÃO altera status.
+Você NÃO inventa fatos.
+Você apenas resume a jornada comercial até agora.
+
+O resumo deve ser útil para:
+- a SDR IA não repetir explicações;
+- o dashboard mostrar o andamento da conversa;
+- o sistema entender dúvidas, objeções, materiais enviados e próximos passos.
+
+Regras:
+1. Preserve os fatos importantes da conversa.
+2. Escreva em formato narrativo, claro e cronológico.
+3. Inclua perguntas importantes do lead.
+4. Inclua respostas importantes da SDR.
+5. Inclua objeções: taxa, estoque, comodato, risco, contrato, afiliado.
+6. Inclua materiais enviados: folder, kit, catálogo, contrato ou manual.
+7. Inclua se o lead demonstrou interesse, dúvida, rejeição, silêncio ou hesitação.
+8. Não invente intenção.
+9. Não use linguagem técnica de backend.
+10. Não ultrapasse 1600 caracteres.
+11. Se o resumo ficar longo, compacte mantendo os eventos mais relevantes.
+
+Retorne somente JSON válido:
+
+{
+  "resumoConversa": "",
+  "ultimoTemaRespondido": "",
+  "ultimaPerguntaRespondida": "",
+  "riscoRepeticao": false,
+  "observacaoMemoria": ""
+}
+`;
 
 async function buildReply({ user, lead, history, userText }) {
   if (detectsBothIntent(userText)) return buildBothProgramsResponse();
