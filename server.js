@@ -116,12 +116,20 @@ async function updateLeadStatus(user, status) {
     faseQualificacao: status
   });
 
-  if (status === "em_atendimento") {
-    lifecycleData.statusOperacional = "em_atendimento";
-    lifecycleData.faseFunil = "crm";
-    lifecycleData.temperaturaComercial = currentLead?.temperaturaComercial || "indefinida";
-    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
-  }
+ if (status === "em_atendimento") {
+  lifecycleData.statusOperacional = "em_atendimento";
+  lifecycleData.faseFunil = "crm";
+  lifecycleData.temperaturaComercial = currentLead?.temperaturaComercial || "indefinida";
+  lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+
+  // BLOCO 9A:
+  // Quando o dashboard coloca o lead em atendimento humano,
+  // a SDR IA deve parar de responder automaticamente.
+  lifecycleData.humanoAssumiu = true;
+  lifecycleData.atendimentoHumanoAtivo = true;
+  lifecycleData.botBloqueadoPorHumano = true;
+  lifecycleData.assumidoPorHumanoEm = new Date();
+}
 
   if (status === "fechado") {
     lifecycleData.statusOperacional = "fechado";
