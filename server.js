@@ -4117,8 +4117,11 @@ programa → benefícios → estoque → responsabilidades → investimento → 
 
 Porém, a etapa crítica é o investimento/taxa.
 
-Depois que a taxa de adesão foi explicada com clareza e o lead não trouxe objeção nova, qualquer sinal de continuidade pode permitir avanço para a pré-análise.
+Depois que TODAS as etapas anteriores foram conduzidas e a taxa de adesão foi explicada com clareza, qualquer sinal de continuidade pode permitir avanço para a pré-análise.
 
+Isso não autoriza pular benefícios, estoque, responsabilidades ou investimento.
+
+O alívio é apenas sobre o aceite formal do lead em cada etapa, não sobre a obrigação da SDR passar por cada etapa.
 Sinais de continuidade podem ser simples, como:
 "sim", "ok", "entendi", "beleza", "tranquilo", "pode seguir", "nenhuma dúvida", "vamos", "bora", "faz sentido".
 
