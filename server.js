@@ -131,6 +131,16 @@ async function updateLeadStatus(user, status) {
   lifecycleData.assumidoPorHumanoEm = new Date();
 }
 
+if (
+  status !== "em_atendimento" &&
+  currentLead?.botBloqueadoPorHumano === true
+) {
+  lifecycleData.humanoAssumiu = false;
+  lifecycleData.atendimentoHumanoAtivo = false;
+  lifecycleData.botBloqueadoPorHumano = false;
+  lifecycleData.liberadoDoAtendimentoHumanoEm = new Date();
+}
+   
   if (status === "fechado") {
     lifecycleData.statusOperacional = "fechado";
     lifecycleData.faseFunil = "encerrado";
