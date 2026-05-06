@@ -13698,7 +13698,17 @@ if (
   !leadFezPerguntaEspecifica &&
   getCurrentFunnelStage(currentLead) > 1
 ) {
-  respostaFinal = getNextFunnelStepMessage(currentLead);
+  sdrReviewFindings.push({
+    tipo: "tentativa_reiniciar_funil",
+    prioridade: "alta",
+    orientacao:
+      "A SDR tentou reiniciar o funil com explicação genérica, mesmo o lead já estando mais avançado. Reescrever sem voltar ao início, mantendo a fase atual e conduzindo para o próximo passo natural."
+  });
+
+  console.log("🧭 Revisão solicitada: SDR tentou reiniciar o funil:", {
+    user: from,
+    ultimaMensagemLead: text
+  });
 }
 
      // 🔥 Ajuste fino de gênero (fallback)
