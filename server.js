@@ -10459,29 +10459,35 @@ const leadBeforeProcessing = await loadLeadProfile(from);
 
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
 
-const leadEncerradoDefinitivo =
+const leadEstavaMarcadoComoEncerrado =
   ["fechado", "perdido"].includes(leadBeforeProcessing?.status) ||
   ["fechado", "perdido"].includes(leadBeforeProcessing?.faseQualificacao) ||
   ["fechado", "perdido"].includes(leadBeforeProcessing?.statusOperacional) ||
   leadBeforeProcessing?.faseFunil === "encerrado";
 
-if (leadEncerradoDefinitivo) {
-  console.log("⛔ Lead encerrado definitivamente:", {
+if (leadEstavaMarcadoComoEncerrado) {
+  console.log("✅ Lead estava marcado como encerrado, mas chamou novamente. Atendimento será reativado:", {
+    from,
     status: leadBeforeProcessing?.status,
     faseQualificacao: leadBeforeProcessing?.faseQualificacao,
     statusOperacional: leadBeforeProcessing?.statusOperacional,
     faseFunil: leadBeforeProcessing?.faseFunil
   });
-  return;
 }
 
-if (state.closed && !leadJaEstaPosCrm) {
-  console.log("⛔ Lead bloqueado por state.closed em memória");
-  return;
-}
+/*
+  BLOCO 1 — NOVA REGRA:
+  state.closed não pode impedir resposta quando o lead chama novamente.
 
-if (state.closed && leadJaEstaPosCrm) {
-  console.log("✅ Lead pós-CRM reativado para resposta consultiva segura:", {
+  Se a SDR parou por cadência, encerramento anterior ou memória local,
+  isso só significa que ela não deve mandar mensagens sozinha.
+
+  Mas se o lead chamou, a conversa deve ser reanalisada.
+*/
+if (state.closed) {
+  console.log("✅ state.closed estava ativo, mas o lead chamou novamente. Reabrindo atendimento:", {
+    from,
+    leadJaEstaPosCrm,
     status: leadBeforeProcessing?.status,
     faseQualificacao: leadBeforeProcessing?.faseQualificacao,
     statusOperacional: leadBeforeProcessing?.statusOperacional,
@@ -10490,29 +10496,26 @@ if (state.closed && leadJaEstaPosCrm) {
 
   state.closed = false;
 }
-     
-// Atendimento humano deve ser marcado pelo botão "Atender" no dashboard.
-// Evita tentativa insegura de identificar lead por message.to no webhook.
 
-     
-     const fromDigits = onlyDigits(from);
+/*
+  BLOCO 1 — NOVA REGRA:
+  CONSULTANT_PHONE não deve ser bloqueado.
+
+  O número do consultor/dev pode conversar com o bot normalmente
+  para testes reais do fluxo.
+*/
+const fromDigits = onlyDigits(from);
 const consultantDigits = onlyDigits(process.env.CONSULTANT_PHONE || "");
 
 if (consultantDigits && fromDigits === consultantDigits) {
-  console.log("⛔ Mensagem ignorada: número é CONSULTANT_PHONE", {
+  console.log("🧪 Mensagem recebida do CONSULTANT_PHONE. Modo teste ativo, processando normalmente:", {
     from,
     consultantPhone: process.env.CONSULTANT_PHONE
   });
-
-  return;
 }
-     
+
 clearTimers(from);
-
-if (!leadEncerradoDefinitivo) {
-  state.closed = false;
-}
-
+state.closed = false;
 let text = "";
 let isAudioMessage = false;
 
