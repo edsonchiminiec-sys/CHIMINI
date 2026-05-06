@@ -14095,6 +14095,8 @@ REGRAS OBRIGATÓRIAS PARA A SDR:
 - Responder de forma natural, curta e consultiva.
 - Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
 
+     const saudacaoHorario = getGreetingByBrazilTime();
+     
 const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
