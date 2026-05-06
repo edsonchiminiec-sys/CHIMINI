@@ -11434,21 +11434,55 @@ const leadFezPerguntaDuranteColeta =
   !explicitCorrection?.campoParaCorrigir &&
   isLeadQuestionDuringDataFlow(text, currentLead || {});
 
-if (leadFezPerguntaDuranteColeta) {
-  const msg = await answerDataFlowQuestion({
-    currentLead: currentLead || {},
-    history,
-    userText: text
+if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
+  dataFlowQuestionAlreadyGuided = true;
+
+  const campoRetomadaColeta =
+    currentLead?.campoEsperado ||
+    currentLead?.campoPendente ||
+    "";
+
+  backendStrategicGuidance.push({
+    tipo: "pergunta_real_durante_coleta",
+    prioridade: "alta",
+    motivo: "Lead fez pergunta real durante coleta/confirmação.",
+    orientacaoParaPreSdr:
+      [
+        "O lead fez uma pergunta real durante a coleta/confirmação de dados.",
+        "O Pré-SDR deve orientar a SDR a responder essa pergunta primeiro.",
+        "Depois, a SDR deve retomar a coleta sem reiniciar o cadastro.",
+        campoRetomadaColeta
+          ? `Campo pendente para retomar: ${campoRetomadaColeta}.`
+          : "Verificar o campo pendente antes de retomar.",
+        "Não salvar a pergunta como nome, cidade, CPF, telefone ou estado."
+      ].join("\n")
   });
 
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+  await saveLeadProfile(from, {
+    fluxoPausadoPorPergunta: true,
+    ultimaPerguntaDuranteColeta: text,
+    campoRetomadaColeta,
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "pergunta_real_durante_coleta",
+      motivo: "lead_fez_pergunta_real_durante_coleta",
+      acao: "orientar_pre_sdr_sem_responder_direto",
+      mensagemLead: text,
+      detalhes: {
+        campoEsperado: currentLead?.campoEsperado || "",
+        campoPendente: currentLead?.campoPendente || "",
+        deveRetomarColetaDepois: true
+      }
+    })
+  });
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+  currentLead = await loadLeadProfile(from);
 
-  return;
+  console.log("🧭 Pergunta real durante coleta enviada ao Pré-SDR:", {
+    user: from,
+    ultimaMensagemLead: text,
+    campoRetomadaColeta
+  });
 }
      
      if (
