@@ -13745,7 +13745,7 @@ if (
   }
 }
      
-     // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
+// 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
 
@@ -13764,24 +13764,41 @@ function isBadResponse(text = "") {
 
   if (badPatterns.some(p => t.includes(p))) return true;
 
-  // muito curta (sem valor)
+  // muito curta, sem valor
   if (t.length < 15) return true;
 
-  // sem pergunta (sem condução)
+  // sem pergunta e muito curta, sem condução
   if (!t.includes("?") && t.length < 80) return true;
 
   return false;
 }
 
-// 🔥 CORREÇÃO AUTOMÁTICA
+// 🔥 BLOCO FINAL 13 — RESPOSTA RUIM VIRA REVISÃO DA SDR
+// O backend não substitui mais a resposta por texto fixo.
+// Ele apenas aponta o problema para a própria SDR revisar antes do envio.
 if (isBadResponse(respostaFinal)) {
-  if (currentLead?.faseQualificacao === "coletando_dados") {
-    respostaFinal = "Perfeito 😊 Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
-  } else if (podeIniciarColeta) {
-    respostaFinal = "Perfeito 😊 Podemos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
-  } else {
-    respostaFinal = "Perfeito 😊 Me conta: o que você quer entender melhor sobre o programa?";
-  }
+  sdrReviewFindings.push({
+    tipo: "resposta_generica_ou_fraca",
+    prioridade: "alta",
+    orientacao:
+      [
+        "A resposta da SDR ficou genérica, curta demais ou sem condução clara.",
+        "A SDR deve reescrever de forma natural, útil e conectada à última mensagem real do lead.",
+        "Não usar frases genéricas como 'como posso ajudar', 'fico à disposição' ou 'qualquer dúvida me avise'.",
+        currentLead?.faseQualificacao === "coletando_dados"
+          ? "Se estiver em coleta liberada, retomar o campo correto da coleta, sem pedir vários dados de uma vez."
+          : "",
+        podeIniciarColeta
+          ? "Se a coleta estiver realmente liberada, conduzir para o primeiro dado pendente, começando pelo nome completo."
+          : "Se a coleta ainda não estiver liberada, não pedir nome, CPF, telefone, cidade ou estado; conduzir para a etapa pendente do funil."
+      ].filter(Boolean).join("\n")
+  });
+
+  console.log("🧭 Revisão solicitada: resposta genérica ou fraca da SDR:", {
+    user: from,
+    ultimaMensagemLead: text,
+    respostaFinal
+  });
 }
      
 // 🚫 BLOQUEIO SEGURO: só falar "material já enviado" se o LEAD pediu material de novo
