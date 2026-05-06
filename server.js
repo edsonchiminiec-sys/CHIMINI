@@ -14462,7 +14462,7 @@ app.get("/conversation/:user", async (req, res) => {
     const sort = req.query.sort || "updatedAt";
     const dir = req.query.dir === "asc" ? 1 : -1;
 
-    const queryConditions = [];
+   const queryConditions = [];
 
 if (statusFilter) {
   queryConditions.push({
@@ -14513,6 +14513,11 @@ if (search) {
     ]
   });
 }
+
+const query =
+  queryConditions.length > 0
+    ? { $and: queryConditions }
+    : {};
 
 const query =
   queryConditions.length > 0
