@@ -14245,7 +14245,7 @@ const syncedFinalReply = syncActionsFromFinalReply({
   actions
 });
 
-respostaFinal = syncedFinalReply.respostaFinal;
+respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 
 console.log("📎 Actions sincronizados com a resposta final:", {
   user: from,
