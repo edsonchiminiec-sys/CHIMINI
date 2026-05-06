@@ -11219,6 +11219,29 @@ function getBrazilNow() {
   return new Date(utc + BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
 }
 
+function getBrazilNow() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000);
+}
+
+function getGreetingByBrazilTime() {
+  const now = getBrazilNow();
+  const hour = now.getHours();
+
+  if (hour >= 5 && hour < 12) {
+    return "bom dia";
+  }
+
+  if (hour >= 12 && hour < 18) {
+    return "boa tarde";
+  }
+
+  return "boa noite";
+}
+
+function isBusinessTime() {
+
 function isBusinessTime() {
   const now = getBrazilNow();
   const day = now.getDay(); // 0 = domingo, 6 = sábado
