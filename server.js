@@ -3849,6 +3849,10 @@ A IQG possui DOIS projetos diferentes:
 - O saque pode ser feito a partir de R$100.
 - Existem materiais prontos como imagens, banners e conteúdos.
 - É indicado tanto para iniciantes quanto para pessoas experientes em marketing digital.
+- O lead pode encontrar diferentes linhas/produtos IQG no ambiente de afiliados ou e-commerce, conforme disponibilidade.
+- A SDR não deve prometer que todas as linhas da IQG estarão disponíveis ao afiliado.
+- A SDR não deve prometer comissão específica por linha sem confirmação.
+- Se o lead perguntar sobre produtos específicos no Afiliados, orientar que ele consulte os produtos disponíveis no site/ambiente de cadastro.
 
 REGRA DE INTENÇÃO:
 
@@ -13717,6 +13721,31 @@ const lastAssistantText =
 
 try {
 
+if (semanticIntent?.mentionsOtherProductLine === true) {
+  backendStrategicGuidance.push({
+    tipo: "pergunta_sobre_outra_linha_iqg",
+    prioridade: "alta",
+    motivo: "Lead mencionou linha IQG fora do escopo inicial de piscinas.",
+    orientacaoParaPreSdr:
+      [
+        "O lead mencionou outra linha de produtos da IQG.",
+        `Temas citados: ${Array.isArray(semanticIntent.otherProductLineTopics) ? semanticIntent.otherProductLineTopics.join(", ") : "não especificado"}.`,
+        "Orientar a SDR a responder que a IQG possui outras linhas além de piscinas.",
+        "Explicar que o Programa Parceiro Homologado, neste início, está sendo trabalhado principalmente com a linha de piscinas.",
+        "Dizer que outras linhas poderão ser disponibilizadas aos parceiros com o tempo, conforme estratégia, disponibilidade e evolução comercial.",
+        "Não negar a existência das outras linhas.",
+        "Não prometer estoque, comodato, preço, catálogo ou liberação imediata dessas outras linhas.",
+        "Não transformar essa pergunta em Afiliado automaticamente.",
+        "Depois de responder, conduzir de volta ao próximo passo adequado do funil."
+      ].join("\n")
+  });
+
+  console.log("🧪 Lead perguntou sobre outra linha IQG:", {
+    user: from,
+    otherProductLineTopics: semanticIntent.otherProductLineTopics || []
+  });
+}
+   
    const semanticContinuity = await runConversationContinuityAnalyzer({
   lead: currentLead || {},
   history,
