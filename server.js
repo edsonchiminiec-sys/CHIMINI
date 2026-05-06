@@ -14465,8 +14465,16 @@ app.get("/conversation/:user", async (req, res) => {
     const query = {};
 
         if (statusFilter) {
-      query.status = statusFilter;
+  query.$or = [
+    { statusDashboard: statusFilter },
+    { statusVisualDashboard: statusFilter },
+    {
+      status: statusFilter,
+      statusDashboard: { $exists: false },
+      statusVisualDashboard: { $exists: false }
     }
+  ];
+}
 
     if (statusOperacionalFilter) {
       query.statusOperacional = statusOperacionalFilter;
@@ -14495,12 +14503,12 @@ app.get("/conversation/:user", async (req, res) => {
     }
 
     const sortMap = {
-      status: "status",
-      nome: "nome",
-      telefone: "telefoneWhatsApp",
-      cidade: "cidadeEstado",
-      updatedAt: "updatedAt"
-    };
+  status: "statusDashboard",
+  nome: "nome",
+  telefone: "telefoneWhatsApp",
+  cidade: "cidadeEstado",
+  updatedAt: "updatedAt"
+};
 
     const sortField = sortMap[sort] || "updatedAt";
 
@@ -14513,18 +14521,25 @@ app.get("/conversation/:user", async (req, res) => {
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
-    const countByStatus = status => allLeads.filter(l => l.status === status).length;
+const getVisualStatus = lead =>
+  lead.statusDashboard ||
+  lead.statusVisualDashboard ||
+  lead.status ||
+  "novo";
 
-    const total = allLeads.length;
-     const inicio = countByStatus("inicio");
-    const novo = countByStatus("novo");
-    const morno = countByStatus("morno");
-    const qualificando = countByStatus("qualificando");
-    const preAnalise = countByStatus("pre_analise");
-    const quente = countByStatus("quente");
-    const atendimento = countByStatus("em_atendimento");
-    const fechado = countByStatus("fechado");
-    const perdido = countByStatus("perdido");
+const countByStatus = status =>
+  allLeads.filter(lead => getVisualStatus(lead) === status).length;
+
+const total = allLeads.length;
+const inicio = countByStatus("inicio");
+const novo = countByStatus("novo");
+const morno = countByStatus("morno");
+const qualificando = countByStatus("qualificando");
+const preAnalise = countByStatus("pre_analise");
+const quente = countByStatus("quente");
+const atendimento = countByStatus("em_atendimento");
+const fechado = countByStatus("fechado");
+const perdido = countByStatus("perdido");
 
     const senhaParam = req.query.senha ? `&senha=${encodeURIComponent(req.query.senha)}` : "";
     const senhaQuery = req.query.senha ? `?senha=${encodeURIComponent(req.query.senha)}` : "";
@@ -14549,13 +14564,14 @@ app.get("/conversation/:user", async (req, res) => {
       const waLink = phone ? `https://wa.me/${phone}` : "#";
       const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-                const status = lead.status || "novo";
-      const faseAntiga = lead.faseQualificacao || "-";
-      const statusOperacional = lead.statusOperacional || "-";
-      const faseFunil = lead.faseFunil || "-";
-      const temperaturaComercial = lead.temperaturaComercial || "-";
-      const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
-
+                const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
+const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
+const statusIa = lead.status || "novo";
+const faseAntiga = lead.faseQualificacao || "-";
+const statusOperacional = lead.statusOperacional || "-";
+const faseFunil = lead.faseFunil || "-";
+const temperaturaComercial = lead.temperaturaComercial || "-";
+const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
             const supervisor = lead.supervisor || {};
       const supervisorRisco = supervisor.riscoPerda || "nao_analisado";
       const supervisorTrava = supervisor.pontoTrava || "-";
@@ -14588,7 +14604,12 @@ app.get("/conversation/:user", async (req, res) => {
       const baseStatusLink = `/lead/${user}/status`;
       return `
                        <tr>
-  <td><span class="badge ${status}">${escapeHtml(status)}</span></td>
+  <td>
+    <span class="badge ${status}">${escapeHtml(status)}</span>
+    <div style="font-size:11px;color:#6b7280;margin-top:4px;">
+      IA: ${escapeHtml(statusIa)}
+    </div>
+  </td>
   <td>${escapeHtml(faseAntiga)}</td>
   <td>${escapeHtml(statusOperacional)}</td>
   <td>${escapeHtml(faseFunil)}</td>
