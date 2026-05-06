@@ -11676,112 +11676,119 @@ if (
   });
 }
      
-// 🧱 CONTADOR DE OBJEÇÕES DA TAXA
-// A SDR deve tentar sustentar o Parceiro Homologado por até 3 objeções reais.
-// Só depois de objeção persistente contra a taxa, apresenta Afiliados como alternativa.
+// 🧱 MOTOR DE OBJEÇÃO DA TAXA — BLOCO 3
+// O backend NÃO responde mais diretamente objeções de taxa.
+// Ele registra a objeção, conta tentativas e orienta o Pré-SDR.
+// Quem responde ao lead é a SDR IA, seguindo a orientação do Pré-SDR.
 const leadTemObjecaoTaxaControlada =
-  currentLead?.etapas?.investimento === true &&
-  currentLead?.taxaAlinhada !== true &&
-  isTaxaObjectionAgainstInvestment(text) &&
+  (
+    isTaxaObjectionAgainstInvestment(text) ||
+    semanticIntent?.priceObjection === true ||
+    (
+      semanticIntent?.blockingObjection === true &&
+      leadMentionedTaxObjection(text)
+    )
+  ) &&
   !isAffiliateIntent(text) &&
+  !isClearAffiliateFallbackIntent(text) &&
   !leadHasFinishedPreCadastro(currentLead || {}) &&
   !isCriticalCommercialBlockedState({
     lead: currentLead || {},
     awaitingConfirmation
   });
-     
+
 if (leadTemObjecaoTaxaControlada) {
   const taxaObjectionCountAtual = Number(currentLead?.taxaObjectionCount || 0);
   const novaContagemObjecaoTaxa = taxaObjectionCountAtual + 1;
 
-    await saveLeadProfile(from, {
+  const argumentosPorTentativa = {
+    1: [
+      "Acolher a objeção sem discordar do lead.",
+      "Explicar que a taxa de R$ 1.990,00 não é compra de mercadoria, caução ou garantia.",
+      "Reforçar que o pagamento só ocorre após análise interna e contrato.",
+      "Comparar a taxa com a estrutura recebida: suporte, treinamento e ativação no programa."
+    ],
+    2: [
+      "Reforçar que o parceiro não compra estoque para começar.",
+      "Explicar que o lote inicial é cedido em comodato e representa mais de R$ 5.000,00 em preço de venda ao consumidor.",
+      "Conectar a taxa ao acesso a produto físico, pronta-entrega, demonstração e suporte da indústria.",
+      "Perguntar qual parte ainda pesa mais para o lead: valor, risco, estoque ou retorno."
+    ],
+    3: [
+      "Trabalhar retorno potencial sem prometer ganho.",
+      "Explicar que, vendendo no preço sugerido, a comissão/margem do Homologado pode chegar a 40%.",
+      "Explicar que, se vender com ágio acima do preço sugerido, a diferença fica com o parceiro.",
+      "Reforçar parcelamento em até 10x de R$ 199,00 no cartão, se disponível.",
+      "Validar se o lead quer avaliar o modelo com calma ou se existe uma dúvida específica travando."
+    ],
+    4: [
+      "Não descartar o lead.",
+      "Não oferecer Afiliado automaticamente.",
+      "Investigar a raiz da objeção com pergunta consultiva.",
+      "Se o lead pedir claramente alternativa sem estoque, por link, online ou sem taxa do Homologado, aí sim orientar comparação com Afiliados.",
+      "Se o lead não pediu alternativa, continuar tratando a objeção dentro do Homologado."
+    ]
+  };
+
+  const tentativaUsada =
+    novaContagemObjecaoTaxa <= 3
+      ? novaContagemObjecaoTaxa
+      : 4;
+
+  const argumentosRecomendados =
+    argumentosPorTentativa[tentativaUsada] || argumentosPorTentativa[4];
+
+  backendStrategicGuidance.push({
+    tipo: "objecao_taxa_conversao",
+    prioridade: "critica",
+    tentativa: novaContagemObjecaoTaxa,
+    motivo: "Lead demonstrou resistência, dúvida ou trava relacionada à taxa/investimento.",
+    orientacaoParaPreSdr:
+      [
+        `Objeção de taxa detectada. Esta é a tentativa ${novaContagemObjecaoTaxa} de tratamento da objeção.`,
+        "O Pré-SDR deve orientar a SDR a responder diretamente a objeção do lead, sem fugir do assunto e sem oferecer Afiliados automaticamente.",
+        "A SDR deve manter foco no Parceiro Homologado, salvo se o lead pedir claramente link, online, venda sem estoque físico, redes sociais, e-commerce ou alternativa sem taxa do Homologado.",
+        "A SDR deve usar tom acolhedor, consultivo e firme, evitando pressão.",
+        "A SDR deve usar pelo menos 3 âncoras de valor, escolhidas conforme o contexto.",
+        "Argumentos recomendados para esta tentativa:",
+        ...argumentosRecomendados.map(item => `- ${item}`)
+      ].join("\n")
+  });
+
+  await saveLeadProfile(from, {
     taxaObjectionCount: novaContagemObjecaoTaxa,
     ultimaObjecaoTaxa: text,
+    sinalObjecaoTaxa: true,
+    taxaModoConversao: true,
+    taxaAlinhada: false,
+    ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "objecao_taxa",
       motivo: "lead_demonstrou_resistencia_ao_investimento",
-      acao: novaContagemObjecaoTaxa <= 3
-        ? "tratar_objecao_mantendo_homologado"
-        : "oferecer_afiliado_por_objecao_persistente",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
         taxaObjectionCountAnterior: taxaObjectionCountAtual,
         taxaObjectionCountNovo: novaContagemObjecaoTaxa,
-        limiteAntesAfiliado: 3
+        tentativaUsada,
+        naoResponderDiretoPeloBackend: true,
+        naoOferecerAfiliadoAutomaticamente: true,
+        manterConversaoHomologado: true,
+        argumentosRecomendados
       }
     })
   });
+
   currentLead = await loadLeadProfile(from);
 
-  if (novaContagemObjecaoTaxa <= 3) {
-    const msg = buildTaxObjectionAttemptResponse(novaContagemObjecaoTaxa);
-
-    console.log("🧱 Objeção de taxa tratada antes de oferecer Afiliados:", {
-      user: from,
-      taxaObjectionCount: novaContagemObjecaoTaxa,
-      ultimaObjecaoTaxa: text,
-      decisao: "manter_homologado"
-    });
-
-        await finalizeHandledResponse({
-      from,
-      history,
-      userText: text,
-      botText: msg,
-      isAudio: !!message.audio?.id,
-      messageId,
-           messageIds: bufferedMessageIds,
-      shouldScheduleFollowups: true
-    });
-
-    return;
-  }
-
-    await saveLeadProfile(from, {
-    status: "afiliado",
-    faseQualificacao: "afiliado",
-    statusOperacional: "ativo",
-    faseFunil: "afiliado",
-    temperaturaComercial: "morno",
-    rotaComercial: "afiliado",
-    interesseAfiliado: true,
-    afiliadoOferecidoComoAlternativa: true,
-    origemConversao: "recuperado_objecao_taxa_persistente",
-    ultimaMensagem: text,
-    ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "oferta_afiliado",
-      motivo: "objecao_persistente_taxa_homologado",
-      acao: "apresentar_afiliado_como_alternativa",
-      mensagemLead: text,
-      detalhes: {
-        taxaObjectionCount: novaContagemObjecaoTaxa,
-        origemConversao: "recuperado_objecao_taxa_persistente"
-      }
-    })
-  });
-  const affiliateMsg = buildAffiliateAfterTaxObjectionsResponse();
-
-  console.log("🔁 Afiliados oferecido após objeção persistente da taxa:", {
+  console.log("🧱 Objeção de taxa enviada ao Pré-SDR como orientação crítica, sem resposta direta do backend:", {
     user: from,
     taxaObjectionCount: novaContagemObjecaoTaxa,
     ultimaObjecaoTaxa: text,
-    decisao: "oferecer_afiliado"
+    tentativaUsada,
+    decisao: "orientar_pre_sdr_sem_responder_direto"
   });
-
-    await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: affiliateMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-       messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
-  });
-
-  return;
-}
-     
+}    
      
 // ✅ CONFIRMAÇÃO ESPECÍFICA DA TAXA / INVESTIMENTO
 // Só marca taxaAlinhada quando:
