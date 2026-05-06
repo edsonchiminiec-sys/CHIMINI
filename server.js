@@ -14518,11 +14518,6 @@ const query =
   queryConditions.length > 0
     ? { $and: queryConditions }
     : {};
-
-const query =
-  queryConditions.length > 0
-    ? { $and: queryConditions }
-    : {};
     const sortMap = {
   status: "statusDashboard",
   nome: "nome",
