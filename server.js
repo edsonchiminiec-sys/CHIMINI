@@ -12379,9 +12379,12 @@ try {
   lead: currentLead || {},
   history,
   lastUserText: text,
-    lastSdrText: lastAssistantText,
+  lastSdrText: lastAssistantText,
   supervisorAnalysis: currentLead?.supervisor || {},
-  classification: currentLead?.classificacao || {}
+  classification: currentLead?.classificacao || {},
+  semanticIntent,
+  commercialRouteDecision,
+  backendStrategicGuidance
 });
 
 const originalPreSdrConsultantAdvice = preSdrConsultantAdvice;
@@ -12436,12 +12439,28 @@ await saveConsultantAdvice(from, preSdrConsultantAdvice);
     ultimaMensagemLead: text
   });
 
-  preSdrConsultantAdvice = buildPreSdrConsultantFallbackAdvice({
+    preSdrConsultantAdvice = buildPreSdrConsultantFallbackAdvice({
     lead: currentLead || {},
     history,
     lastUserText: text,
     lastSdrText: lastAssistantText
   });
+
+  if (Array.isArray(backendStrategicGuidance) && backendStrategicGuidance.length > 0) {
+    preSdrConsultantAdvice = {
+      ...preSdrConsultantAdvice,
+      prioridadeComercial: "alta",
+      proximaMelhorAcao: [
+        preSdrConsultantAdvice.proximaMelhorAcao || "",
+        "Considerar obrigatoriamente os sinais estratégicos detectados pelo backend antes de orientar a SDR.",
+        ...backendStrategicGuidance.map(item => item.orientacaoParaPreSdr || "").filter(Boolean)
+      ].filter(Boolean).join("\n"),
+      resumoConsultivo: [
+        preSdrConsultantAdvice.resumoConsultivo || "",
+        "Fallback aplicado com sinais estratégicos do backend."
+      ].filter(Boolean).join("\n")
+    };
+  }
 
   preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
     advice: preSdrConsultantAdvice,
