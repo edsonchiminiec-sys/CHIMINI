@@ -14462,46 +14462,62 @@ app.get("/conversation/:user", async (req, res) => {
     const sort = req.query.sort || "updatedAt";
     const dir = req.query.dir === "asc" ? 1 : -1;
 
-    const query = {};
+    const queryConditions = [];
 
-        if (statusFilter) {
-  query.$or = [
-    { statusDashboard: statusFilter },
-    { statusVisualDashboard: statusFilter },
-    {
-      status: statusFilter,
-      statusDashboard: { $exists: false },
-      statusVisualDashboard: { $exists: false }
-    }
-  ];
+if (statusFilter) {
+  queryConditions.push({
+    $or: [
+      { statusDashboard: statusFilter },
+      { statusVisualDashboard: statusFilter },
+      {
+        status: statusFilter,
+        statusDashboard: { $exists: false },
+        statusVisualDashboard: { $exists: false }
+      }
+    ]
+  });
 }
 
-    if (statusOperacionalFilter) {
-      query.statusOperacional = statusOperacionalFilter;
-    }
+if (statusOperacionalFilter) {
+  queryConditions.push({
+    statusOperacional: statusOperacionalFilter
+  });
+}
 
-    if (faseFunilFilter) {
-      query.faseFunil = faseFunilFilter;
-    }
+if (faseFunilFilter) {
+  queryConditions.push({
+    faseFunil: faseFunilFilter
+  });
+}
 
-    if (temperaturaComercialFilter) {
-      query.temperaturaComercial = temperaturaComercialFilter;
-    }
+if (temperaturaComercialFilter) {
+  queryConditions.push({
+    temperaturaComercial: temperaturaComercialFilter
+  });
+}
 
-    if (rotaComercialFilter) {
-      query.rotaComercial = rotaComercialFilter;
-    }
-     
-    if (search) {
-      query.$or = [
-        { user: { $regex: search, $options: "i" } },
-        { telefoneWhatsApp: { $regex: search, $options: "i" } },
-        { nome: { $regex: search, $options: "i" } },
-        { cidadeEstado: { $regex: search, $options: "i" } },
-        { ultimaMensagem: { $regex: search, $options: "i" } }
-      ];
-    }
+if (rotaComercialFilter) {
+  queryConditions.push({
+    rotaComercial: rotaComercialFilter
+  });
+}
 
+if (search) {
+  queryConditions.push({
+    $or: [
+      { user: { $regex: search, $options: "i" } },
+      { telefoneWhatsApp: { $regex: search, $options: "i" } },
+      { nome: { $regex: search, $options: "i" } },
+      { cidadeEstado: { $regex: search, $options: "i" } },
+      { ultimaMensagem: { $regex: search, $options: "i" } }
+    ]
+  });
+}
+
+const query =
+  queryConditions.length > 0
+    ? { $and: queryConditions }
+    : {};
     const sortMap = {
   status: "statusDashboard",
   nome: "nome",
