@@ -3210,6 +3210,139 @@ Responda somente JSON válido neste formato:
   }
 }
 
+async function regenerateSdrReplyWithGuardGuidance({
+  currentLead = {},
+  history = [],
+  userText = "",
+  primeiraRespostaSdr = "",
+  preSdrConsultantAdvice = {},
+  preSdrConsultantContext = "",
+  guardFindings = []
+} = {}) {
+  if (!Array.isArray(guardFindings) || guardFindings.length === 0) {
+    return primeiraRespostaSdr;
+  }
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-12).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  const reviewContext = {
+    ultimaMensagemLead: userText || "",
+    primeiraRespostaSdr: primeiraRespostaSdr || "",
+    problemasDetectadosAntesDoEnvio: guardFindings,
+    lead: {
+      status: currentLead?.status || "",
+      faseQualificacao: currentLead?.faseQualificacao || "",
+      statusOperacional: currentLead?.statusOperacional || "",
+      faseFunil: currentLead?.faseFunil || "",
+      temperaturaComercial: currentLead?.temperaturaComercial || "",
+      rotaComercial: currentLead?.rotaComercial || "",
+      origemConversao: currentLead?.origemConversao || "",
+      interesseReal: currentLead?.interesseReal === true,
+      interesseAfiliado: currentLead?.interesseAfiliado === true,
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      aguardandoConfirmacaoCampo: currentLead?.aguardandoConfirmacaoCampo === true,
+      aguardandoConfirmacao: currentLead?.aguardandoConfirmacao === true,
+      campoEsperado: currentLead?.campoEsperado || "",
+      campoPendente: currentLead?.campoPendente || "",
+      etapas: currentLead?.etapas || {},
+      etapasAguardandoEntendimento: currentLead?.etapasAguardandoEntendimento || {}
+    },
+    consultorPreSdr: {
+      estrategiaRecomendada: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+      proximaMelhorAcao: preSdrConsultantAdvice?.proximaMelhorAcao || "",
+      abordagemSugerida: preSdrConsultantAdvice?.abordagemSugerida || "",
+      argumentoPrincipal: preSdrConsultantAdvice?.argumentoPrincipal || "",
+      cuidadoPrincipal: preSdrConsultantAdvice?.cuidadoPrincipal || "",
+      ofertaMaisAdequada: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+      prioridadeComercial: preSdrConsultantAdvice?.prioridadeComercial || "nao_analisado",
+      resumoConsultivo: preSdrConsultantAdvice?.resumoConsultivo || ""
+    },
+    historicoRecente: recentHistory
+  };
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content: `${SYSTEM_PROMPT}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REVISÃO OBRIGATÓRIA ANTES DO ENVIO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Você é a mesma SDR IA da IQG.
+
+A sua primeira resposta ainda NÃO foi enviada ao lead.
+
+O backend encontrou problemas comerciais, de funil, repetição, rota ou segurança na primeira resposta.
+
+Sua tarefa agora é REESCREVER a resposta final ao lead, corrigindo os problemas apontados.
+
+Regras:
+- Não mencione backend, trava, revisão, auditoria, supervisor, classificador, consultor interno ou agentes.
+- Não diga que está corrigindo resposta.
+- Responda naturalmente ao lead.
+- Responda primeiro a última mensagem real do lead.
+- Siga a orientação do Consultor Pré-SDR.
+- Não use texto hardcoded do backend.
+- Não peça dados antes da hora.
+- Não ofereça Afiliado sem pedido claro.
+- Não misture Homologado e Afiliado.
+- Não repita a mesma explicação se o problema for repetição.
+- Se precisar enviar arquivo, use apenas os comandos permitidos em linha separada.
+- Responda em estilo WhatsApp, curto, consultivo e natural.`
+          },
+          {
+            role: "user",
+            content: `${preSdrConsultantContext}
+
+CONTEXTO DA REVISÃO:
+${JSON.stringify(reviewContext, null, 2)}
+
+Reescreva agora a resposta final que deve ser enviada ao lead.`
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("⚠️ Falha ao regenerar resposta da SDR:", data);
+      return primeiraRespostaSdr;
+    }
+
+    const novaResposta = String(data.choices?.[0]?.message?.content || "").trim();
+
+    if (!novaResposta) {
+      return primeiraRespostaSdr;
+    }
+
+    console.log("🔁 SDR revisou a própria resposta antes do envio:", {
+      problemas: guardFindings.map(item => item.tipo || item.reason || "indefinido")
+    });
+
+    return novaResposta;
+  } catch (error) {
+    console.error("⚠️ Erro na revisão da SDR:", error.message);
+    return primeiraRespostaSdr;
+  }
+}
+
 const SYSTEM_PROMPT = `
 Você é a Especialista Comercial Oficial da IQG — Indústria Química Gaúcha.
 
@@ -13529,36 +13662,34 @@ if (startedDataCollection && !podeIniciarColeta) {
 }
      
 
-// 🔥 BLOQUEIO: impedir pedido de múltiplos dados
+// 🧠 BLOCO 8A — REVISÃO DA SDR ANTES DO ENVIO
+// A partir daqui, o backend não substitui mais a resposta por textos prontos.
+// Ele apenas identifica problemas e pede para a própria SDR revisar a resposta
+// antes que qualquer mensagem seja enviada ao lead.
+
+const sdrReviewFindings = [];
+
 const multiDataRequestPattern =
   /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
 
 if (multiDataRequestPattern.test(respostaFinal)) {
-  respostaFinal = "Show! Vamos fazer passo a passo.\n\nPrimeiro, pode me enviar seu nome completo?";
-}
-
-// 🚫 ANTI-LOOP EXATO — impede repetir a última resposta do bot
-if (isRepeatedBotReply(respostaFinal, history)) {
-  const safeResponse = getSafeCurrentPhaseResponse(currentLead);
-
-  console.log("🚫 Resposta repetida bloqueada:", {
-    user: from
+  sdrReviewFindings.push({
+    tipo: "pedido_multiplos_dados",
+    prioridade: "critica",
+    orientacao:
+      "A resposta tentou pedir vários dados de uma vez. A SDR deve pedir apenas um dado por vez, começando pelo nome completo se a coleta estiver liberada."
   });
-
-  respostaFinal = safeResponse.message;
-
-  if (
-    safeResponse.fileKey &&
-    Array.isArray(actions) &&
-    !actions.includes(safeResponse.fileKey)
-  ) {
-    actions.push(safeResponse.fileKey);
-  }
 }
 
-// 🚫 ANTI-REPETIÇÃO POR TEMA
-// Se o lead respondeu algo curto e a SDR tentou repetir o mesmo assunto,
-// o backend força uma continuação natural.
+if (isRepeatedBotReply(respostaFinal, history)) {
+  sdrReviewFindings.push({
+    tipo: "loop_resposta_repetida",
+    prioridade: "alta",
+    orientacao:
+      "A resposta ficou igual ou muito parecida com a última resposta da SDR. Reescrever de forma natural, sem repetir o mesmo conteúdo."
+  });
+}
+
 const antiRepetition = applyAntiRepetitionGuard({
   leadText: text,
   respostaFinal,
@@ -13567,25 +13698,15 @@ const antiRepetition = applyAntiRepetitionGuard({
 });
 
 if (antiRepetition.changed) {
-  console.log("🚫 Resposta ajustada por repetição de tema:", {
-    user: from,
-    reason: antiRepetition.reason
+  sdrReviewFindings.push({
+    tipo: "repeticao_de_tema",
+    prioridade: "alta",
+    reason: antiRepetition.reason,
+    orientacao:
+      "A SDR tentou repetir um tema já explicado. Reescrever sem repetir o textão e conduzir para o próximo passo natural."
   });
-
-  respostaFinal = antiRepetition.respostaFinal;
-
-  if (
-    antiRepetition.fileKey &&
-    Array.isArray(actions) &&
-    !actions.includes(antiRepetition.fileKey)
-  ) {
-    actions.push(antiRepetition.fileKey);
-  }
 }
 
-// 🚫 ANTI-REPETIÇÃO ESPECÍFICA DA TAXA
-// Se a taxa já foi explicada e o lead voltou com objeção,
-// o backend impede a SDR de repetir o textão inteiro.
 const taxObjectionAntiRepetition = applyTaxObjectionAntiRepetitionGuard({
   leadText: text,
   respostaFinal,
@@ -13594,17 +13715,15 @@ const taxObjectionAntiRepetition = applyTaxObjectionAntiRepetitionGuard({
 });
 
 if (taxObjectionAntiRepetition.changed) {
-  console.log("🚫 Resposta ajustada por repetição de objeção da taxa:", {
-    user: from,
-    reason: taxObjectionAntiRepetition.reason
+  sdrReviewFindings.push({
+    tipo: "repeticao_objecao_taxa",
+    prioridade: "alta",
+    reason: taxObjectionAntiRepetition.reason,
+    orientacao:
+      "A SDR tentou repetir explicação longa da taxa. Reescrever tratando a objeção com novo ângulo, sem repetir o mesmo texto."
   });
-
-  respostaFinal = taxObjectionAntiRepetition.respostaFinal;
 }
 
-     // 🧠 TRAVA DE OBEDIÊNCIA AO CONSULTOR PRÉ-SDR
-// Se a SDR gerar uma resposta que contradiz a orientação recebida,
-// o backend corrige antes de aplicar as travas finais de funil e rota.
 const consultantDirectionGuard = enforceConsultantDirectionOnFinalReply({
   respostaFinal,
   consultantAdvice: preSdrConsultantAdvice || {},
@@ -13613,25 +13732,15 @@ const consultantDirectionGuard = enforceConsultantDirectionOnFinalReply({
 });
 
 if (consultantDirectionGuard.changed) {
-  console.log("🧠 Resposta ajustada por obediência ao Consultor Pré-SDR:", {
-    user: from,
-    reason: consultantDirectionGuard.reason
+  sdrReviewFindings.push({
+    tipo: "contradicao_orientacao_pre_sdr",
+    prioridade: "critica",
+    reason: consultantDirectionGuard.reason,
+    orientacao:
+      "A resposta contradiz a orientação do Consultor Pré-SDR. Reescrever obedecendo a próxima melhor ação, cuidado principal e argumento principal do Pré-SDR."
   });
-
-  respostaFinal = consultantDirectionGuard.respostaFinal;
-
-  if (
-    consultantDirectionGuard.fileKey &&
-    Array.isArray(actions) &&
-    !actions.includes(consultantDirectionGuard.fileKey)
-  ) {
-    actions.push(consultantDirectionGuard.fileKey);
-  }
 }
 
-// ❓ TRAVA DE PERGUNTA/OBJEÇÃO NÃO RESPONDIDA
-// Se o lead perguntou ou trouxe objeção e a SDR não cobriu o tema,
-// o backend corrige antes de aplicar a disciplina final do funil.
 const unansweredQuestionGuard = enforceLeadQuestionWasAnswered({
   leadText: text,
   respostaFinal,
@@ -13639,17 +13748,15 @@ const unansweredQuestionGuard = enforceLeadQuestionWasAnswered({
 });
 
 if (unansweredQuestionGuard.changed) {
-  console.log("❓ Resposta ajustada porque pergunta/objeção do lead não foi respondida:", {
-    user: from,
-    reason: unansweredQuestionGuard.reason
+  sdrReviewFindings.push({
+    tipo: "pergunta_ou_objecao_nao_respondida",
+    prioridade: "critica",
+    reason: unansweredQuestionGuard.reason,
+    orientacao:
+      "A resposta não cobriu a pergunta ou objeção atual do lead. Reescrever respondendo primeiro a mensagem real do lead."
   });
-
-  respostaFinal = unansweredQuestionGuard.respostaFinal;
 }
-     
-// 🧭 TRAVA FINAL DE DISCIPLINA DO FUNIL
-// Essa trava impede a SDR de falar taxa cedo, pular fases,
-// misturar assuntos ou pedir dados antes da hora.
+
 const disciplinaFunil = enforceFunnelDiscipline({
   respostaFinal,
   currentLead,
@@ -13657,26 +13764,15 @@ const disciplinaFunil = enforceFunnelDiscipline({
 });
 
 if (disciplinaFunil.changed) {
-  console.log("🧭 Resposta ajustada por disciplina de funil:", {
-    user: from,
-    reason: disciplinaFunil.reason
+  sdrReviewFindings.push({
+    tipo: "disciplina_funil",
+    prioridade: "critica",
+    reason: disciplinaFunil.reason,
+    orientacao:
+      "A resposta tentou pular fase, falar tema cedo demais, misturar assuntos ou pedir dados antes da hora. Reescrever respeitando o funil e a fase atual."
   });
-
-  respostaFinal = disciplinaFunil.respostaFinal;
-
-  if (
-    disciplinaFunil.fileKey &&
-    Array.isArray(actions) &&
-    !actions.includes(disciplinaFunil.fileKey)
-  ) {
-    actions.push(disciplinaFunil.fileKey);
-  }
 }
 
-// 🔀 TRAVA FINAL ANTI-MISTURA ENTRE AFILIADO E HOMOLOGADO
-// Esta é a última auditoria semântica antes de salvar etapas e antes de enviar.
-// Se a SDR gerou uma resposta misturando os dois programas de forma errada,
-// corrigimos aqui.
 const routeMixGuard = await runFinalRouteMixGuard({
   lead: currentLead || {},
   leadText: text,
@@ -13686,15 +13782,35 @@ const routeMixGuard = await runFinalRouteMixGuard({
 });
 
 if (routeMixGuard.changed) {
-  console.log("🔀 Resposta corrigida por anti-mistura de rota:", {
-    user: from,
-    ultimaMensagemLead: text,
-    motivo: routeMixGuard.motivo,
-    respostaAntes: respostaFinal,
-    respostaDepois: routeMixGuard.respostaFinal
+  sdrReviewFindings.push({
+    tipo: "mistura_afiliado_homologado",
+    prioridade: "critica",
+    motivo: routeMixGuard.motivo || "",
+    orientacao:
+      "A resposta misturou indevidamente Afiliado e Homologado. Reescrever separando corretamente os programas e seguindo a intenção real do lead."
+  });
+}
+
+if (sdrReviewFindings.length > 0) {
+  const primeiraRespostaSdr = respostaFinal;
+
+  respostaFinal = await regenerateSdrReplyWithGuardGuidance({
+    currentLead,
+    history,
+    userText: text,
+    primeiraRespostaSdr,
+    preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+    preSdrConsultantContext,
+    guardFindings: sdrReviewFindings
   });
 
-  respostaFinal = routeMixGuard.respostaFinal;
+  console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
+    user: from,
+    quantidadeProblemasDetectados: sdrReviewFindings.length,
+    problemas: sdrReviewFindings.map(item => item.tipo),
+    primeiraRespostaSdr,
+    respostaFinal
+  });
 }
      
     // 🧭 BLOCO 4 — PROGRESSO DO FUNIL POR ENTENDIMENTO DO LEAD
