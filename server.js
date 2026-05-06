@@ -1329,8 +1329,12 @@ async function runConsultantAssistant({
   lastUserText = "",
   lastSdrText = "",
   supervisorAnalysis = {},
-  classification = {}
+  classification = {},
+  semanticIntent = null,
+  commercialRouteDecision = null,
+  backendStrategicGuidance = []
 } = {}) {
+   
   const recentHistory = Array.isArray(history)
     ? history.slice(-12).map(message => ({
         role: message.role,
@@ -1345,30 +1349,7 @@ async function runConsultantAssistant({
     lastSdrText
   });
    
-  const consultantPayload = {
-    lead: {
-      user: lead.user || "",
-      status: lead.status || "",
-      faseQualificacao: lead.faseQualificacao || "",
-      statusOperacional: lead.statusOperacional || "",
-      faseFunil: lead.faseFunil || "",
-      temperaturaComercial: lead.temperaturaComercial || "",
-      rotaComercial: lead.rotaComercial || "",
-      origemConversao: lead.origemConversao || "",
-      interesseReal: lead.interesseReal === true,
-      interesseAfiliado: lead.interesseAfiliado === true,
-      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
-      crmEnviado: lead.crmEnviado === true,
-      etapas: lead.etapas || {}
-    },
-        supervisor: supervisorAnalysis || {},
-    classificacao: classification || {},
-    memoriaConversacional: conversationMemory,
-    ultimaMensagemLead: lastUserText || "",
-    ultimaRespostaSdr: lastSdrText || "",
-    historicoRecente: recentHistory
-  };
-
+  v
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -11542,16 +11523,18 @@ const podeConfirmarInteresseRealAgora =
   return;
 }
 
-// 🔀 DECISÃO CENTRAL DE ROTA COMERCIAL
-// A partir daqui, Afiliado/Homologado não deve ser decidido só por palavra-chave.
-// Usamos a interpretação semântica do GPT e o backend apenas aplica regras duras.
+// 🔀 DECISÃO CENTRAL DE ROTA COMERCIAL — BLOCO 2
+// A partir daqui, Afiliado/Homologado não responde mais direto ao lead.
+// O backend apenas interpreta, registra sinais e orienta o Consultor Pré-SDR.
+// Quem deve falar com o lead é a SDR IA, seguindo a orientação do Pré-SDR.
+let backendStrategicGuidance = [];
+
 const commercialRouteDecision = decideCommercialRouteFromSemanticIntent({
   semanticIntent,
   currentLead: currentLead || {}
 });
 
-     
-console.log("🔀 Decisão central de rota comercial:", {
+console.log("🔀 Decisão central de rota comercial observada pelo backend:", {
   user: from,
   ultimaMensagemLead: text,
   rota: commercialRouteDecision.rota,
@@ -11562,95 +11545,93 @@ console.log("🔀 Decisão central de rota comercial:", {
   motivo: commercialRouteDecision.motivo
 });
 
+const podeUsarSinalDeRotaAgora =
+  !isCriticalCommercialBlockedState({
+    lead: currentLead || {},
+    awaitingConfirmation
+  });
+
 if (
+  podeUsarSinalDeRotaAgora &&
   commercialRouteDecision.rota === "ambos" &&
-  commercialRouteDecision.deveCompararProgramas === true &&
-  !isCriticalCommercialBlockedState({
-    lead: currentLead || {},
-    awaitingConfirmation
-  })
+  commercialRouteDecision.deveCompararProgramas === true
 ) {
-     await saveLeadProfile(from, {
-    rotaComercial: "ambos",
-    interesseAfiliado: true,
-    origemConversao: commercialRouteDecision.origemConversao,
+  backendStrategicGuidance.push({
+    tipo: "comparacao_homologado_afiliado",
+    prioridade: "alta",
+    origem: commercialRouteDecision.origemConversao || "comparacao_homologado_afiliado",
+    motivo: commercialRouteDecision.motivo || "Lead demonstrou interesse em comparar os dois programas.",
+    orientacaoParaPreSdr:
+      "O lead demonstrou interesse em comparar Homologado e Afiliados. O Pré-SDR deve orientar a SDR a responder a dúvida do lead primeiro e, se fizer sentido, comparar os dois caminhos de forma clara, sem misturar regras: Afiliado é por link, online, sem estoque físico e com comissão por produto; Homologado envolve produto físico, estoque em comodato, suporte, treinamento, contrato e taxa de adesão. Não conduzir para pré-cadastro até garantir entendimento das etapas obrigatórias."
+  });
+
+  await saveLeadProfile(from, {
+    sinalComparacaoProgramas: true,
+    rotaComercialSugerida: "ambos",
+    origemConversaoSugerida: commercialRouteDecision.origemConversao,
     ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "rota_ambos",
+      tipo: "sinal_rota_ambos",
       motivo: commercialRouteDecision.motivo || "lead_pediu_comparacao_entre_programas",
-      acao: "responder_comparacao_homologado_afiliado",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
         origemConversao: commercialRouteDecision.origemConversao,
-        rota: commercialRouteDecision.rota
+        rotaSugerida: commercialRouteDecision.rota
       }
     })
   });
 
-  const bothMsg = buildBothProgramsComparisonResponse();
+  currentLead = await loadLeadProfile(from);
 
-    await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: bothMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-       messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
+  console.log("🧭 Sinal de comparação entre programas enviado ao Pré-SDR, sem resposta direta do backend:", {
+    user: from,
+    ultimaMensagemLead: text
   });
-
-  return;
 }
 
 if (
+  podeUsarSinalDeRotaAgora &&
   commercialRouteDecision.rota === "afiliado" &&
-  commercialRouteDecision.deveResponderAgora === true &&
-  !isCriticalCommercialBlockedState({
-    lead: currentLead || {},
-    awaitingConfirmation
-  })
+  commercialRouteDecision.deveResponderAgora === true
 ) {
-     await saveLeadProfile(from, {
-    status: "afiliado",
-    faseQualificacao: "afiliado",
-    statusOperacional: "ativo",
-    faseFunil: "afiliado",
-    rotaComercial: "afiliado",
-    temperaturaComercial: "morno",
-    interesseAfiliado: true,
-    afiliadoOferecidoComoAlternativa: true,
-    origemConversao: commercialRouteDecision.origemConversao,
+  backendStrategicGuidance.push({
+    tipo: "interesse_afiliado_explicito",
+    prioridade: "alta",
+    origem: commercialRouteDecision.origemConversao || "interesse_direto_afiliado",
+    motivo: commercialRouteDecision.motivo || "Lead demonstrou intenção clara pelo Programa de Afiliados.",
+    orientacaoParaPreSdr:
+      "O lead demonstrou intenção clara de Afiliados. O Pré-SDR deve validar se a mensagem fala em link, online, sem estoque físico, divulgação, redes sociais, e-commerce ou cadastro de afiliado. Se confirmado, orientar a SDR a responder sobre Afiliados sem misturar taxa, comodato ou pré-análise do Homologado. Se houver ambiguidade, orientar a SDR a perguntar qual modelo o lead quer seguir."
+  });
+
+  await saveLeadProfile(from, {
+    sinalAfiliadoExplicito: true,
+    rotaComercialSugerida: "afiliado",
+    origemConversaoSugerida: commercialRouteDecision.origemConversao,
     ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "rota_afiliado_direto",
+      tipo: "sinal_rota_afiliado",
       motivo: commercialRouteDecision.motivo || "lead_demonstrou_intencao_clara_afiliado",
-      acao: "responder_afiliado_direto",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
         origemConversao: commercialRouteDecision.origemConversao,
-        rota: commercialRouteDecision.rota
+        rotaSugerida: commercialRouteDecision.rota
       }
     })
   });
 
-  const affiliateMsg = buildAffiliateResponse(false);
+  currentLead = await loadLeadProfile(from);
 
-    await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: affiliateMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-       messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
+  console.log("🧭 Sinal de Afiliado enviado ao Pré-SDR, sem resposta direta do backend:", {
+    user: from,
+    ultimaMensagemLead: text
   });
-
-  return;
 }
-
-// 💰 RESPOSTA CONTROLADA PARA PERGUNTA SOBRE TAXA / INVESTIMENTO
+// 💰 PERGUNTA SOBRE TAXA / INVESTIMENTO — BLOCO 2
+// O backend não responde mais diretamente a taxa.
+// Ele registra o sinal e envia orientação forte ao Consultor Pré-SDR.
+// A SDR deve responder depois, seguindo a orientação do Pré-SDR.
 if (
   isTaxaQuestionIntent(text) &&
   !isTaxaObjectionAgainstInvestment(text) &&
@@ -11661,56 +11642,38 @@ if (
     awaitingConfirmation
   })
 ) {
-   
-  const firstName = getFirstName(
-    currentLead?.nome ||
-    currentLead?.nomeWhatsApp ||
-    ""
-  );
+  backendStrategicGuidance.push({
+    tipo: "pergunta_taxa_investimento",
+    prioridade: "critica",
+    motivo: "Lead perguntou sobre taxa, valor ou investimento.",
+    orientacaoParaPreSdr:
+      "Etapa crítica de conversão. O lead perguntou sobre taxa/investimento. O Pré-SDR deve orientar a SDR a responder a pergunta do lead sem fugir, mas com ancoragem forte: taxa de R$ 1.990,00 não é compra de mercadoria, não é caução e não é garantia; inclui ativação, suporte, treinamento e acesso ao lote inicial em comodato; o lote representa mais de R$ 5.000,00 em preço de venda ao consumidor; margem/comissão no Homologado pode chegar a 40% no preço sugerido e pode ser maior se vender com ágio; pagamento só ocorre após análise interna e contrato; pode mencionar parcelamento em até 10x de R$ 199,00 no cartão e PIX. Não oferecer Afiliado só porque perguntou valor. Não pedir dados ainda se as etapas obrigatórias não estiverem concluídas."
+  });
 
-  const taxaMsg = buildFullTaxExplanationResponse(firstName);
-
-    await saveLeadProfile(from, {
-    status: "qualificando",
-    faseQualificacao: "qualificando",
+  await saveLeadProfile(from, {
+    sinalPerguntaTaxa: true,
     taxaAlinhada: false,
     ultimaPerguntaTaxa: text,
     ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "pergunta_taxa",
+      tipo: "sinal_pergunta_taxa",
       motivo: "lead_perguntou_taxa_ou_investimento",
-      acao: "responder_explicacao_completa_taxa",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
-        etapaInvestimentoMarcada: true,
-        taxaPerguntadaMarcada: true
+        etapaCriticaConversao: true,
+        naoMarcarInvestimentoComoConcluidoAinda: true,
+        naoOferecerAfiliadoPrecipitadamente: true
       }
-    }),
-    etapas: {
-      ...(currentLead?.etapas || {}),
-      investimento: true,
-      taxaPerguntada: true
-    }
+    })
   });
+
   currentLead = await loadLeadProfile(from);
 
-  console.log("💰 Pergunta de taxa respondida com explicação completa:", {
+  console.log("💰 Pergunta de taxa enviada ao Pré-SDR como orientação crítica, sem resposta direta do backend:", {
     user: from,
     ultimaMensagemLead: text
   });
-
-    await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: taxaMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-       messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
-  });
-
-  return;
 }
      
 // 🧱 CONTADOR DE OBJEÇÕES DA TAXA
