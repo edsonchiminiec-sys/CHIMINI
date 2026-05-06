@@ -1196,6 +1196,23 @@ Regra para orientar a SDR:
 6. Não oferecer Afiliado só porque o lead citou outra linha.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+TABELA DE PREÇOS / E-COMMERCE IQG
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Se o lead pedir tabela de preços, lista de preços, tabela de revenda, preço para parceiro ou valores dos produtos:
+
+- orientar a SDR a responder primeiro esse pedido;
+- explicar que a tabela oficial para parceiro é enviada após a fase contratual;
+- explicar que a IQG evita enviar tabela no pré-atendimento porque preços podem oscilar e há promoções frequentes;
+- indicar o e-commerce oficial para consulta prévia de preços:
+https://www.loja.industriaquimicagaucha.com.br/
+- explicar que a IQG padroniza os preços do e-commerce com marketplaces e com a tabela do Parceiro Homologado para evitar ruídos;
+- tranquilizar o lead dizendo que a IQG busca oferecer ótimas condições para que o parceiro seja competitivo comercialmente;
+- não inventar preços, descontos, tabela, margem por produto ou condição especial;
+- não orientar envio de catálogo/PDF como substituto de tabela de preços;
+- depois de responder, conduzir para o próximo passo adequado do funil.
+
+━━━━━━━━━━━━━━━━━━━━━━━
 CONTEXTO COMERCIAL IQG
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -5302,6 +5319,28 @@ function hasExplicitFileRequest(text = "") {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+
+     // Pedido de tabela de preços NÃO é pedido de catálogo/material.
+  // A SDR deve responder com orientação sobre e-commerce e fase contratual,
+  // não enviar PDF automaticamente.
+  if (
+    t.includes("tabela de preco") ||
+    t.includes("tabela de precos") ||
+    t.includes("tabela de valor") ||
+    t.includes("tabela de valores") ||
+    t.includes("lista de preco") ||
+    t.includes("lista de precos") ||
+    t.includes("preco dos produtos") ||
+    t.includes("precos dos produtos") ||
+    t.includes("valor dos produtos") ||
+    t.includes("valores dos produtos") ||
+    t.includes("tabela do parceiro") ||
+    t.includes("tabela de revenda") ||
+    t.includes("preco para parceiro") ||
+    t.includes("precos para parceiro")
+  ) {
+    return false;
+  }
 
   return (
     // pedidos genéricos claros
