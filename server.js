@@ -4799,6 +4799,27 @@ function extractActions(reply = "") {
   };
 }
 
+function syncActionsFromFinalReply({
+  respostaFinal = "",
+  actions = []
+} = {}) {
+  const extracted = extractActions(respostaFinal || "");
+
+  const cleanReply = String(extracted.cleanReply || "").trim();
+  const finalActions = Array.isArray(extracted.actions)
+    ? extracted.actions
+    : [];
+
+  if (Array.isArray(actions)) {
+    actions.splice(0, actions.length, ...finalActions);
+  }
+
+  return {
+    respostaFinal: cleanReply || respostaFinal,
+    actions
+  };
+}
+
 function getFirstName(name = "") {
   const cleanName = String(name || "")
     .trim()
@@ -13901,13 +13922,62 @@ if (pendingFunnelFlagsFromCurrentReply.changed) {
 }
 
      
+// 🛡️ BLOCO 8B — VAZAMENTO INTERNO NÃO VIRA MAIS RESPOSTA HARDCODED
+// Se a SDR deixou escapar termos internos, o backend pede uma revisão da própria SDR.
+// Só usamos fallback fixo se a revisão ainda continuar vazando contexto interno.
 if (containsInternalContextLeak(respostaFinal)) {
-  console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
+  console.warn("⚠️ Resposta da SDR continha possível vazamento interno. Solicitando revisão antes do envio:", {
     user: from
   });
 
-  respostaFinal = "Perfeito 😊 Vou te orientar de forma simples e direta.\n\nMe conta: qual ponto você quer entender melhor agora sobre o programa?";
+  const respostaAntesDoLeakReview = respostaFinal;
+
+  respostaFinal = await regenerateSdrReplyWithGuardGuidance({
+    currentLead,
+    history,
+    userText: text,
+    primeiraRespostaSdr: respostaFinal,
+    preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+    preSdrConsultantContext,
+    guardFindings: [
+      {
+        tipo: "vazamento_contexto_interno",
+        prioridade: "critica",
+        orientacao:
+          "A resposta mencionou termos internos como supervisor, classificador, consultor, contexto interno, agente, backend, diagnóstico ou estratégia. Reescrever naturalmente para o lead sem mencionar nada interno."
+      }
+    ]
+  });
+
+  console.log("🔁 SDR revisou resposta por risco de vazamento interno:", {
+    user: from,
+    respostaAntesDoLeakReview,
+    respostaDepoisDoLeakReview: respostaFinal
+  });
+
+  if (containsInternalContextLeak(respostaFinal)) {
+    console.warn("🛑 Revisão ainda continha vazamento interno. Aplicando fallback seguro mínimo:", {
+      user: from
+    });
+
+    respostaFinal = "Perfeito 😊 Vou te orientar de forma simples e direta.\n\nMe conta: qual ponto você quer entender melhor agora sobre o programa?";
+  }
 }
+
+     // 📎 BLOCO 8B — SINCRONIZA ACTIONS DA RESPOSTA FINAL
+// Como a SDR pode ter revisado a resposta, os comandos de arquivo precisam
+// ser extraídos novamente da resposta final real que será enviada ao lead.
+const syncedFinalReply = syncActionsFromFinalReply({
+  respostaFinal,
+  actions
+});
+
+respostaFinal = syncedFinalReply.respostaFinal;
+
+console.log("📎 Actions sincronizados com a resposta final:", {
+  user: from,
+  actions
+});
      
 // 🔥 Mostra "digitando..." real no WhatsApp
 await sendTypingIndicator(messageId);
