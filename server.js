@@ -12720,64 +12720,6 @@ if (leadStatus === "pre_analise" && !podeAceitarPreAnaliseAgora) {
 
   leadStatusSeguro = null;
 }
-
-    if (
-  shouldRecoverLeadBeforeLoss({
-    text,
-    lead: currentLead,
-    awaitingConfirmation
-  })
-) {
-  const recoveryAttemptsAtual = Number(currentLead?.recoveryAttempts || 0);
-  const novoRecoveryAttempts = recoveryAttemptsAtual + 1;
-
-  backendStrategicGuidance.push({
-    tipo: "recuperacao_comercial_antes_precadastro",
-    prioridade: "alta",
-    tentativa: novoRecoveryAttempts,
-    motivo: "Lead rejeitou, esfriou ou demonstrou trava antes de finalizar o pré-cadastro.",
-    orientacaoParaPreSdr:
-      [
-        `Lead demonstrou rejeição, esfriamento ou trava antes do pré-cadastro. Esta é a tentativa ${novoRecoveryAttempts} de recuperação.`,
-        "O backend NÃO deve responder diretamente e NÃO deve marcar o lead como perdido.",
-        "O backend NÃO deve mudar o lead para Afiliado automaticamente.",
-        "O Pré-SDR deve orientar a SDR a responder primeiro a manifestação atual do lead.",
-        "A SDR deve tentar entender o motivo real da trava com tom leve, consultivo e sem pressão.",
-        "Se a trava for taxa, dinheiro, risco, estoque ou insegurança, sustentar primeiro o Parceiro Homologado com valor percebido.",
-        "Não oferecer Afiliados automaticamente apenas porque o lead esfriou, achou caro ou disse que vai pensar.",
-        "Afiliados só devem ser mencionados se o lead pedir claramente link, online, venda sem estoque físico, redes sociais, e-commerce, alternativa sem taxa do Homologado, ou rejeitar explicitamente produto físico/estoque.",
-        "Não encerrar a conversa. Fazer uma pergunta simples para manter o lead em movimento."
-      ].join("\n")
-  });
-
-  await saveLeadProfile(from, {
-    recoveryAttempts: novoRecoveryAttempts,
-    sinalRecuperacaoComercial: true,
-    ultimaRejeicaoOuEsfriamento: text,
-    ultimaMensagem: text,
-    ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "recuperacao_comercial",
-      motivo: "lead_rejeitou_ou_esfriou_antes_do_precadastro",
-      acao: "orientar_pre_sdr_sem_responder_direto",
-      mensagemLead: text,
-      detalhes: {
-        recoveryAttemptsAnterior: recoveryAttemptsAtual,
-        recoveryAttemptsNovo: novoRecoveryAttempts,
-        naoMarcarComoPerdido: true,
-        naoOferecerAfiliadoAutomaticamente: true,
-        manterConversaoHomologado: true
-      }
-    })
-  });
-
-  currentLead = await loadLeadProfile(from);
-
-  console.log("🔥 Recuperação comercial enviada ao Pré-SDR, sem resposta direta do backend:", {
-    user: from,
-    recoveryAttempts: novoRecoveryAttempts,
-    ultimaMensagemLead: text
-  });
-}
      
 if (
   leadStatusSeguro &&
