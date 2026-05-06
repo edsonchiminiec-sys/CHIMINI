@@ -95,79 +95,138 @@ async function updateLeadStatus(user, status) {
 
   const currentLead = await db.collection("leads").findOne({ user });
 
-   if (
-  status === "perdido" &&
-  currentLead &&
-  leadHasFinishedPreCadastro(currentLead) !== true
-) {
-  console.log("🛡️ BLOQUEIO: lead não finalizado tentou ir para perdido. Mantendo em nutrição.", {
-    user,
-    statusOriginal: status,
-    recoveryAttempts: currentLead?.recoveryAttempts || 0,
-    afiliadoOferecidoComoAlternativa: currentLead?.afiliadoOferecidoComoAlternativa === true
-  });
+  /*
+    BLOCO 9B:
+    O status alterado pelo dashboard passa a ser VISUAL/OPERACIONAL HUMANO.
+    Ele NÃO deve comandar a próxima decisão da IA, exceto quando for
+    "em_atendimento", que significa humano assumiu a conversa.
+  */
 
-  status = "morno";
-}
+  const dashboardPatch = {
+    statusDashboard: status,
+    statusVisualDashboard: status,
+    ultimoStatusDashboard: status,
+    statusDashboardAtualizadoEm: new Date(),
+    atualizadoPeloDashboard: true
+  };
 
-  const lifecycleData = getLeadLifecycleFields({
-    ...(currentLead || {}),
-    status,
-    faseQualificacao: status
-  });
+  if (status === "em_atendimento") {
+    const lifecycleData = getLeadLifecycleFields({
+      ...(currentLead || {}),
+      status: "em_atendimento",
+      faseQualificacao: "em_atendimento"
+    });
 
- if (status === "em_atendimento") {
-  lifecycleData.statusOperacional = "em_atendimento";
-  lifecycleData.faseFunil = "crm";
-  lifecycleData.temperaturaComercial = currentLead?.temperaturaComercial || "indefinida";
-  lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+    lifecycleData.statusOperacional = "em_atendimento";
+    lifecycleData.faseFunil = "crm";
+    lifecycleData.temperaturaComercial =
+      currentLead?.temperaturaComercial || "indefinida";
+    lifecycleData.rotaComercial =
+      currentLead?.rotaComercial ||
+      currentLead?.origemConversao ||
+      "homologado";
 
-  // BLOCO 9A:
-  // Quando o dashboard coloca o lead em atendimento humano,
-  // a SDR IA deve parar de responder automaticamente.
-  lifecycleData.humanoAssumiu = true;
-  lifecycleData.atendimentoHumanoAtivo = true;
-  lifecycleData.botBloqueadoPorHumano = true;
-  lifecycleData.assumidoPorHumanoEm = new Date();
-}
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          ...dashboardPatch,
 
-if (
-  status !== "em_atendimento" &&
-  currentLead?.botBloqueadoPorHumano === true
-) {
-  lifecycleData.humanoAssumiu = false;
-  lifecycleData.atendimentoHumanoAtivo = false;
-  lifecycleData.botBloqueadoPorHumano = false;
-  lifecycleData.liberadoDoAtendimentoHumanoEm = new Date();
-}
-   
-  if (status === "fechado") {
-    lifecycleData.statusOperacional = "fechado";
-    lifecycleData.faseFunil = "encerrado";
-    lifecycleData.temperaturaComercial = "quente";
-    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+          // ÚNICO status do dashboard que interfere na IA:
+          status: "em_atendimento",
+          faseQualificacao: "em_atendimento",
+
+          humanoAssumiu: true,
+          atendimentoHumanoAtivo: true,
+          botBloqueadoPorHumano: true,
+          assumidoPorHumanoEm: new Date(),
+
+          ...lifecycleData,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    console.log("🧑‍💼 Dashboard colocou lead em atendimento humano. IA bloqueada:", {
+      user,
+      statusDashboard: status
+    });
+
+    return;
   }
 
-  if (status === "perdido") {
-    lifecycleData.statusOperacional = "perdido";
-    lifecycleData.faseFunil = "encerrado";
-    lifecycleData.temperaturaComercial = "frio";
-    lifecycleData.rotaComercial = currentLead?.rotaComercial || currentLead?.origemConversao || "homologado";
+  /*
+    Se o lead estava em atendimento humano e o dashboard mudou para outro status,
+    liberamos a IA novamente.
+
+    Importante:
+    Mesmo liberando a IA, NÃO usamos o novo status visual como fase da IA.
+    O fluxo conversacional será reavaliado pelo histórico e pelo backend.
+  */
+  const liberarAtendimentoHumano =
+    currentLead?.botBloqueadoPorHumano === true ||
+    currentLead?.humanoAssumiu === true ||
+    currentLead?.atendimentoHumanoAtivo === true ||
+    currentLead?.statusOperacional === "em_atendimento" ||
+    currentLead?.status === "em_atendimento" ||
+    currentLead?.faseQualificacao === "em_atendimento";
+
+  if (liberarAtendimentoHumano) {
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          ...dashboardPatch,
+
+          humanoAssumiu: false,
+          atendimentoHumanoAtivo: false,
+          botBloqueadoPorHumano: false,
+          liberadoDoAtendimentoHumanoEm: new Date(),
+
+          statusOperacional: "ativo",
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    console.log("✅ Dashboard liberou lead do atendimento humano. IA pode voltar a responder:", {
+      user,
+      statusDashboard: status
+    });
+
+    return;
   }
 
+  /*
+    Para qualquer outro status vindo do dashboard:
+    - não muda status;
+    - não muda faseQualificacao;
+    - não muda faseFunil;
+    - não muda temperaturaComercial;
+    - não muda rotaComercial;
+    - não muda interesseReal;
+    - não muda interesseAfiliado.
+
+    Fica apenas como marcação visual/humana.
+  */
   await db.collection("leads").updateOne(
     { user },
     {
       $set: {
-        status,
-        faseQualificacao: status,
-        ...lifecycleData,
+        ...dashboardPatch,
         updatedAt: new Date()
       }
     }
   );
-}
 
+  console.log("🏷️ Dashboard atualizou status visual sem interferir na IA:", {
+    user,
+    statusDashboard: status,
+    statusIaAtual: currentLead?.status || "",
+    faseIaAtual: currentLead?.faseQualificacao || "",
+    statusOperacionalAtual: currentLead?.statusOperacional || ""
+  });
+}
 /* =========================
    MONGO HISTÓRICO (ÚNICO - SEM DUPLICAÇÃO)
 ========================= */
