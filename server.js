@@ -11326,8 +11326,6 @@ function getGreetingByBrazilTime() {
 }
 
 function isBusinessTime() {
-
-function isBusinessTime() {
   const now = getBrazilNow();
   const day = now.getDay(); // 0 = domingo, 6 = sábado
   const hour = now.getHours();
