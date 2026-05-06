@@ -13665,6 +13665,12 @@ if (
 }
 
 let respostaFinal = resposta;
+
+// BLOCO 11B:
+// Lista única de problemas encontrados antes do envio.
+// Qualquer trava comercial deve adicionar orientação aqui,
+// e não substituir respostaFinal com texto fixo.
+let sdrReviewFindings = [];
      
 // 🚫 BLOQUEIO DE REGRESSÃO DE FASE — VERSÃO SEGURA
 // Não bloqueia respostas apenas porque citam palavras como "estoque", "taxa" ou "programa".
