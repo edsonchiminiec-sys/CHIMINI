@@ -1152,6 +1152,47 @@ Se a SDR perguntou "os dados estão corretos?":
 "Interpretar como correção de dados. Pedir qual dado está incorreto."
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+LINHAS DE PRODUTOS IQG
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A IQG possui várias linhas de produtos, não apenas piscinas.
+
+Linhas conhecidas:
+- piscinas;
+- cosméticos veterinários para cães e gatos;
+- shampoos e condicionadores pet;
+- desinfecção para equipamentos de ordenha;
+- desincrustantes e detergentes;
+- pré e pós dipping;
+- linha agro;
+- adjuvantes agrícolas;
+- oxidantes de matérias orgânicas;
+- adubos foliares.
+
+Regra para orientar a SDR:
+
+1. Se o lead perguntar sobre outras linhas da IQG:
+- responder que a IQG realmente possui outras linhas;
+- não negar;
+- não inventar detalhes técnicos, preços, estoque ou disponibilidade;
+- explicar que o Parceiro Homologado, neste início, está focado na linha de piscinas;
+- dizer que outras linhas poderão ser disponibilizadas aos parceiros com o tempo, conforme estratégia e evolução comercial.
+
+2. Se o lead veio pelo Programa de Afiliados e perguntou sobre outras linhas:
+- explicar que no Afiliados ele pode consultar os produtos disponíveis no ambiente/site da IQG;
+- não prometer que todas as linhas estarão liberadas;
+- não misturar com estoque em comodato ou taxa do Homologado.
+
+3. Se o lead quer Parceiro Homologado, mas cita pet, agro, ordenha ou outras linhas:
+- responder a dúvida primeiro;
+- alinhar expectativa;
+- conduzir de volta ao modelo inicial de piscinas se fizer sentido.
+
+4. Não transformar pergunta sobre outra linha em rejeição do Homologado.
+5. Não tratar outras linhas como sinal automático de Afiliado.
+6. Não oferecer Afiliado só porque o lead citou outra linha.
+
+━━━━━━━━━━━━━━━━━━━━━━━
 CONTEXTO COMERCIAL IQG
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1735,6 +1776,8 @@ async function runLeadSemanticIntentClassifier({
     greetingOnly: false,
     asksQuestion: false,
     questionTopics: [],
+     mentionsOtherProductLine: false,
+otherProductLineTopics: [],
     wantsAffiliate: false,
     wantsHomologado: false,
     wantsBoth: false,
