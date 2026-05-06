@@ -11125,6 +11125,12 @@ if (noMeansNoDoubt) {
   text = "não tenho dúvida";
 }
 
+// 🧭 BLOCO 6 — ORIENTAÇÕES ESTRATÉGICAS DO BACKEND
+// Esta lista acompanha a mensagem atual até o Consultor Pré-SDR.
+// O backend registra sinais, mas não responde comercialmente pelo lead.
+let backendStrategicGuidance = [];
+let dataFlowQuestionAlreadyGuided = false;
+     
 // 🧠 ROTEADOR SEMÂNTICO DA COLETA / CONFIRMAÇÃO
 // Objetivo:
 // Durante o pré-cadastro, o backend continua protegendo a coleta,
@@ -11160,24 +11166,65 @@ if (dataFlowSemanticStateCheck) {
   ];
 
   if (
-    dataFlowRouter?.deveResponderAntesDeColetar === true ||
-    tiposQueDevemResponderAntes.includes(dataFlowRouter?.tipoMensagem)
-  ) {
-    const msg = await answerDataFlowQuestion({
-      currentLead: currentLead || {},
-      history,
-      userText: text
-    });
+  dataFlowRouter?.deveResponderAntesDeColetar === true ||
+  tiposQueDevemResponderAntes.includes(dataFlowRouter?.tipoMensagem)
+) {
+  dataFlowQuestionAlreadyGuided = true;
 
-    await sendWhatsAppMessage(from, msg);
-    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+  const campoRetomadaColeta =
+    currentLead?.campoEsperado ||
+    currentLead?.campoPendente ||
+    "";
 
-    if (messageId) {
-      markMessageAsProcessed(messageId);
-    }
+  backendStrategicGuidance.push({
+    tipo: "pergunta_durante_coleta",
+    prioridade: "alta",
+    motivo: dataFlowRouter?.motivo || "Lead fez pergunta, objeção ou pedido durante coleta/confirmação de dados.",
+    orientacaoParaPreSdr:
+      [
+        "O lead está em coleta/confirmação de dados, mas trouxe uma pergunta, objeção, pedido humano ou mensagem mista.",
+        "O backend NÃO deve responder diretamente nem tratar essa mensagem como dado.",
+        "O Pré-SDR deve orientar a SDR a responder primeiro a dúvida ou manifestação atual do lead.",
+        "Depois de responder, a SDR deve retomar a coleta exatamente de onde parou.",
+        campoRetomadaColeta
+          ? `Campo pendente para retomar depois da resposta: ${campoRetomadaColeta}.`
+          : "Verificar no histórico qual dado estava pendente antes de retomar.",
+        "Não reiniciar o cadastro. Não pedir todos os dados novamente. Não pular para outro fluxo."
+      ].join("\n")
+  });
 
-    return;
-  }
+  await saveLeadProfile(from, {
+    fluxoPausadoPorPergunta: true,
+    ultimaPerguntaDuranteColeta: text,
+    tipoMensagemDuranteColeta: dataFlowRouter?.tipoMensagem || "indefinido",
+    campoRetomadaColeta,
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "pergunta_durante_coleta",
+      motivo: dataFlowRouter?.motivo || "lead_fez_pergunta_durante_coleta",
+      acao: "orientar_pre_sdr_sem_responder_direto",
+      mensagemLead: text,
+      detalhes: {
+        faseAtual: currentLead?.faseQualificacao || "",
+        faseFunil: currentLead?.faseFunil || "",
+        campoEsperado: currentLead?.campoEsperado || "",
+        campoPendente: currentLead?.campoPendente || "",
+        tipoMensagem: dataFlowRouter?.tipoMensagem || "indefinido",
+        deveResponderAntesDeColetar: dataFlowRouter?.deveResponderAntesDeColetar === true,
+        deveRetomarColetaDepois: true
+      }
+    })
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("🧭 Pergunta durante coleta enviada ao Pré-SDR, sem resposta direta do backend:", {
+    user: from,
+    ultimaMensagemLead: text,
+    tipoMensagem: dataFlowRouter?.tipoMensagem || "indefinido",
+    campoRetomadaColeta
+  });
+}
 }
      
 const historyText = history
@@ -11562,22 +11609,57 @@ if (isPostCrmLead(currentLead || {})) {
 // Isso evita que o backend trate pergunta como nome, cidade ou outro dado.
 if (
   isDataFlowState(currentLead || {}) &&
-  isLeadQuestionDuringDataFlow(text, currentLead || {})
+  isLeadQuestionDuringDataFlow(text, currentLead || {}) &&
+  !dataFlowQuestionAlreadyGuided
 ) {
-  const respostaPerguntaColeta = await answerDataFlowQuestion({
-    currentLead: currentLead || {},
-    history,
-    userText: text
+  dataFlowQuestionAlreadyGuided = true;
+
+  const campoRetomadaColeta =
+    currentLead?.campoEsperado ||
+    currentLead?.campoPendente ||
+    "";
+
+  backendStrategicGuidance.push({
+    tipo: "pergunta_durante_coleta",
+    prioridade: "alta",
+    motivo: "Lead fez pergunta durante coleta/confirmação de dados.",
+    orientacaoParaPreSdr:
+      [
+        "O lead fez uma pergunta enquanto o sistema estava em coleta/confirmação de dados.",
+        "O Pré-SDR deve orientar a SDR a responder a pergunta primeiro.",
+        "Depois, a SDR deve retomar a coleta de onde parou.",
+        campoRetomadaColeta
+          ? `Campo pendente para retomar: ${campoRetomadaColeta}.`
+          : "Verificar o campo pendente no histórico.",
+        "Não tratar a pergunta como dado cadastral."
+      ].join("\n")
   });
 
-  await sendWhatsAppMessage(from, respostaPerguntaColeta);
-  await saveHistoryStep(from, history, text, respostaPerguntaColeta, !!message.audio?.id);
+  await saveLeadProfile(from, {
+    fluxoPausadoPorPergunta: true,
+    ultimaPerguntaDuranteColeta: text,
+    campoRetomadaColeta,
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "pergunta_durante_coleta",
+      motivo: "lead_fez_pergunta_durante_coleta",
+      acao: "orientar_pre_sdr_sem_responder_direto",
+      mensagemLead: text,
+      detalhes: {
+        campoEsperado: currentLead?.campoEsperado || "",
+        campoPendente: currentLead?.campoPendente || "",
+        deveRetomarColetaDepois: true
+      }
+    })
+  });
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+  currentLead = await loadLeadProfile(from);
 
-  return;
+  console.log("🧭 Pergunta durante coleta orientada ao Pré-SDR pela proteção secundária:", {
+    user: from,
+    ultimaMensagemLead: text,
+    campoRetomadaColeta
+  });
 }
      
 const isOnlyConfirmationText =
@@ -12051,7 +12133,7 @@ const podeConfirmarInteresseRealAgora =
 // A partir daqui, Afiliado/Homologado não responde mais direto ao lead.
 // O backend apenas interpreta, registra sinais e orienta o Consultor Pré-SDR.
 // Quem deve falar com o lead é a SDR IA, seguindo a orientação do Pré-SDR.
-let backendStrategicGuidance = [];
+// backendStrategicGuidance já foi inicializado no início do processamento da mensagem.
 
 const commercialRouteDecision = decideCommercialRouteFromSemanticIntent({
   semanticIntent,
