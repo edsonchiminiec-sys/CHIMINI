@@ -14580,8 +14580,7 @@ const perdido = countByStatus("perdido");
       const waLink = phone ? `https://wa.me/${phone}` : "#";
       const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-                const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
-const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
+               const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
 const statusIa = lead.status || "novo";
 const faseAntiga = lead.faseQualificacao || "-";
 const statusOperacional = lead.statusOperacional || "-";
