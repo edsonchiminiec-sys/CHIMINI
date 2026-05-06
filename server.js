@@ -11204,6 +11204,25 @@ if (consultantDigits && fromDigits === consultantDigits) {
 
 clearTimers(from);
 state.closed = false;
+
+// BLOCO 9A — HUMANO ASSUMIU A CONVERSA
+// Se o dashboard marcou atendimento humano, a SDR IA não deve responder.
+// Isso é a única situação em que o dashboard bloqueia a IA.
+if (isHumanAssumedLead(leadBeforeProcessing || {})) {
+  console.log("🧑‍💼 Atendimento humano ativo. SDR IA não responderá esta mensagem:", {
+    from,
+    status: leadBeforeProcessing?.status || "",
+    faseQualificacao: leadBeforeProcessing?.faseQualificacao || "",
+    statusOperacional: leadBeforeProcessing?.statusOperacional || "",
+    faseFunil: leadBeforeProcessing?.faseFunil || "",
+    humanoAssumiu: leadBeforeProcessing?.humanoAssumiu === true,
+    atendimentoHumanoAtivo: leadBeforeProcessing?.atendimentoHumanoAtivo === true,
+    botBloqueadoPorHumano: leadBeforeProcessing?.botBloqueadoPorHumano === true
+  });
+
+  return;
+}
+     
 let text = "";
 let isAudioMessage = false;
 
