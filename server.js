@@ -11621,20 +11621,55 @@ if (
 // a SDR continua respondendo dúvidas, mas não reinicia coleta,
 // não pede dados novamente e não reenvia ao CRM.
 if (isPostCrmLead(currentLead || {})) {
-  const respostaPosCrm = await answerPostCrmQuestion({
-    currentLead: currentLead || {},
-    history,
-    userText: text
+  backendStrategicGuidance.push({
+    tipo: "lead_pos_crm",
+    prioridade: "alta",
+    motivo: "Lead já está em fase pós-CRM, enviado ao CRM ou em atendimento.",
+    orientacaoParaPreSdr:
+      [
+        "O lead está em fase pós-CRM, enviado ao CRM ou em atendimento.",
+        "O backend NÃO deve responder diretamente e NÃO deve reiniciar o cadastro.",
+        "O Pré-SDR deve orientar a SDR a responder primeiro a pergunta atual do lead.",
+        "A SDR não deve pedir novamente nome, CPF, telefone, cidade ou estado.",
+        "A SDR não deve dizer que enviou novamente ao CRM.",
+        "A SDR não deve prometer aprovação, contrato, pagamento ou retorno garantido.",
+        "Se o lead perguntar sobre próximos passos, orientar que a equipe responsável fará a análise/continuidade pelo atendimento humano.",
+        "Se o lead trouxer dúvida comercial simples, responder de forma consultiva e curta, sem reiniciar o funil.",
+        "Se houver humano assumindo a conversa, respeitar a condução humana."
+      ].join("\n")
   });
 
-  await sendWhatsAppMessage(from, respostaPosCrm);
-  await saveHistoryStep(from, history, text, respostaPosCrm, !!message.audio?.id);
+  await saveLeadProfile(from, {
+    sinalPosCrm: true,
+    ultimaMensagemPosCrm: text,
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "lead_pos_crm",
+      motivo: "lead_pos_crm_chamou_novamente",
+      acao: "orientar_pre_sdr_sem_responder_direto",
+      mensagemLead: text,
+      detalhes: {
+        status: currentLead?.status || "",
+        faseQualificacao: currentLead?.faseQualificacao || "",
+        statusOperacional: currentLead?.statusOperacional || "",
+        faseFunil: currentLead?.faseFunil || "",
+        crmEnviado: currentLead?.crmEnviado === true,
+        naoReiniciarCadastro: true,
+        naoPedirDadosNovamente: true
+      }
+    })
+  });
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+  currentLead = await loadLeadProfile(from);
 
-  return;
+  console.log("📌 Lead pós-CRM enviado ao Pré-SDR, sem resposta direta do backend:", {
+    user: from,
+    ultimaMensagemLead: text,
+    status: currentLead?.status || "",
+    faseQualificacao: currentLead?.faseQualificacao || "",
+    statusOperacional: currentLead?.statusOperacional || "",
+    faseFunil: currentLead?.faseFunil || ""
+  });
 }
 
      // 🧠 PRIORIDADE DA IA DURANTE COLETA/CONFIRMAÇÃO
