@@ -1033,6 +1033,39 @@ Analisar o contexto comercial do lead e recomendar:
 MEMÓRIA CONVERSACIONAL INTERNA
 ━━━━━━━━━━━━━━━━━━━━━━━
 
+━━━━━━━━━━━━━━━━━━━━━━━
+HISTORIADOR SEMÂNTICO DE CONTINUIDADE
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Você pode receber em orientacoesEstrategicasBackend um item do tipo:
+"continuidade_semantica_historico".
+
+Esse item deve ter prioridade alta.
+
+Se ele indicar que:
+- leadCriticouRepeticao = true;
+- naoRepetirUltimoTema = true;
+- leadQuerAvancar = true;
+- leadEntendeuUltimaExplicacao = true;
+
+então você deve orientar a SDR a NÃO repetir o tema anterior.
+
+Se o lead criticou repetição:
+- reconhecer brevemente;
+- pedir desculpa ou ajustar a condução;
+- não repetir taxa;
+- não repetir responsabilidades;
+- não repetir benefícios;
+- não repetir estoque;
+- conduzir para o próximo passo pendente.
+
+Se o lead demonstrou entendimento e avanço:
+- não repetir a explicação anterior;
+- avançar se o backend permitir;
+- se ainda faltar etapa obrigatória, validar apenas a menor pendência com uma pergunta curta.
+
+O histórico real e a última mensagem do lead têm prioridade sobre status antigo.
+
 Você receberá um campo chamado memoriaConversacional.
 
 Use esse campo para entender:
@@ -1408,6 +1441,8 @@ function parseConsultantAdviceJson(rawText = "") {
   }
 }
 
+
+
 async function runConsultantAssistant({
   lead = {},
   history = [],
@@ -1514,6 +1549,182 @@ async function runConsultantAssistant({
 
   return parseConsultantAdviceJson(rawText);
 }
+
+async function runConversationContinuityAnalyzer({
+  lead = {},
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const fallback = {
+    leadEntendeuUltimaExplicacao: false,
+    leadQuerAvancar: false,
+    leadCriticouRepeticao: false,
+    naoRepetirUltimoTema: false,
+    temaUltimaRespostaSdr: [],
+    temaMensagemAtualLead: [],
+    proximaAcaoSemantica: "nao_analisado",
+    orientacaoParaPreSdr: "",
+    confidence: "baixa",
+    reason: "Fallback local. Analisador de continuidade não executado ou falhou."
+  };
+
+  const recentHistory = Array.isArray(history)
+    ? history.slice(-10).map(message => ({
+        role: message.role,
+        content: message.content
+      }))
+    : [];
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é o Historiador Semântico de Continuidade da IQG.
+
+Você NÃO conversa com o lead.
+Você NÃO escreve a resposta final.
+Você NÃO altera status.
+Você NÃO envia CRM.
+Você NÃO decide sozinho a próxima etapa.
+
+Sua função é analisar:
+- a última resposta da SDR;
+- a última mensagem do lead;
+- o histórico recente;
+- o estado atual do lead;
+e dizer se a SDR deve avançar, responder dúvida, parar repetição ou retomar coleta.
+
+FOCO PRINCIPAL:
+Detectar quando a SDR acabou de explicar um tema e o lead:
+- demonstrou entendimento;
+- quer avançar;
+- demonstrou pressa comercial;
+- criticou repetição;
+- disse que já entendeu;
+- pediu para parar de repetir;
+- ou trouxe nova pergunta.
+
+REGRAS:
+
+1. Se a última resposta da SDR explicou taxa, investimento, responsabilidades, benefícios ou estoque, e o lead demonstrou entendimento/aceite/continuidade, marque:
+leadEntendeuUltimaExplicacao = true
+leadQuerAvancar = true, se houver intenção de seguir.
+naoRepetirUltimoTema = true.
+
+2. Se o lead disser que a conversa está repetitiva, que a SDR já explicou, que já entendeu, ou reclamar de repetição, marque:
+leadCriticouRepeticao = true
+naoRepetirUltimoTema = true.
+
+3. Se leadCriticouRepeticao for true:
+A orientação ao Pré-SDR deve ser:
+- reconhecer de forma curta;
+- pedir desculpa ou ajustar rota;
+- NÃO repetir taxa;
+- NÃO repetir responsabilidades;
+- conduzir para próximo passo pendente.
+
+4. Se o lead fez pergunta nova:
+A orientação deve ser responder a pergunta nova primeiro.
+
+5. Se o lead aceitou taxa/responsabilidades e quer avançar:
+A orientação deve ser avançar para coleta se liberado pelo backend, ou validar apenas a pendência mínima restante.
+Não repetir explicações longas.
+
+6. Se houver conflito entre status antigo e histórico:
+Priorize o histórico real.
+
+7. Nunca invente que o lead entendeu se ele trouxe objeção, dúvida ou rejeição.
+
+Responda somente JSON válido, sem markdown, neste formato:
+
+{
+  "leadEntendeuUltimaExplicacao": false,
+  "leadQuerAvancar": false,
+  "leadCriticouRepeticao": false,
+  "naoRepetirUltimoTema": false,
+  "temaUltimaRespostaSdr": [],
+  "temaMensagemAtualLead": [],
+  "proximaAcaoSemantica": "nao_analisado",
+  "orientacaoParaPreSdr": "",
+  "confidence": "baixa",
+  "reason": ""
+}
+
+Valores sugeridos para proximaAcaoSemantica:
+- "responder_pergunta_atual"
+- "nao_repetir_e_avancar"
+- "nao_repetir_e_validar_pendencia_minima"
+- "tratar_objecao"
+- "retomar_coleta"
+- "manter_fase"
+- "nao_analisado"
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              ultimaMensagemLead: lastUserText || "",
+              ultimaRespostaSdr: lastSdrText || "",
+              historicoRecente: recentHistory,
+              lead: {
+                status: lead.status || "",
+                faseQualificacao: lead.faseQualificacao || "",
+                statusOperacional: lead.statusOperacional || "",
+                faseFunil: lead.faseFunil || "",
+                etapas: lead.etapas || {},
+                etapasAguardandoEntendimento: lead.etapasAguardandoEntendimento || {},
+                taxaAlinhada: lead.taxaAlinhada === true,
+                aguardandoConfirmacaoCampo: lead.aguardandoConfirmacaoCampo === true,
+                aguardandoConfirmacao: lead.aguardandoConfirmacao === true,
+                campoEsperado: lead.campoEsperado || "",
+                campoPendente: lead.campoPendente || ""
+              }
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro no Historiador Semântico de Continuidade:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      temaUltimaRespostaSdr: Array.isArray(parsed?.temaUltimaRespostaSdr)
+        ? parsed.temaUltimaRespostaSdr
+        : [],
+      temaMensagemAtualLead: Array.isArray(parsed?.temaMensagemAtualLead)
+        ? parsed.temaMensagemAtualLead
+        : [],
+      confidence: parsed?.confidence || "baixa",
+      reason: parsed?.reason || ""
+    };
+  } catch (error) {
+    console.error("Falha no Historiador Semântico de Continuidade:", error.message);
+    return fallback;
+  }
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -13457,6 +13668,50 @@ const lastAssistantText =
     .find(message => message.role === "assistant")?.content || "";
 
 try {
+
+   const semanticContinuity = await runConversationContinuityAnalyzer({
+  lead: currentLead || {},
+  history,
+  lastUserText: text,
+  lastSdrText: lastAssistantText
+});
+
+if (
+  semanticContinuity?.leadCriticouRepeticao === true ||
+  semanticContinuity?.naoRepetirUltimoTema === true ||
+  semanticContinuity?.leadQuerAvancar === true
+) {
+  backendStrategicGuidance.push({
+    tipo: "continuidade_semantica_historico",
+    prioridade: semanticContinuity?.leadCriticouRepeticao === true ? "critica" : "alta",
+    motivo: semanticContinuity?.reason || "Historiador semântico detectou continuidade relevante.",
+    orientacaoParaPreSdr:
+      [
+        semanticContinuity?.orientacaoParaPreSdr || "",
+        semanticContinuity?.leadCriticouRepeticao === true
+          ? "O lead criticou repetição. A SDR deve reconhecer curto e NÃO repetir taxa, responsabilidades, estoque ou benefícios já explicados."
+          : "",
+        semanticContinuity?.naoRepetirUltimoTema === true
+          ? `Não repetir o último tema explicado pela SDR: ${Array.isArray(semanticContinuity.temaUltimaRespostaSdr) ? semanticContinuity.temaUltimaRespostaSdr.join(", ") : "ver histórico"}.`
+          : "",
+        semanticContinuity?.leadQuerAvancar === true
+          ? "O lead demonstrou vontade de avançar. Se a coleta estiver liberada, conduzir para o primeiro dado pendente. Se não estiver, validar somente a menor pendência obrigatória."
+          : "",
+        "Não responder com textão já explicado. Não reancorar taxa se a crítica for repetição."
+      ].filter(Boolean).join("\n"),
+    semanticContinuity
+  });
+
+  console.log("🧠 Historiador Semântico orientou continuidade antes do Pré-SDR:", {
+    user: from,
+    leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
+    leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
+    leadCriticouRepeticao: semanticContinuity?.leadCriticouRepeticao === true,
+    naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
+    proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "nao_analisado"
+  });
+}
+   
 preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
   history,
@@ -14212,14 +14467,17 @@ if (sdrReviewFindings.length > 0) {
   const primeiraRespostaSdr = respostaFinal;
 
   respostaFinal = await regenerateSdrReplyWithGuardGuidance({
-    currentLead,
-    history,
-    userText: text,
-    primeiraRespostaSdr,
-    preSdrConsultantAdvice: preSdrConsultantAdvice || {},
-    preSdrConsultantContext,
-    guardFindings: sdrReviewFindings
-  });
+  currentLead: {
+    ...(currentLead || {}),
+    semanticContinuity: typeof semanticContinuity !== "undefined" ? semanticContinuity : null
+  },
+  history,
+  userText: text,
+  primeiraRespostaSdr,
+  preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+  preSdrConsultantContext,
+  guardFindings: sdrReviewFindings
+});
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
     user: from,
