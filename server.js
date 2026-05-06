@@ -8104,6 +8104,462 @@ function enforceLeadQuestionWasAnswered({
   };
 }
 
+function iqgNormalizeFunnelText(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[“”"']/g, "")
+    .replace(/[!?.,;:()[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function iqgTextIncludesAny(text = "", terms = []) {
+  const t = iqgNormalizeFunnelText(text);
+
+  return terms.some(term => t.includes(iqgNormalizeFunnelText(term)));
+}
+
+function iqgGetLastAssistantMessageForFunnel(history = []) {
+  if (typeof getLastAssistantMessage === "function") {
+    const fromExistingHelper = getLastAssistantMessage(history);
+
+    if (fromExistingHelper) {
+      return fromExistingHelper;
+    }
+  }
+
+  if (!Array.isArray(history)) return "";
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]?.role === "assistant" && history[i]?.content) {
+      return history[i].content;
+    }
+  }
+
+  return "";
+}
+
+function iqgDetectFunnelStepsExplainedInText(text = "") {
+  const t = iqgNormalizeFunnelText(text);
+
+  const explicouPrograma =
+    t.includes("programa parceiro homologado") ||
+    t.includes("parceiro homologado") ||
+    t.includes("parceria comercial") ||
+    t.includes("vende produtos direto da industria") ||
+    t.includes("vender produtos direto da industria");
+
+  const explicouBeneficios =
+    (
+      t.includes("suporte") &&
+      (
+        t.includes("treinamento") ||
+        t.includes("materiais") ||
+        t.includes("material") ||
+        t.includes("industria")
+      )
+    ) ||
+    t.includes("voce nao comeca sozinho") ||
+    t.includes("você não começa sozinho") ||
+    t.includes("folder explicativo");
+
+  const explicouEstoque =
+    t.includes("comodato") ||
+    t.includes("lote inicial") ||
+    t.includes("estoque inicial") ||
+    t.includes("produtos em comodato") ||
+    t.includes("pronta entrega") ||
+    t.includes("pronta-entrega");
+
+  const explicouResponsabilidades =
+    t.includes("responsavel pela guarda") ||
+    t.includes("responsável pela guarda") ||
+    t.includes("responsavel pela conservacao") ||
+    t.includes("responsável pela conservação") ||
+    t.includes("comunicacao correta das vendas") ||
+    t.includes("comunicação correta das vendas") ||
+    (
+      t.includes("responsabilidades") &&
+      t.includes("parceiro")
+    );
+
+  const explicouInvestimento =
+    (
+      t.includes("r$ 1 990") ||
+      t.includes("r$ 1990") ||
+      t.includes("1 990") ||
+      t.includes("1.990") ||
+      t.includes("1990") ||
+      t.includes("taxa de adesao") ||
+      t.includes("taxa de adesão") ||
+      t.includes("investimento")
+    ) &&
+    (
+      t.includes("nao e compra de mercadoria") ||
+      t.includes("não é compra de mercadoria") ||
+      t.includes("nao e caucao") ||
+      t.includes("não é caução") ||
+      t.includes("nao e garantia") ||
+      t.includes("não é garantia") ||
+      t.includes("parcelado") ||
+      t.includes("10x") ||
+      t.includes("lote inicial") ||
+      t.includes("mais de r$ 5")
+    );
+
+  const explicouCompromisso =
+    t.includes("resultado depende da sua atuacao") ||
+    t.includes("resultado depende da sua atuação") ||
+    t.includes("depende da sua atuacao nas vendas") ||
+    t.includes("depende da sua atuação nas vendas") ||
+    t.includes("sua atuacao comercial") ||
+    t.includes("sua atuação comercial");
+
+  return {
+    programa: explicouPrograma,
+    beneficios: explicouBeneficios,
+    estoque: explicouEstoque,
+    responsabilidades: explicouResponsabilidades,
+    investimento: explicouInvestimento,
+    compromisso: explicouCompromisso
+  };
+}
+
+function iqgLeadHasBlockingDoubtOrObjection(text = "", semanticIntent = null) {
+  const t = iqgNormalizeFunnelText(text);
+
+  if (semanticIntent?.blockingObjection === true) return true;
+  if (semanticIntent?.priceObjection === true) return true;
+  if (semanticIntent?.stockObjection === true) return true;
+  if (semanticIntent?.riskObjection === true) return true;
+
+  return (
+    t.includes("nao entendi") ||
+    t.includes("não entendi") ||
+    t.includes("nao ficou claro") ||
+    t.includes("não ficou claro") ||
+    t.includes("como assim") ||
+    t.includes("duvida") ||
+    t.includes("dúvida") ||
+    t.includes("confuso") ||
+    t.includes("confusa") ||
+    t.includes("caro") ||
+    t.includes("pesado") ||
+    t.includes("muito alto") ||
+    t.includes("nao tenho dinheiro") ||
+    t.includes("não tenho dinheiro") ||
+    t.includes("nao quero") ||
+    t.includes("não quero") ||
+    t.includes("vou pensar") ||
+    t.includes("depois eu vejo") ||
+    t.includes("medo") ||
+    t.includes("golpe") ||
+    t.includes("risco")
+  );
+}
+
+function iqgLeadHasStrongUnderstandingSignal(text = "", semanticIntent = null) {
+  const t = iqgNormalizeFunnelText(text);
+
+  if (semanticIntent?.positiveRealInterest === true) return true;
+  if (semanticIntent?.positiveCommitment === true) return true;
+
+  const weakOnlyPatterns = [
+    /^ok$/,
+    /^sim$/,
+    /^ta$/,
+    /^tá$/,
+    /^certo$/,
+    /^beleza$/,
+    /^show$/,
+    /^legal$/,
+    /^perfeito$/
+  ];
+
+  if (weakOnlyPatterns.some(pattern => pattern.test(t))) {
+    return false;
+  }
+
+  return (
+    t.includes("entendi") ||
+    t.includes("entendido") ||
+    t.includes("compreendi") ||
+    t.includes("ficou claro") ||
+    t.includes("faz sentido") ||
+    t.includes("sem duvida") ||
+    t.includes("sem dúvida") ||
+    t.includes("tudo certo") ||
+    t.includes("pode seguir") ||
+    t.includes("podemos seguir") ||
+    t.includes("vamos seguir") ||
+    t.includes("pode continuar") ||
+    t.includes("proximo") ||
+    t.includes("próximo") ||
+    t.includes("vamos para o proximo") ||
+    t.includes("vamos para o próximo") ||
+    t.includes("quero continuar") ||
+    t.includes("quero seguir") ||
+    t.includes("vamos pra pre analise") ||
+    t.includes("vamos para pre analise") ||
+    t.includes("vamos pra pré análise") ||
+    t.includes("vamos para pré análise")
+  );
+}
+
+function iqgLeadMovedToNextLogicalTopic({
+  leadText = "",
+  explainedSteps = {}
+} = {}) {
+  const t = iqgNormalizeFunnelText(leadText);
+
+  const askedAboutBenefits =
+    t.includes("beneficio") ||
+    t.includes("benefício") ||
+    t.includes("suporte") ||
+    t.includes("treinamento") ||
+    t.includes("material");
+
+  const askedAboutStock =
+    t.includes("estoque") ||
+    t.includes("comodato") ||
+    t.includes("kit") ||
+    t.includes("lote") ||
+    t.includes("produto") ||
+    t.includes("produtos");
+
+  const askedAboutResponsibilities =
+    t.includes("responsabilidade") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação") ||
+    t.includes("reposicao") ||
+    t.includes("reposição") ||
+    t.includes("vendeu") ||
+    t.includes("vender");
+
+  const askedAboutInvestment =
+    t.includes("taxa") ||
+    t.includes("valor") ||
+    t.includes("preco") ||
+    t.includes("preço") ||
+    t.includes("investimento") ||
+    t.includes("1990") ||
+    t.includes("1.990") ||
+    t.includes("pagamento") ||
+    t.includes("parcelar") ||
+    t.includes("cartao") ||
+    t.includes("cartão") ||
+    t.includes("pix");
+
+  const askedAboutPreAnalysis =
+    t.includes("pre analise") ||
+    t.includes("pré análise") ||
+    t.includes("pre-analise") ||
+    t.includes("pré-análise") ||
+    t.includes("cadastro") ||
+    t.includes("participar") ||
+    t.includes("como faço") ||
+    t.includes("como faco") ||
+    t.includes("quero entrar");
+
+  return {
+    programa:
+      explainedSteps.programa === true &&
+      (askedAboutBenefits || askedAboutStock || askedAboutResponsibilities || askedAboutInvestment || askedAboutPreAnalysis),
+
+    beneficios:
+      explainedSteps.beneficios === true &&
+      (askedAboutStock || askedAboutResponsibilities || askedAboutInvestment || askedAboutPreAnalysis),
+
+    estoque:
+      explainedSteps.estoque === true &&
+      (askedAboutResponsibilities || askedAboutInvestment || askedAboutPreAnalysis),
+
+    responsabilidades:
+      explainedSteps.responsabilidades === true &&
+      (askedAboutInvestment || askedAboutPreAnalysis),
+
+    investimento:
+      explainedSteps.investimento === true &&
+      askedAboutPreAnalysis
+  };
+}
+
+function iqgLeadConfirmedInvestmentUnderstanding(text = "", semanticIntent = null) {
+  const t = iqgNormalizeFunnelText(text);
+
+  if (iqgLeadHasBlockingDoubtOrObjection(text, semanticIntent)) {
+    return false;
+  }
+
+  return (
+    t.includes("entendi a taxa") ||
+    t.includes("entendi o investimento") ||
+    t.includes("ficou claro a taxa") ||
+    t.includes("ficou claro o investimento") ||
+    t.includes("faz sentido a taxa") ||
+    t.includes("faz sentido o investimento") ||
+    t.includes("estou de acordo com a taxa") ||
+    t.includes("estou de acordo com o investimento") ||
+    t.includes("pode seguir") ||
+    t.includes("podemos seguir") ||
+    t.includes("vamos seguir") ||
+    t.includes("quero seguir") ||
+    t.includes("vamos pra pre analise") ||
+    t.includes("vamos para pre analise") ||
+    t.includes("vamos pra pré análise") ||
+    t.includes("vamos para pré análise")
+  );
+}
+
+function iqgBuildFunnelProgressUpdateFromLeadReply({
+  leadText = "",
+  history = [],
+  currentLead = {},
+  semanticIntent = null
+} = {}) {
+  const currentEtapas = {
+    ...(currentLead?.etapas || {})
+  };
+
+  const lastAssistantText = iqgGetLastAssistantMessageForFunnel(history);
+  const explainedPreviously = iqgDetectFunnelStepsExplainedInText(lastAssistantText);
+
+  const hasStrongUnderstanding = iqgLeadHasStrongUnderstandingSignal(leadText, semanticIntent);
+  const hasBlockingDoubtOrObjection = iqgLeadHasBlockingDoubtOrObjection(leadText, semanticIntent);
+  const movedToNextTopic = iqgLeadMovedToNextLogicalTopic({
+    leadText,
+    explainedSteps: explainedPreviously
+  });
+
+  const etapasUpdate = {
+    ...currentEtapas
+  };
+
+  const understoodSteps = [];
+  const evidence = {
+    leadText,
+    lastAssistantText,
+    criterio: "",
+    explainedPreviously,
+    movedToNextTopic
+  };
+
+  if (hasBlockingDoubtOrObjection) {
+    return {
+      changed: false,
+      etapas: etapasUpdate,
+      understoodSteps,
+      evidence: {
+        ...evidence,
+        criterio: "lead_trouxe_duvida_ou_objecao"
+      }
+    };
+  }
+
+  function markStep(step, reason) {
+    if (etapasUpdate[step] !== true) {
+      etapasUpdate[step] = true;
+      understoodSteps.push(step);
+    }
+
+    evidence.criterio = evidence.criterio || reason;
+  }
+
+  if (explainedPreviously.programa && (hasStrongUnderstanding || movedToNextTopic.programa)) {
+    markStep("programa", "lead_confirmou_ou_avancou_contexto_apos_programa");
+  }
+
+  if (explainedPreviously.beneficios && (hasStrongUnderstanding || movedToNextTopic.beneficios)) {
+    markStep("beneficios", "lead_confirmou_ou_avancou_contexto_apos_beneficios");
+  }
+
+  if (explainedPreviously.estoque && (hasStrongUnderstanding || movedToNextTopic.estoque)) {
+    markStep("estoque", "lead_confirmou_ou_avancou_contexto_apos_estoque");
+  }
+
+  if (explainedPreviously.responsabilidades && (hasStrongUnderstanding || movedToNextTopic.responsabilidades)) {
+    markStep("responsabilidades", "lead_confirmou_ou_avancou_contexto_apos_responsabilidades");
+  }
+
+  if (
+    explainedPreviously.investimento &&
+    iqgLeadConfirmedInvestmentUnderstanding(leadText, semanticIntent)
+  ) {
+    markStep("investimento", "lead_confirmou_entendimento_do_investimento");
+  }
+
+  return {
+    changed: understoodSteps.length > 0,
+    etapas: etapasUpdate,
+    understoodSteps,
+    evidence
+  };
+}
+
+function iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
+  respostaFinal = "",
+  currentLead = {}
+} = {}) {
+  const currentEtapas = {
+    ...(currentLead?.etapas || {})
+  };
+
+  const explainedNow = iqgDetectFunnelStepsExplainedInText(respostaFinal);
+
+  const etapasUpdate = {
+    ...currentEtapas
+  };
+
+  const pendingFlags = {
+    ...(currentLead?.etapasAguardandoEntendimento || {})
+  };
+
+  const pendingSteps = [];
+
+  if (explainedNow.programa && currentEtapas.programa !== true) {
+    pendingFlags.programa = true;
+    pendingSteps.push("programa");
+  }
+
+  if (explainedNow.beneficios && currentEtapas.beneficios !== true) {
+    pendingFlags.beneficios = true;
+    pendingSteps.push("beneficios");
+  }
+
+  if (explainedNow.estoque && currentEtapas.estoque !== true) {
+    pendingFlags.estoque = true;
+    pendingSteps.push("estoque");
+  }
+
+  if (explainedNow.responsabilidades && currentEtapas.responsabilidades !== true) {
+    pendingFlags.responsabilidades = true;
+    pendingSteps.push("responsabilidades");
+  }
+
+  if (explainedNow.investimento && currentEtapas.investimento !== true) {
+    etapasUpdate.taxaPerguntada = true;
+    pendingFlags.investimento = true;
+    pendingSteps.push("investimento");
+  }
+
+  if (explainedNow.compromisso && currentEtapas.compromisso !== true) {
+    etapasUpdate.compromissoPerguntado = true;
+    pendingFlags.compromisso = true;
+    pendingSteps.push("compromisso");
+  }
+
+  return {
+    changed: pendingSteps.length > 0,
+    etapas: etapasUpdate,
+    pendingFlags,
+    pendingSteps,
+    explainedNow
+  };
+}
+
 function buildConversationMemoryForAgents({
   lead = {},
   history = [],
@@ -13208,6 +13664,8 @@ if (explicouCompromisso) {
 await saveLeadProfile(from, {
   etapas: etapasUpdate
 });
+
+     
 if (containsInternalContextLeak(respostaFinal)) {
   console.warn("⚠️ Resposta bloqueada por possível vazamento de contexto interno:", {
     user: from
