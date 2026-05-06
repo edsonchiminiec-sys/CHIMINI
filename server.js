@@ -11748,135 +11748,173 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
      
      if (
   currentLead?.faseQualificacao === "aguardando_valor_correcao_final" &&
-  currentLead?.campoPendente
+  currentLead?.campoPendente &&
+  !dataFlowQuestionAlreadyGuided
 ) {
   const campo = currentLead.campoPendente;
 
   let valorCorrigido = text.trim();
 
-        // 🛡️ PROTEÇÃO 25B-5:
-// Se o sistema está esperando uma correção de dado,
-// não pode salvar pergunta, reclamação ou frase genérica como valor corrigido.
-if (
-  isLeadQuestionDuringDataFlow(text, currentLead || {}) ||
-  isLeadQuestionObjectionOrCorrection(text)
-) {
-  const msg = await answerDataFlowQuestion({
-    currentLead: currentLead || {},
-    history,
-    userText: text
-  });
+  // BLOCO 11A:
+  // Se o lead está corrigindo um dado, mas faz uma pergunta ou objeção,
+  // o backend NÃO responde direto e NÃO salva essa mensagem como dado.
+  // Ele orienta o Pré-SDR e deixa a SDR responder.
+  const leadPerguntouDuranteCorrecao =
+    isLeadQuestionDuringDataFlow(text, currentLead || {}) ||
+    isLeadQuestionObjectionOrCorrection(text);
 
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+  if (leadPerguntouDuranteCorrecao) {
+    dataFlowQuestionAlreadyGuided = true;
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
+    const campoRetomadaColeta =
+      currentLead?.campoEsperado ||
+      currentLead?.campoPendente ||
+      "";
+
+    backendStrategicGuidance.push({
+      tipo: "pergunta_durante_correcao_de_dado",
+      prioridade: "alta",
+      motivo: "Lead fez pergunta, objeção ou comentário durante correção de dado.",
+      orientacaoParaPreSdr:
+        [
+          "O lead estava corrigindo um dado, mas trouxe pergunta, objeção ou mensagem que não deve ser salva como valor corrigido.",
+          "O backend NÃO deve responder diretamente e NÃO deve salvar essa mensagem como dado cadastral.",
+          "O Pré-SDR deve orientar a SDR a responder primeiro a manifestação atual do lead.",
+          "Depois, a SDR deve retomar a correção exatamente do campo pendente.",
+          campoRetomadaColeta
+            ? `Campo pendente para retomar: ${campoRetomadaColeta}.`
+            : "Verificar o campo pendente antes de retomar.",
+          "Não salvar essa mensagem como nome, CPF, telefone, cidade ou estado."
+        ].join("\n")
+    });
+
+    await saveLeadProfile(from, {
+      fluxoPausadoPorPergunta: true,
+      ultimaPerguntaDuranteColeta: text,
+      campoRetomadaColeta,
+      ultimaMensagem: text,
+      ultimaDecisaoBackend: buildBackendDecision({
+        tipo: "pergunta_durante_correcao_de_dado",
+        motivo: "lead_fez_pergunta_ou_objecao_durante_correcao_de_dado",
+        acao: "orientar_pre_sdr_sem_responder_direto",
+        mensagemLead: text,
+        detalhes: {
+          faseAtual: currentLead?.faseQualificacao || "",
+          campoEsperado: currentLead?.campoEsperado || "",
+          campoPendente: currentLead?.campoPendente || "",
+          deveRetomarColetaDepois: true
+        }
+      })
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🧭 Pergunta durante correção de dado enviada ao Pré-SDR:", {
+      user: from,
+      ultimaMensagemLead: text,
+      campoRetomadaColeta
+    });
+  } else {
+    if (campo === "cpf") {
+      valorCorrigido = formatCPF(valorCorrigido);
+    }
+
+    if (campo === "telefone") {
+      valorCorrigido = formatPhone(valorCorrigido);
+    }
+
+    if (campo === "estado") {
+      valorCorrigido = normalizeUF(valorCorrigido);
+    }
+
+    // 🛡️ VALIDAÇÃO DO VALOR CORRIGIDO
+    // Aqui impedimos que texto ruim seja salvo como nome, cidade ou estado.
+    if (
+      campo === "nome" &&
+      isInvalidLooseNameCandidate(valorCorrigido)
+    ) {
+      const msg = "Esse texto não parece um nome completo válido 😊\n\nPode me enviar o nome completo correto?";
+
+      await sendWhatsAppMessage(from, msg);
+      await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+
+      return;
+    }
+
+    if (
+      ["cidade", "estado"].includes(campo) &&
+      isInvalidLocationCandidate(valorCorrigido)
+    ) {
+      const msg =
+        campo === "cidade"
+          ? "Esse texto não parece uma cidade válida 😊\n\nPode me enviar somente a cidade correta?"
+          : "Esse texto não parece um estado válido 😊\n\nPode me enviar somente a sigla do estado? Exemplo: SP, RJ ou MG.";
+
+      await sendWhatsAppMessage(from, msg);
+      await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+
+      return;
+    }
+
+    if (
+      campo === "estado" &&
+      !VALID_UFS.includes(normalizeUF(valorCorrigido))
+    ) {
+      const msg = "O estado informado parece inválido 😊\n\nPode me enviar somente a sigla correta? Exemplo: SP, RJ ou MG.";
+
+      await sendWhatsAppMessage(from, msg);
+      await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+
+      return;
+    }
+
+    const dadosAtualizados = {
+      ...(currentLead || {}),
+      [campo]: valorCorrigido
+    };
+
+    if (dadosAtualizados.cidade && dadosAtualizados.estado) {
+      dadosAtualizados.cidadeEstado = `${dadosAtualizados.cidade}/${normalizeUF(dadosAtualizados.estado)}`;
+    }
+
+    await saveLeadProfile(from, {
+      ...dadosAtualizados,
+      cidadePendente: null,
+      estadoPendente: null,
+      campoPendente: null,
+      valorPendente: null,
+      campoEsperado: null,
+      aguardandoConfirmacaoCampo: false,
+      aguardandoConfirmacao: true,
+      dadosConfirmadosPeloLead: false,
+      faseQualificacao: "aguardando_confirmacao_dados",
+      status: "aguardando_confirmacao_dados"
+    });
+
+    const msg = buildLeadConfirmationMessage(dadosAtualizados);
+
+    await sendWhatsAppMessage(from, msg);
+    await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    return;
   }
-
-  return;
 }
-
-  if (campo === "cpf") {
-    valorCorrigido = formatCPF(valorCorrigido);
-  }
-
-  if (campo === "telefone") {
-    valorCorrigido = formatPhone(valorCorrigido);
-  }
-
-  if (campo === "estado") {
-    valorCorrigido = normalizeUF(valorCorrigido);
-  }
-
-        // 🛡️ VALIDAÇÃO DO VALOR CORRIGIDO
-// Aqui impedimos que texto ruim seja salvo como nome, cidade ou estado.
-if (
-  campo === "nome" &&
-  isInvalidLooseNameCandidate(valorCorrigido)
-) {
-  const msg = "Esse texto não parece um nome completo válido 😊\n\nPode me enviar o nome completo correto?";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
-}
-
-if (
-  ["cidade", "estado"].includes(campo) &&
-  isInvalidLocationCandidate(valorCorrigido)
-) {
-  const msg =
-    campo === "cidade"
-      ? "Esse texto não parece uma cidade válida 😊\n\nPode me enviar somente a cidade correta?"
-      : "Esse texto não parece um estado válido 😊\n\nPode me enviar somente a sigla do estado? Exemplo: SP, RJ ou MG.";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
-}
-
-if (
-  campo === "estado" &&
-  !VALID_UFS.includes(normalizeUF(valorCorrigido))
-) {
-  const msg = "O estado informado parece inválido 😊\n\nPode me enviar somente a sigla correta? Exemplo: SP, RJ ou MG.";
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
-}
-
-  const dadosAtualizados = {
-    ...(currentLead || {}),
-    [campo]: valorCorrigido
-  };
-
-  if (dadosAtualizados.cidade && dadosAtualizados.estado) {
-    dadosAtualizados.cidadeEstado = `${dadosAtualizados.cidade}/${normalizeUF(dadosAtualizados.estado)}`;
-  }
-
-  await saveLeadProfile(from, {
-  ...dadosAtualizados,
-  cidadePendente: null,
-  estadoPendente: null,
-  campoPendente: null,
-  valorPendente: null,
-  campoEsperado: null,
-  aguardandoConfirmacaoCampo: false,
-  aguardandoConfirmacao: true,
-  dadosConfirmadosPeloLead: false,
-  faseQualificacao: "aguardando_confirmacao_dados",
-  status: "aguardando_confirmacao_dados"
-});
-
-  const msg = buildLeadConfirmationMessage(dadosAtualizados);
-
-  await sendWhatsAppMessage(from, msg);
-  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-
-  return;
-}
-
      // 🧠 MODO PÓS-CRM ATIVO E SEGURO
 // Se o lead já foi enviado ao CRM ou está em atendimento,
 // a SDR continua respondendo dúvidas, mas não reinicia coleta,
