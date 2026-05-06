@@ -7954,28 +7954,28 @@ function canStartDataCollection(lead = {}) {
     return true;
   }
 
-  const investimentoJaTrabalhado =
-    etapas.investimento === true ||
-    lead?.taxaAlinhada === true ||
-    lead?.taxaModoConversao === true ||
-    lead?.faseFunil === "investimento" ||
-    lead?.faseQualificacao === "qualificando";
-
-  const temObjecaoBloqueanteAtual =
-    lead?.sinalObjecaoTaxa === true ||
-    Number(lead?.taxaObjectionCount || 0) > 1;
-
   /*
-    BLOCO 17:
-    Entrada no pré-cadastro aliviada.
+    CORREÇÃO:
+    A entrada no pré-cadastro fica aliviada no ACEITE do lead,
+    mas NÃO fica aliviada na condução das etapas.
 
-    Regra:
-    Depois que o investimento/taxa foi trabalhado,
-    não precisamos exigir aceite formal de cada etapa.
-    Se o lead sinalizou continuidade e não há objeção bloqueante ativa,
-    podemos entrar na coleta.
+    Ou seja:
+    - não exige frase específica do lead para cada etapa;
+    - mas exige que o funil tenha passado por programa, benefícios,
+      estoque, responsabilidades e investimento.
   */
-  return investimentoJaTrabalhado && !temObjecaoBloqueanteAtual;
+  const etapasObrigatoriasConduzidas =
+    etapas.programa === true &&
+    etapas.beneficios === true &&
+    etapas.estoque === true &&
+    etapas.responsabilidades === true &&
+    etapas.investimento === true;
+
+  const taxaSemObjecaoAtiva =
+    lead?.sinalObjecaoTaxa !== true &&
+    Number(lead?.taxaObjectionCount || 0) <= 1;
+
+  return etapasObrigatoriasConduzidas && taxaSemObjecaoAtiva;
 }
 
 function canAskForRealInterest(lead = {}) {
