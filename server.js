@@ -10080,6 +10080,17 @@ function isPostCrmLead(lead = {}) {
   );
 }
 
+function isHumanAssumedLead(lead = {}) {
+  return Boolean(
+    lead?.humanoAssumiu === true ||
+    lead?.atendimentoHumanoAtivo === true ||
+    lead?.botBloqueadoPorHumano === true ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.status === "em_atendimento" ||
+    lead?.faseQualificacao === "em_atendimento"
+  );
+}
+
 async function answerPostCrmQuestion({
   currentLead = {},
   history = [],
