@@ -3261,65 +3261,21 @@ await db.collection("internal_alert_locks").updateOne(
 function buildSdrInternalStrategicContext({
   lead = {}
 } = {}) {
-  const supervisor = lead.supervisor || {};
-  const classificacao = lead.classificacao || {};
-  const consultoria = lead.consultoria || {};
+  /*
+    BLOCO 15B:
+    Contexto estratégico antigo desativado para a SDR.
 
-  const hasSupervisor =
-    supervisor.analisadoEm ||
-    supervisor.riscoPerda ||
-    supervisor.pontoTrava ||
-    supervisor.necessitaHumano === true;
+    Motivo:
+    - Supervisor é auditor pós-SDR e pode gerar falso positivo.
+    - Classificador/Consultoria salvos podem estar atrasados.
+    - A SDR já recebe a orientação atual do Pré-SDR obrigatório.
+    - A SDR também recebe memória conversacional atual.
 
-  const hasClassification =
-    classificacao.classificadoEm ||
-    classificacao.perfilComportamentalPrincipal ||
-    classificacao.intencaoPrincipal ||
-    classificacao.objecaoPrincipal;
-
-  const hasConsulting =
-    consultoria.consultadoEm ||
-    consultoria.estrategiaRecomendada ||
-    consultoria.proximaMelhorAcao ||
-    consultoria.prioridadeComercial;
-
-  if (!hasSupervisor && !hasClassification && !hasConsulting) {
-    return "";
-  }
-
-  return `CONTEXTO ESTRATÉGICO INTERNO — NÃO MOSTRAR AO LEAD
-
-Supervisor:
-- Risco de perda: ${supervisor.riscoPerda || "nao_analisado"}
-- Ponto de trava: ${supervisor.pontoTrava || "sem_trava_detectada"}
-- Necessita humano: ${supervisor.necessitaHumano === true ? "sim" : "não"}
-- Qualidade da condução SDR: ${supervisor.qualidadeConducaoSdr || "nao_analisado"}
-- Resumo do Supervisor: ${supervisor.resumoDiagnostico || "-"}
-
-Classificador:
-- Perfil comportamental: ${classificacao.perfilComportamentalPrincipal || "nao_analisado"}
-- Intenção principal: ${classificacao.intencaoPrincipal || "nao_analisado"}
-- Objeção principal: ${classificacao.objecaoPrincipal || "sem_objecao_detectada"}
-- Confiança da classificação: ${classificacao.confiancaClassificacao || "nao_analisado"}
-- Resumo do perfil: ${classificacao.resumoPerfil || "-"}
-
-Consultor Assistente:
-- Estratégia recomendada: ${consultoria.estrategiaRecomendada || "nao_analisado"}
-- Próxima melhor ação: ${consultoria.proximaMelhorAcao || "-"}
-- Abordagem sugerida: ${consultoria.abordagemSugerida || "-"}
-- Argumento principal: ${consultoria.argumentoPrincipal || "-"}
-- Cuidado principal: ${consultoria.cuidadoPrincipal || "-"}
-- Oferta mais adequada: ${consultoria.ofertaMaisAdequada || "nao_analisado"}
-- Prioridade comercial: ${consultoria.prioridadeComercial || "nao_analisado"}
-
-REGRAS PARA USO FUTURO:
-- Este contexto é interno.
-- Não repetir esses rótulos para o lead.
-- Não dizer que houve análise de Supervisor, Classificador ou Consultor.
-- Usar apenas como orientação de tom, cuidado e condução.
-- Nunca prometer aprovação, ganho ou resultado.
-- Nunca pedir pagamento.
-- Nunca pular fase do funil.`;
+    Portanto, para evitar contaminação e repetição,
+    a SDR não deve receber Supervisor/Classificador/Consultoria antigos
+    como system prompt.
+  */
+  return "";
 }
 
 function containsInternalContextLeak(text = "") {
@@ -14341,6 +14297,51 @@ if (startedDataCollection && !podeIniciarColeta) {
 
 // sdrReviewFindings já foi inicializado antes das travas finais.
 
+// BLOCO 15C — HISTORIADOR SEMÂNTICO TAMBÉM ENTRA COMO TRAVA FINAL
+// Se o Historiador detectou que o lead já entendeu, quer avançar,
+// ou criticou repetição, a resposta da SDR precisa respeitar isso.
+// Caso contrário, a própria SDR deve revisar antes do envio.
+if (
+  typeof semanticContinuity !== "undefined" &&
+  (
+    semanticContinuity?.leadCriticouRepeticao === true ||
+    semanticContinuity?.naoRepetirUltimoTema === true ||
+    semanticContinuity?.leadQuerAvancar === true
+  )
+) {
+  sdrReviewFindings.push({
+    tipo: "continuidade_semantica_deve_ser_respeitada",
+    prioridade: semanticContinuity?.leadCriticouRepeticao === true ? "critica" : "alta",
+    orientacao:
+      [
+        "O Historiador Semântico analisou o histórico e a última mensagem do lead.",
+        semanticContinuity?.leadCriticouRepeticao === true
+          ? "O lead criticou repetição. A SDR deve reconhecer isso de forma curta e NÃO repetir taxa, responsabilidades, benefícios ou estoque já explicados."
+          : "",
+        semanticContinuity?.naoRepetirUltimoTema === true
+          ? `Não repetir o último tema já explicado: ${Array.isArray(semanticContinuity.temaUltimaRespostaSdr) ? semanticContinuity.temaUltimaRespostaSdr.join(", ") : "ver histórico"}.`
+          : "",
+        semanticContinuity?.leadQuerAvancar === true
+          ? "O lead demonstrou vontade de avançar. Se a coleta estiver liberada, pedir somente o primeiro dado pendente. Se ainda faltar algo obrigatório, validar apenas a menor pendência com uma pergunta curta."
+          : "",
+        semanticContinuity?.orientacaoParaPreSdr || "",
+        "Não responder com textão já explicado.",
+        "Não reancorar taxa se a crítica do lead for repetição.",
+        "Não repetir responsabilidades se o lead já sinalizou entendimento."
+      ].filter(Boolean).join("\n"),
+    semanticContinuity
+  });
+
+  console.log("🧠 Revisão final exigida pelo Historiador Semântico:", {
+    user: from,
+    leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
+    leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
+    leadCriticouRepeticao: semanticContinuity?.leadCriticouRepeticao === true,
+    naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
+    proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "nao_analisado"
+  });
+}
+     
 const multiDataRequestPattern =
   /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
 
