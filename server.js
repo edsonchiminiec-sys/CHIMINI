@@ -13839,7 +13839,7 @@ if (startedDataCollection && !podeIniciarColeta) {
 // Ele apenas identifica problemas e pede para a própria SDR revisar a resposta
 // antes que qualquer mensagem seja enviada ao lead.
 
-const sdrReviewFindings = [];
+// sdrReviewFindings já foi inicializado antes das travas finais.
 
 const multiDataRequestPattern =
   /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
