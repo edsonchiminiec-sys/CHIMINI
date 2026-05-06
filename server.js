@@ -14433,7 +14433,7 @@ if (mencionouPreAnalise && !podeIniciarColeta) {
         "A SDR mencionou pré-análise ou tentou conduzir para pré-cadastro antes do backend liberar a coleta.",
         "Reescrever sem pedir dados e sem prometer pré-análise agora.",
         "Responder primeiro a última mensagem do lead.",
-        "Depois conduzir para a etapa obrigatória pendente: programa, benefícios, estoque, responsabilidades, investimento ou compromisso.",
+        "Se o investimento/taxa já foi explicado e o lead sinalizou continuidade sem objeção nova, não voltar para etapas antigas; orientar avanço para pré-cadastro se o backend permitir. Só conduzir para etapa pendente se ainda não houve explicação de taxa/investimento.",
         leadDeuApenasConfirmacaoFraca
           ? "O lead deu apenas confirmação fraca; não tratar isso como avanço forte."
           : "",
