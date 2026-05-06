@@ -12469,6 +12469,10 @@ if (
 }
 
 // 🔥 RESPOSTA CONTROLADA PARA PEDIDO DE CADASTRO / PARTICIPAÇÃO
+// 🔥 PEDIDO DE CADASTRO / PARTICIPAÇÃO — BLOCO 5
+// O backend não responde mais diretamente.
+// Ele registra o interesse e orienta o Pré-SDR.
+// A SDR deve responder ao lead seguindo a orientação do Pré-SDR.
 if (
   isCadastroOuParticipacaoIntent(text) &&
   !isCriticalCommercialBlockedState({
@@ -12477,54 +12481,69 @@ if (
   }) &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
-   const firstName = getFirstName(
-    currentLead?.nome ||
-    currentLead?.nomeWhatsApp ||
-    ""
-  );
+  const podeIniciarColetaSeConfirmarInteresse = canStartDataCollection({
+    ...(currentLead || {}),
+    interesseReal: true
+  });
 
-  const cadastroMsg = buildCadastroIntentResponse(currentLead, firstName);
+  const etapasPendentesCadastro = getMissingFunnelStepLabels({
+    ...(currentLead || {}),
+    interesseReal: true
+  });
 
-      await saveLeadProfile(from, {
+  backendStrategicGuidance.push({
+    tipo: "pedido_cadastro_ou_participacao",
+    prioridade: podeIniciarColetaSeConfirmarInteresse ? "critica" : "alta",
+    motivo: "Lead pediu cadastro, participação, entrada no programa ou pré-análise.",
+    orientacaoParaPreSdr:
+      podeIniciarColetaSeConfirmarInteresse
+        ? [
+            "Lead pediu cadastro/participação e as etapas obrigatórias parecem concluídas.",
+            "O Pré-SDR deve orientar a SDR a reconhecer o interesse do lead e conduzir para a pré-análise de forma natural.",
+            "A SDR pode iniciar a coleta de dados somente se o backend permitir o estado de coleta.",
+            "Não pedir vários dados de uma vez. Coletar um dado por vez.",
+            "Começar pelo nome completo, se ainda não estiver confirmado."
+          ].join("\n")
+        : [
+            "Lead pediu cadastro/participação, mas ainda existem etapas obrigatórias pendentes.",
+            "O Pré-SDR deve orientar a SDR a valorizar o interesse do lead, mas explicar que antes da pré-análise precisa alinhar os pontos faltantes.",
+            "A SDR deve responder primeiro ao desejo do lead de seguir e depois conduzir para a próxima etapa pendente de forma natural.",
+            `Etapas pendentes detectadas: ${Array.isArray(etapasPendentesCadastro) && etapasPendentesCadastro.length ? etapasPendentesCadastro.join(", ") : "verificar no histórico"}.`,
+            "Não pedir CPF, telefone, cidade ou estado ainda.",
+            "Não tratar como recusa. O lead demonstrou intenção positiva."
+          ].join("\n")
+  });
+
+  await saveLeadProfile(from, {
     sinalInteresseInicial: true,
     ultimaIntencaoForte: text,
-    status: currentLead?.status || "morno",
-    faseQualificacao: currentLead?.faseQualificacao || "morno",
+    interesseReal: podeIniciarColetaSeConfirmarInteresse
+      ? true
+      : currentLead?.interesseReal === true,
     ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "pedido_cadastro",
       motivo: "lead_pediu_cadastro_ou_participacao",
-      acao: canStartDataCollection(currentLead)
-        ? "iniciar_ou_orientar_pre_analise"
-        : "explicar_etapas_pendentes_antes_cadastro",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
-        podeColetarDados: canStartDataCollection(currentLead),
-        etapasPendentes: getMissingFunnelStepLabels(currentLead)
+        podeIniciarColetaSeConfirmarInteresse,
+        etapasPendentes: etapasPendentesCadastro,
+        naoResponderDiretoPeloBackend: true,
+        naoPedirDadosAntesDaHora: true
       }
     })
   });
-  console.log("✅ Pedido de cadastro respondido com condução segura:", {
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("✅ Pedido de cadastro enviado ao Pré-SDR, sem resposta direta do backend:", {
     user: from,
     ultimaMensagemLead: text,
-    podeColetarDados: canStartDataCollection(currentLead),
-    etapasPendentes: getMissingFunnelStepLabels(currentLead)
+    podeIniciarColetaSeConfirmarInteresse,
+    etapasPendentes: etapasPendentesCadastro
   });
-
-  await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: cadastroMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-     messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
-  });
-
-  return;
-}
-     
+}  
      
 // 🔒 BLOQUEIO DE PRÉ-ANÁLISE PREMATURA
      
