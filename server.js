@@ -1342,7 +1342,6 @@ async function runConsultantAssistant({
   commercialRouteDecision = null,
   backendStrategicGuidance = []
 } = {}) {
-   
   const recentHistory = Array.isArray(history)
     ? history.slice(-12).map(message => ({
         role: message.role,
@@ -1356,8 +1355,46 @@ async function runConsultantAssistant({
     lastUserText,
     lastSdrText
   });
-   
-  v
+
+  const consultantPayload = {
+    lead: {
+      user: lead.user || "",
+      status: lead.status || "",
+      faseQualificacao: lead.faseQualificacao || "",
+      statusOperacional: lead.statusOperacional || "",
+      faseFunil: lead.faseFunil || "",
+      temperaturaComercial: lead.temperaturaComercial || "",
+      rotaComercial: lead.rotaComercial || "",
+      rotaComercialSugerida: lead.rotaComercialSugerida || "",
+      origemConversao: lead.origemConversao || "",
+      origemConversaoSugerida: lead.origemConversaoSugerida || "",
+      interesseReal: lead.interesseReal === true,
+      interesseAfiliado: lead.interesseAfiliado === true,
+      sinalAfiliadoExplicito: lead.sinalAfiliadoExplicito === true,
+      sinalComparacaoProgramas: lead.sinalComparacaoProgramas === true,
+      sinalPerguntaTaxa: lead.sinalPerguntaTaxa === true,
+      sinalObjecaoTaxa: lead.sinalObjecaoTaxa === true,
+      taxaModoConversao: lead.taxaModoConversao === true,
+      taxaObjectionCount: Number(lead.taxaObjectionCount || 0),
+      taxaAlinhada: lead.taxaAlinhada === true,
+      dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+      crmEnviado: lead.crmEnviado === true,
+      etapas: lead.etapas || {},
+      etapasAguardandoEntendimento: lead.etapasAguardandoEntendimento || {}
+    },
+    supervisor: supervisorAnalysis || {},
+    classificacao: classification || {},
+    memoriaConversacional: conversationMemory,
+    interpretacaoSemanticaBackend: semanticIntent || {},
+    decisaoRotaBackend: commercialRouteDecision || {},
+    orientacoesEstrategicasBackend: Array.isArray(backendStrategicGuidance)
+      ? backendStrategicGuidance
+      : [],
+    ultimaMensagemLead: lastUserText || "",
+    ultimaRespostaSdr: lastSdrText || "",
+    historicoRecente: recentHistory
+  };
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -1400,7 +1437,6 @@ async function runConsultantAssistant({
 
   return parseConsultantAdviceJson(rawText);
 }
-
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -13568,102 +13604,92 @@ if (routeMixGuard.changed) {
   respostaFinal = routeMixGuard.respostaFinal;
 }
      
-     // 🔥 ATUALIZA ETAPAS DO FUNIL — VERSÃO MAIS SEGURA
-const etapasUpdate = { ...(currentLead?.etapas || {}) };
+    // 🧭 BLOCO 4 — PROGRESSO DO FUNIL POR ENTENDIMENTO DO LEAD
+// A etapa NÃO é mais concluída só porque a SDR falou sobre o tema.
+// Primeiro analisamos se a mensagem atual do lead demonstra entendimento,
+// continuidade ou avanço natural em relação à última explicação da SDR.
 
-const respostaEtapaLower = String(respostaFinal || "")
-  .toLowerCase()
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "");
-
-const explicouPrograma =
-  respostaEtapaLower.includes("parceria comercial") ||
-  respostaEtapaLower.includes("programa parceiro homologado") ||
-  respostaEtapaLower.includes("voce vende produtos da iqg") ||
-  respostaEtapaLower.includes("vender produtos da iqg") ||
-  respostaEtapaLower.includes("suporte da industria");
-
-const explicouBeneficios =
-  respostaEtapaLower.includes("suporte") &&
-  (
-    respostaEtapaLower.includes("treinamento") ||
-    respostaEtapaLower.includes("materiais") ||
-    respostaEtapaLower.includes("nao comeca sozinho") ||
-    respostaEtapaLower.includes("nao começa sozinho")
-  );
-
-const explicouEstoque =
-  respostaEtapaLower.includes("comodato") ||
-  (
-    respostaEtapaLower.includes("lote inicial") &&
-    respostaEtapaLower.includes("produtos")
-  ) ||
-  (
-    respostaEtapaLower.includes("estoque") &&
-    respostaEtapaLower.includes("iqg")
-  );
-
-const explicouResponsabilidades =
-  respostaEtapaLower.includes("responsavel pela guarda") ||
-  respostaEtapaLower.includes("responsavel pela conservacao") ||
-  respostaEtapaLower.includes("responsavel pela conservação") ||
-  respostaEtapaLower.includes("comunicacao correta das vendas") ||
-  respostaEtapaLower.includes("comunicação correta das vendas") ||
-  (
-    respostaEtapaLower.includes("responsabilidades") &&
-    respostaEtapaLower.includes("parceiro")
-  );
-
-const explicouInvestimento =
-  (
-    respostaEtapaLower.includes("r$ 1.990") ||
-    respostaEtapaLower.includes("1.990") ||
-    respostaEtapaLower.includes("1990")
-  ) &&
-  (
-    respostaEtapaLower.includes("nao e compra de mercadoria") ||
-    respostaEtapaLower.includes("não é compra de mercadoria") ||
-    respostaEtapaLower.includes("nao e caucao") ||
-    respostaEtapaLower.includes("não é caução") ||
-    respostaEtapaLower.includes("parcelado") ||
-    respostaEtapaLower.includes("10x") ||
-    respostaEtapaLower.includes("lote inicial")
-  );
-
-const explicouCompromisso =
-  respostaEtapaLower.includes("resultado depende da sua atuacao") ||
-  respostaEtapaLower.includes("resultado depende da sua atuação") ||
-  respostaEtapaLower.includes("depende da sua atuacao nas vendas") ||
-  respostaEtapaLower.includes("depende da sua atuação nas vendas");
-
-if (explicouPrograma) {
-  etapasUpdate.programa = true;
-}
-
-if (explicouBeneficios) {
-  etapasUpdate.beneficios = true;
-}
-
-if (explicouEstoque) {
-  etapasUpdate.estoque = true;
-}
-
-if (explicouResponsabilidades) {
-  etapasUpdate.responsabilidades = true;
-}
-
-if (explicouInvestimento) {
-  etapasUpdate.investimento = true;
-  etapasUpdate.taxaPerguntada = true;
-}
-
-if (explicouCompromisso) {
-  etapasUpdate.compromissoPerguntado = true;
-}
-
-await saveLeadProfile(from, {
-  etapas: etapasUpdate
+const funnelProgressFromLead = iqgBuildFunnelProgressUpdateFromLeadReply({
+  leadText: text,
+  history,
+  currentLead,
+  semanticIntent
 });
+
+let etapasDepoisDoEntendimento = {
+  ...(currentLead?.etapas || {})
+};
+
+if (funnelProgressFromLead.changed) {
+  etapasDepoisDoEntendimento = {
+    ...etapasDepoisDoEntendimento,
+    ...funnelProgressFromLead.etapas
+  };
+
+  const patchEntendimentoLead = {
+    etapas: etapasDepoisDoEntendimento,
+    ultimaEvidenciaEntendimentoFunil: {
+      understoodSteps: funnelProgressFromLead.understoodSteps,
+      evidence: funnelProgressFromLead.evidence,
+      registradoEm: new Date()
+    }
+  };
+
+  if (
+    funnelProgressFromLead.understoodSteps.includes("investimento") &&
+    currentLead?.taxaAlinhada !== true
+  ) {
+    patchEntendimentoLead.taxaAlinhada = true;
+    patchEntendimentoLead.taxaObjectionCount = 0;
+    patchEntendimentoLead.ultimaObjecaoTaxa = null;
+
+    patchEntendimentoLead.etapas = {
+      ...patchEntendimentoLead.etapas,
+      taxaPerguntada: false
+    };
+  }
+
+  await saveLeadProfile(from, patchEntendimentoLead);
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("✅ Etapa(s) do funil concluída(s) por entendimento do lead:", {
+    user: from,
+    understoodSteps: funnelProgressFromLead.understoodSteps,
+    criterio: funnelProgressFromLead.evidence?.criterio || "",
+    ultimaMensagemLead: text
+  });
+}
+
+// 🧭 BLOCO 4 — ETAPA APRESENTADA, MAS AINDA AGUARDANDO ENTENDIMENTO
+// Aqui registramos que a SDR apresentou um tema,
+// mas isso NÃO conclui a etapa.
+// Serve para o Historiador/Pré-SDR saberem o que foi explicado
+// e aguardarem o sinal do lead na próxima mensagem.
+
+const pendingFunnelFlagsFromCurrentReply = iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
+  respostaFinal,
+  currentLead
+});
+
+if (pendingFunnelFlagsFromCurrentReply.changed) {
+  await saveLeadProfile(from, {
+    etapas: pendingFunnelFlagsFromCurrentReply.etapas,
+    etapasAguardandoEntendimento: pendingFunnelFlagsFromCurrentReply.pendingFlags,
+    ultimaEtapaApresentadaPelaSdr: {
+      pendingSteps: pendingFunnelFlagsFromCurrentReply.pendingSteps,
+      explainedNow: pendingFunnelFlagsFromCurrentReply.explainedNow,
+      registradoEm: new Date()
+    }
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("🕒 Etapa(s) apresentada(s) pela SDR, aguardando entendimento do lead:", {
+    user: from,
+    pendingSteps: pendingFunnelFlagsFromCurrentReply.pendingSteps
+  });
+}
 
      
 if (containsInternalContextLeak(respostaFinal)) {
