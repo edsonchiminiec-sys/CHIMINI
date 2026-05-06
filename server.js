@@ -10932,7 +10932,8 @@ function getFinalFollowupMessage(lead = {}) {
     lead?.rotaComercial === "afiliado" ||
     lead?.faseQualificacao === "afiliado" ||
     lead?.status === "afiliado";
-     const jaEstaEmAmbos =
+
+  const jaEstaEmAmbos =
     lead?.rotaComercial === "ambos" ||
     lead?.origemConversao === "comparacao_homologado_afiliado";
 
@@ -10941,7 +10942,20 @@ function getFinalFollowupMessage(lead = {}) {
 
 Sua pré-análise já ficou encaminhada para a equipe comercial da IQG.
 
-Se surgir alguma dúvida, fico à disposição.`;
+Se surgir alguma dúvida depois, é só me chamar por aqui.`;
+  }
+
+  if (jaEstaEmAfiliado) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+O caminho mais indicado pra você neste momento é o Programa de Afiliados IQG.
+
+Você pode se cadastrar e começar divulgando por link, sem estoque físico e sem taxa de adesão do Parceiro Homologado.
+
+O cadastro é por aqui:
+https://minhaiqg.com.br/
+
+Se depois quiser entender também o Parceiro Homologado, é só me chamar por aqui.`;
   }
 
   if (jaEstaEmAmbos) {
@@ -10949,41 +10963,26 @@ Se surgir alguma dúvida, fico à disposição.`;
 
 Só reforçando a diferença:
 
-No Programa de Afiliados, você divulga por link, não precisa ter estoque e não tem a taxa de adesão do Parceiro Homologado.
+No Programa de Afiliados, você divulga por link, não precisa ter estoque físico e não tem a taxa de adesão do Parceiro Homologado.
 
 No Parceiro Homologado, o modelo é mais estruturado, com produtos físicos, lote em comodato, suporte, treinamento, contrato e taxa de adesão.
 
-Você pode avaliar só o afiliado, só o homologado ou os dois caminhos.
-
-Cadastro de afiliado:
+Se quiser seguir por um caminho mais leve agora, pode começar pelo Afiliados:
 https://minhaiqg.com.br/
 
-Se quiser retomar depois o Parceiro Homologado, posso te explicar por aqui.`;
-  }
-   
-  if (jaEstaEmAfiliado) {
-    return `${prefixo}vou encerrar por aqui 😊
-
-Só reforçando: para o Programa de Afiliados IQG, você pode acessar o cadastro por aqui:
-https://minhaiqg.com.br/
-
-No afiliado, você divulga por link, não precisa ter estoque e não tem a taxa de adesão do Parceiro Homologado.
-
-Qualquer dúvida, fico à disposição.`;
+E se depois quiser retomar o Parceiro Homologado, é só me chamar por aqui.`;
   }
 
-  return `${prefixo}vou encerrar por aqui 😊
+  return `${prefixo}vou encerrar por aqui por enquanto 😊
 
-Se o modelo de Parceiro Homologado não fizer sentido para você agora, existe também o Programa de Afiliados IQG.
+Fico à disposição caso queira retomar depois ou tirar alguma dúvida sobre o Programa Parceiro Homologado IQG.
 
-Ele é mais simples para começar: você não precisa ter estoque, não precisa receber lote em comodato e não tem a taxa de adesão do Parceiro Homologado.
+E se neste momento você preferir começar de uma forma mais simples, sem estoque físico e divulgando por link, também existe o Programa de Afiliados IQG.
 
-Você se cadastra, gera seus links exclusivos e divulga os produtos online. Quando o cliente compra pelo seu link e a venda é validada, você recebe comissão.
-
-O cadastro é por aqui:
+O cadastro de afiliado é por aqui:
 https://minhaiqg.com.br/
 
-Se depois quiser algo mais estruturado, com produtos em mãos, suporte e lote em comodato, aí sim podemos retomar o Parceiro Homologado.`;
+Se quiser retomar a conversa, é só me chamar por aqui.`;
 }
 
   function shouldStopBotByLifecycle(lead = {}) {
