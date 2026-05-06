@@ -13340,12 +13340,18 @@ const lastAssistantText =
     .find(message => message.role === "assistant")?.content || "";
 
 try {
- preSdrConsultantAdvice = await runConsultantAssistant({
+preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
   history,
   lastUserText: text,
   lastSdrText: lastAssistantText,
-  supervisorAnalysis: currentLead?.supervisor || {},
+
+  // BLOCO 14 — SUPERVISOR NÃO MANDA NA PRÓXIMA RESPOSTA
+  // O Supervisor é auditor pós-SDR e pode gerar falso positivo.
+  // Para a resposta atual, o Pré-SDR deve priorizar histórico real,
+  // última mensagem do lead, memória conversacional e orientações do backend.
+  supervisorAnalysis: {},
+
   classification: currentLead?.classificacao || {},
   semanticIntent,
   commercialRouteDecision,
