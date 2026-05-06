@@ -12421,68 +12421,51 @@ if (
   const recoveryAttemptsAtual = Number(currentLead?.recoveryAttempts || 0);
   const novoRecoveryAttempts = recoveryAttemptsAtual + 1;
 
-  const firstName = getFirstName(
-    currentLead?.nome ||
-    currentLead?.nomeWhatsApp ||
-    ""
-  );
+  backendStrategicGuidance.push({
+    tipo: "recuperacao_comercial_antes_precadastro",
+    prioridade: "alta",
+    tentativa: novoRecoveryAttempts,
+    motivo: "Lead rejeitou, esfriou ou demonstrou trava antes de finalizar o pré-cadastro.",
+    orientacaoParaPreSdr:
+      [
+        `Lead demonstrou rejeição, esfriamento ou trava antes do pré-cadastro. Esta é a tentativa ${novoRecoveryAttempts} de recuperação.`,
+        "O backend NÃO deve responder diretamente e NÃO deve marcar o lead como perdido.",
+        "O Pré-SDR deve orientar a SDR a responder primeiro a manifestação atual do lead.",
+        "A SDR deve tentar entender o motivo real da trava com tom leve, consultivo e sem pressão.",
+        "Se a trava for taxa, dinheiro, risco, estoque ou insegurança, sustentar primeiro o Parceiro Homologado com valor percebido.",
+        "Não oferecer Afiliados automaticamente apenas porque o lead esfriou, achou caro ou disse que vai pensar.",
+        "Afiliados só devem ser mencionados se o lead pedir claramente link, online, venda sem estoque físico, redes sociais, e-commerce, alternativa sem taxa do Homologado, ou rejeitar explicitamente produto físico/estoque.",
+        "Não encerrar a conversa. Fazer uma pergunta simples para manter o lead em movimento."
+      ].join("\n")
+  });
 
-  const deveOferecerAfiliadoAgora =
-    currentLead?.afiliadoOferecidoComoAlternativa === true ||
-    novoRecoveryAttempts > MAX_REENGAGEMENT_ATTEMPTS_BEFORE_AFFILIATE;
-
-  const recoveryMsg = deveOferecerAfiliadoAgora
-    ? buildMandatoryAffiliateAlternativeResponse(firstName)
-    : buildHomologadoRecoveryResponse(novoRecoveryAttempts, firstName);
-
-    await saveLeadProfile(from, {
-    status: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
-    faseQualificacao: deveOferecerAfiliadoAgora ? "afiliado" : "morno",
-    statusOperacional: "ativo",
-    faseFunil: deveOferecerAfiliadoAgora ? "afiliado" : currentLead?.faseFunil || "beneficios",
-    temperaturaComercial: "morno",
-    rotaComercial: deveOferecerAfiliadoAgora ? "afiliado" : currentLead?.rotaComercial || "homologado",
-    interesseAfiliado: deveOferecerAfiliadoAgora,
-    afiliadoOferecidoComoAlternativa: deveOferecerAfiliadoAgora,
-    origemConversao: deveOferecerAfiliadoAgora
-      ? "recuperado_objecao_ou_rejeicao"
-      : currentLead?.origemConversao || "homologado",
+  await saveLeadProfile(from, {
     recoveryAttempts: novoRecoveryAttempts,
+    sinalRecuperacaoComercial: true,
     ultimaRejeicaoOuEsfriamento: text,
     ultimaMensagem: text,
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "recuperacao_comercial",
       motivo: "lead_rejeitou_ou_esfriou_antes_do_precadastro",
-      acao: deveOferecerAfiliadoAgora
-        ? "oferecer_afiliado_como_alternativa"
-        : "tentar_reaquecer_homologado",
+      acao: "orientar_pre_sdr_sem_responder_direto",
       mensagemLead: text,
       detalhes: {
         recoveryAttemptsAnterior: recoveryAttemptsAtual,
         recoveryAttemptsNovo: novoRecoveryAttempts,
-        ofereceuAfiliado: deveOferecerAfiliadoAgora
+        naoMarcarComoPerdido: true,
+        naoOferecerAfiliadoAutomaticamente: true,
+        manterConversaoHomologado: true
       }
     })
   });
-  console.log("🔥 Lead não foi perdido. Recuperação comercial acionada antes do cadastro:", {
+
+  currentLead = await loadLeadProfile(from);
+
+  console.log("🔥 Recuperação comercial enviada ao Pré-SDR, sem resposta direta do backend:", {
     user: from,
     recoveryAttempts: novoRecoveryAttempts,
-    ofereceuAfiliado: deveOferecerAfiliadoAgora,
     ultimaMensagemLead: text
   });
-
-   await finalizeHandledResponse({
-    from,
-    history,
-    userText: text,
-    botText: recoveryMsg,
-    isAudio: !!message.audio?.id,
-    messageId,
-      messageIds: bufferedMessageIds,
-    shouldScheduleFollowups: true
-  });
-
-  return;
 }
 
 // 🔥 RESPOSTA CONTROLADA PARA PEDIDO DE CADASTRO / PARTICIPAÇÃO
