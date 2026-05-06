@@ -13809,7 +13809,24 @@ if (
   currentLead?.sentFiles?.folder &&
   /material|folder|pdf|catalogo|catálogo|kit|manual|contrato|lista/i.test(respostaFinal)
 ) {
-  respostaFinal = "Esse material já te enviei logo acima 😊\n\nConseguiu dar uma olhada? Se quiser, posso te resumir os pontos principais por aqui.";
+  sdrReviewFindings.push({
+    tipo: "material_ja_enviado",
+    prioridade: "media",
+    orientacao:
+      [
+        "O lead pediu material, mas esse material já foi enviado anteriormente.",
+        "A SDR deve responder naturalmente que o material já está acima na conversa.",
+        "Oferecer um resumo curto dos principais pontos, em vez de reenviar ou repetir o comando de arquivo.",
+        "Não incluir [ACTION:SEND_FOLDER] se o folder já foi enviado."
+      ].join("\n")
+  });
+
+  removeFileAction(actions, "folder");
+
+  console.log("📎 Revisão solicitada: lead pediu material já enviado:", {
+    user: from,
+    ultimaMensagemLead: text
+  });
 }
      
 const mencionouPreAnalise =
