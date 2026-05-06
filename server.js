@@ -1878,6 +1878,8 @@ Responda somente JSON válido neste formato:
   "greetingOnly": false,
   "asksQuestion": false,
   "questionTopics": [],
+    "mentionsOtherProductLine": false,
+  "otherProductLineTopics": [],
   "wantsAffiliate": false,
   "wantsHomologado": false,
   "wantsBoth": false,
@@ -1939,14 +1941,17 @@ Responda somente JSON válido neste formato:
     const rawText = data.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(rawText);
 
-    return {
-      ...fallback,
-      ...parsed,
-      questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
-      requestedFile: parsed?.requestedFile || "",
-      confidence: parsed?.confidence || "baixa",
-      reason: parsed?.reason || ""
-    };
+   return {
+  ...fallback,
+  ...parsed,
+  questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
+  otherProductLineTopics: Array.isArray(parsed?.otherProductLineTopics)
+    ? parsed.otherProductLineTopics
+    : [],
+  requestedFile: parsed?.requestedFile || "",
+  confidence: parsed?.confidence || "baixa",
+  reason: parsed?.reason || ""
+};
   } catch (error) {
     console.error("Falha no classificador semântico:", error.message);
     return fallback;
