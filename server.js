@@ -13800,17 +13800,36 @@ const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
 if (mencionouPreAnalise && !podeIniciarColeta) {
-  if (leadDeuApenasConfirmacaoFraca) {
-    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
-  } else if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
-    respostaFinal =
-      "Perfeito 😊 Antes de seguir com a pré-análise, só preciso alinhar um último ponto: você está de acordo que o resultado depende da sua atuação nas vendas?";
-  } else {
-    respostaFinal = getSafeCurrentPhaseResponse(currentLead).message;
-  }
+  sdrReviewFindings.push({
+    tipo: "pre_analise_prematura",
+    prioridade: "critica",
+    orientacao:
+      [
+        "A SDR mencionou pré-análise ou tentou conduzir para pré-cadastro antes do backend liberar a coleta.",
+        "Reescrever sem pedir dados e sem prometer pré-análise agora.",
+        "Responder primeiro a última mensagem do lead.",
+        "Depois conduzir para a etapa obrigatória pendente: programa, benefícios, estoque, responsabilidades, investimento ou compromisso.",
+        leadDeuApenasConfirmacaoFraca
+          ? "O lead deu apenas confirmação fraca; não tratar isso como avanço forte."
+          : "",
+        jaFalouInvestimento && isCommercialProgressConfirmation(text)
+          ? "Se o investimento já foi explicado e o lead demonstrou continuidade, validar compromisso/responsabilidade antes de qualquer coleta."
+          : ""
+      ].filter(Boolean).join("\n")
+  });
+
+  console.log("🧭 Revisão solicitada: pré-análise prematura bloqueada antes do envio:", {
+    user: from,
+    ultimaMensagemLead: text,
+    mencionouPreAnalise,
+    podeIniciarColeta
+  });
 }
      
-// 🚨 BLOQUEIO DE COLETA PREMATURA — COM AVANÇO CONTROLADO E SEM LOOP
+// 🚨 BLOQUEIO DE COLETA PREMATURA — BLOCO 11B
+// A SDR pode ter tentado iniciar coleta antes da hora.
+// O backend NÃO substitui mais a resposta por texto fixo.
+// Ele pede revisão da própria SDR antes do envio.
 if (startedDataCollection && !podeIniciarColeta) {
   const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
 
@@ -13822,25 +13841,42 @@ if (startedDataCollection && !podeIniciarColeta) {
     ultimaRespostaBot.includes("ficou alguma dúvida específica") ||
     ultimaRespostaBot.includes("ficou alguma dúvida");
 
-    if (jaFalouInvestimento && isCommercialProgressConfirmation(text)) {
-    respostaFinal =
-      "Perfeito 😊 Antes de seguirmos com a pré-análise, só preciso confirmar um ponto importante:\n\nVocê está de acordo que o resultado depende da sua atuação nas vendas?";
-  } else if (jaFalouBeneficios && jaEnviouFolder && !jaFalouInvestimento) {
-    respostaFinal =
-      "Perfeito 😊 Agora o próximo ponto é o investimento de adesão.\n\nPosso te explicar esse valor com transparência?";
-  } else if (jaFalouBeneficios && !jaFalouInvestimento) {
-    respostaFinal =
-      "Top! Antes de avançarmos, preciso te explicar a parte do investimento com transparência.\n\nPosso te passar esse ponto agora?";
-    } else if (jaPerguntouDuvida && isCommercialProgressConfirmation(text)) {
-    respostaFinal =
-      "Ótimo! Então vamos avançar.\n\nO próximo ponto é entender melhor os benefícios e o funcionamento do programa. Posso te explicar de forma direta?";
-  } else if (jaEnviouFolder) {
-    respostaFinal =
-      "Perfeito! Como o material já está acima, vou seguir de forma objetiva.\n\nO próximo passo é te explicar os principais pontos do programa antes da pré-análise.";
-  } else {
-    respostaFinal =
-      "Antes de seguirmos, preciso te explicar melhor como funciona o programa 😊\n\nPosso te enviar um material explicativo bem direto?";
-  }
+  sdrReviewFindings.push({
+    tipo: "coleta_prematura",
+    prioridade: "critica",
+    orientacao:
+      [
+        "A SDR tentou iniciar coleta de dados antes do backend liberar.",
+        "Reescrever sem pedir nome, CPF, telefone, cidade ou estado.",
+        "Não dizer que vai seguir com pré-análise agora.",
+        "Responder primeiro a última mensagem do lead.",
+        "Depois conduzir para a etapa pendente correta.",
+        jaFalouInvestimento && isCommercialProgressConfirmation(text)
+          ? "Como o investimento já foi explicado e o lead demonstrou continuidade, validar compromisso: se ele está de acordo que o resultado depende da atuação dele nas vendas."
+          : "",
+        jaFalouBeneficios && jaEnviouFolder && !jaFalouInvestimento
+          ? "Como benefícios/folder já foram trabalhados, o próximo tema provável é investimento, mas a SDR deve conduzir de forma natural e sem coleta."
+          : "",
+        jaFalouBeneficios && !jaFalouInvestimento
+          ? "Como benefícios já foram trabalhados, mas investimento ainda não, orientar para explicar investimento antes de qualquer coleta."
+          : "",
+        jaPerguntouDuvida && isCommercialProgressConfirmation(text)
+          ? "Se a SDR já perguntou se havia dúvida e o lead confirmou continuidade, avançar para o próximo tema do funil, sem coleta."
+          : "",
+        jaEnviouFolder && !jaFalouInvestimento
+          ? "Se o folder já foi enviado, não repetir o envio; seguir com explicação objetiva do próximo tema."
+          : ""
+      ].filter(Boolean).join("\n")
+  });
+
+  console.log("🧭 Revisão solicitada: coleta prematura bloqueada antes do envio:", {
+    user: from,
+    ultimaMensagemLead: text,
+    startedDataCollection,
+    podeIniciarColeta,
+    jaEnviouFolder,
+    jaPerguntouDuvida
+  });
 }
      
 
