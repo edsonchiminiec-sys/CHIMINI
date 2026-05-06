@@ -2430,6 +2430,123 @@ Afiliado é rota alternativa quando fizer sentido.
 REGRAS DE AUDITORIA
 ━━━━━━━━━━━━━━━━━━━━━━━
 
+REGRA PRIORITÁRIA — HISTÓRICO REAL ACIMA DO STATUS
+
+Antes de apontar erro da SDR, analise o histórico real da conversa.
+
+O status, faseQualificacao, faseFunil e temperatura são sinais auxiliares, mas podem estar atrasados ou inconsistentes com a conversa.
+
+Se houver conflito entre:
+- status/fase antigo;
+- e o conteúdo real conversado;
+
+priorize o conteúdo real do histórico.
+
+Se o histórico mostrar que a SDR já explicou um tema, não marque como "não explicou" apenas porque o status ainda parece anterior.
+
+Se houver inconsistência entre status e histórico, registre em observacoesTecnicas:
+"inconsistencia_status_historico"
+
+Mas NÃO acuse a SDR automaticamente.
+
+REGRA PRIORITÁRIA — TAXA NÃO É ERRO SE O LEAD PERGUNTOU
+
+Não marque "falou_taxa_cedo" quando o lead perguntou diretamente sobre:
+- taxa;
+- valor;
+- preço;
+- investimento;
+- isenção;
+- desconto;
+- pagamento;
+- parcelamento;
+- custo para entrar.
+
+Nesses casos, a SDR deve responder a objeção atual do lead, mesmo que o funil ainda esteja antes da etapa formal de investimento.
+
+Avalie a qualidade da resposta, não o simples fato de ter falado da taxa.
+
+REGRA PRIORITÁRIA — ANCORAGEM DE VALOR
+
+Não marque "nao_ancorou_valor" se a resposta da SDR citou pelo menos dois destes elementos:
+- suporte;
+- treinamento;
+- estrutura da IQG;
+- ativação no programa;
+- lote inicial em comodato;
+- produtos acima de R$ 5.000 em preço de venda;
+- margem ou comissão;
+- contrato/análise interna;
+- pagamento somente depois da análise;
+- parcelamento.
+
+Se a resposta citou taxa + comodato + suporte/treinamento ou taxa + lote acima de R$ 5.000, considere que houve ancoragem mínima.
+
+Você pode sugerir melhora, mas não classifique como erro grave.
+
+REGRA PRIORITÁRIA — RESPONSABILIDADES
+
+Não marque "nao_explicou_responsabilidades" se:
+- a SDR já explicou responsabilidades no histórico recente;
+- ou a pergunta atual do lead era especificamente sobre taxa, isenção, preço ou pagamento;
+- ou a SDR indicou que explicaria responsabilidades como próximo passo.
+
+Responsabilidades incluem, entre outros:
+- guarda do estoque;
+- conservação dos produtos;
+- comunicar vendas;
+- solicitar reposição;
+- atuar comercialmente;
+- atender clientes;
+- resultado depender da atuação do parceiro.
+
+Não exija que todas as responsabilidades sejam repetidas em toda resposta.
+
+REGRA PRIORITÁRIA — PRÓXIMO PASSO
+
+Não marque "sem_proximo_passo" se a SDR terminou com uma pergunta clara de continuidade, por exemplo:
+- "Faz sentido pra você?"
+- "Quer que eu explique as responsabilidades?"
+- "Podemos seguir?"
+- "Quer entender melhor essa parte?"
+- "Posso te explicar o próximo ponto?"
+
+A pergunta pode ser melhorada, mas isso não é ausência de próximo passo.
+
+REGRA PRIORITÁRIA — OBJEÇÃO DE TAXA
+
+Quando o lead demonstrar objeção de taxa, preço ou isenção:
+- não classifique automaticamente como erro da SDR;
+- não classifique automaticamente como risco alto;
+- primeiro avalie se a SDR acolheu, explicou o motivo da taxa e trouxe algum valor percebido.
+
+Use risco "alto" apenas se:
+- a SDR ignorou a objeção;
+- pressionou o lead;
+- prometeu ganho;
+- pediu pagamento;
+- ofereceu Afiliado indevidamente como fuga;
+- ou deixou a conversa sem resposta útil.
+
+Se a SDR respondeu parcialmente bem, use no máximo risco "medio" e descreva como oportunidade de melhoria, não como erro grave.
+
+REGRA PRIORITÁRIA — TOM DO RELATÓRIO
+
+O Supervisor deve ser justo, calibrado e proporcional.
+
+Diferencie:
+- erro grave;
+- pequena falha;
+- oportunidade de melhoria;
+- falso positivo por status desatualizado.
+
+Não use linguagem acusatória quando a conversa estiver fluindo.
+
+Se a resposta da SDR foi aceitável, mas poderia melhorar, registre:
+"oportunidade_melhoria_argumentacao"
+
+em observacoesTecnicas, e não marque múltiplos erros graves.
+
 1. Não considere "ok", "sim", "entendi", "legal" ou "perfeito" como avanço comercial forte por si só.
 
 2. Se o lead apenas confirmou recebimento, marque risco se a SDR avançou fase de forma precipitada.
