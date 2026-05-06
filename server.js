@@ -1089,7 +1089,10 @@ Regras:
 - orientar a SDR a validar ou conduzir com pergunta simples.
 
 3. Se memoriaConversacional.pendencias.etapasPendentes tiver itens:
-- não orientar pré-análise/coleta antes de resolver essas pendências.
+- use como referência de condução, mas não trave automaticamente a pré-análise.
+- se investimento/taxa já foi explicado e o lead sinalizou continuidade sem objeção nova, orientar avanço para pré-cadastro/coleta se o backend permitir.
+- não exigir aceite formal em cada etapa.
+- não mandar a SDR repetir benefício, estoque, responsabilidades ou taxa apenas porque a etapa ainda aparece pendente.
 
 4. Se memoriaConversacional.pendencias.emColetaOuConfirmacao for true:
 - não orientar rota comercial, Afiliados, taxa ou cadastro;
@@ -4039,10 +4042,33 @@ Uma fase só é considerada concluída quando:
 3. O lead deu sinal claro de entendimento ou continuidade.
 4. A próxima fase faz sentido dentro da ordem do funil.
 
-Nunca avançar apenas porque o lead respondeu:
-"sim", "ok", "entendi", "legal", "certo".
+━━━━━━━━━━━━━━━━━━━━━━━
+🔥 REGRA CRÍTICA DE AVANÇO — VERSÃO ALIVIADA APÓS TAXA
+━━━━━━━━━━━━━━━━━━━━━━━
 
-Essas respostas indicam apenas recebimento, não avanço qualificado.
+A SDR deve conduzir o lead pelas etapas do funil:
+programa → benefícios → estoque → responsabilidades → investimento → coleta.
+
+Porém, a etapa crítica é o investimento/taxa.
+
+Depois que a taxa de adesão foi explicada com clareza e o lead não trouxe objeção nova, qualquer sinal de continuidade pode permitir avanço para a pré-análise.
+
+Sinais de continuidade podem ser simples, como:
+"sim", "ok", "entendi", "beleza", "tranquilo", "pode seguir", "nenhuma dúvida", "vamos", "bora", "faz sentido".
+
+Nesses casos, a SDR NÃO deve repetir taxa, responsabilidades ou benefícios.
+
+Se o backend permitir coleta, a SDR deve avançar de forma objetiva:
+
+"Perfeito 😊 Vamos seguir então.
+
+Primeiro, pode me enviar seu nome completo?"
+
+Se o lead trouxer objeção clara sobre taxa, risco, estoque ou decisão, aí sim a SDR deve responder a objeção antes de avançar.
+
+Regra central:
+Conduzir pelas etapas é obrigatório.
+Exigir aceite formal do lead em cada etapa NÃO é obrigatório.
 
 Se houver dúvida, objeção ou resposta vaga, permaneça na fase atual e conduza com uma pergunta simples.
 
@@ -7805,18 +7831,60 @@ async function finalizeHandledResponse({
 }
 
 function canStartDataCollection(lead = {}) {
-  const e = lead.etapas || {};
+  const etapas = lead?.etapas || {};
 
-  return Boolean(
-    e.programa === true &&
-    e.beneficios === true &&
-    e.estoque === true &&
-    e.responsabilidades === true &&
-    e.investimento === true &&
-    lead.taxaAlinhada === true &&
-    e.compromisso === true &&
-    lead.interesseReal === true
-  );
+  const estaEmFluxoAfiliado =
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado" ||
+    lead?.interesseAfiliado === true;
+
+  if (estaEmFluxoAfiliado) {
+    return false;
+  }
+
+  if (
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    lead?.faseQualificacao === "aguardando_confirmacao_campo" ||
+    lead?.faseQualificacao === "aguardando_confirmacao_dados" ||
+    lead?.faseQualificacao === "corrigir_dado" ||
+    lead?.faseQualificacao === "corrigir_dado_final" ||
+    lead?.faseQualificacao === "aguardando_valor_correcao_final"
+  ) {
+    return false;
+  }
+
+  if (
+    lead?.faseQualificacao === "coletando_dados" ||
+    lead?.faseQualificacao === "dados_parciais" ||
+    lead?.faseQualificacao === "aguardando_dados"
+  ) {
+    return true;
+  }
+
+  const investimentoJaTrabalhado =
+    etapas.investimento === true ||
+    lead?.taxaAlinhada === true ||
+    lead?.taxaModoConversao === true ||
+    lead?.faseFunil === "investimento" ||
+    lead?.faseQualificacao === "qualificando";
+
+  const temObjecaoBloqueanteAtual =
+    lead?.sinalObjecaoTaxa === true ||
+    Number(lead?.taxaObjectionCount || 0) > 1;
+
+  /*
+    BLOCO 17:
+    Entrada no pré-cadastro aliviada.
+
+    Regra:
+    Depois que o investimento/taxa foi trabalhado,
+    não precisamos exigir aceite formal de cada etapa.
+    Se o lead sinalizou continuidade e não há objeção bloqueante ativa,
+    podemos entrar na coleta.
+  */
+  return investimentoJaTrabalhado && !temObjecaoBloqueanteAtual;
 }
 
 function canAskForRealInterest(lead = {}) {
@@ -13186,53 +13254,79 @@ if (leadTemObjecaoTaxaControlada) {
   });
 }    
      
-// ✅ CONFIRMAÇÃO ESPECÍFICA DA TAXA / INVESTIMENTO
-// Só marca taxaAlinhada quando:
-// 1. o investimento já foi explicado;
-// 2. a taxa já foi perguntada/validada;
-// 3. o lead respondeu de forma clara sobre o investimento.
-// Respostas fracas como "ok", "sim" ou "entendi" não bastam.
-if (
-  currentLead?.etapas?.investimento === true &&
-  currentLead?.etapas?.taxaPerguntada === true &&
-  currentLead?.taxaAlinhada !== true &&
-  isTaxaAlinhadaConfirmation(text) &&
-  !currentLead?.aguardandoConfirmacaoCampo &&
-  !awaitingConfirmation
-) {await saveLeadProfile(from, {
-  taxaAlinhada: true,
-  taxaObjectionCount: 0,
-  ultimaObjecaoTaxa: null,
-  etapas: {
-    ...(currentLead?.etapas || {}),
-    taxaPerguntada: false
-  }
-});
+// ✅ BLOCO 17 — LIBERAÇÃO LEVE APÓS TAXA / INVESTIMENTO
+// A taxa é a etapa crítica.
+// Se a taxa/investimento já foi explicado e o lead sinalizou continuidade,
+// não exigimos aceite formal de cada etapa para entrar no pré-cadastro.
+const investimentoJaFoiTrabalhado =
+  currentLead?.etapas?.investimento === true ||
+  currentLead?.etapas?.taxaPerguntada === true ||
+  currentLead?.taxaAlinhada === true ||
+  currentLead?.taxaModoConversao === true ||
+  currentLead?.faseFunil === "investimento" ||
+  /1990|1\.990|taxa|investimento|ades[aã]o/i.test(historyText || "");
 
-  currentLead = await loadLeadProfile(from);
-}     
-     // ✅ CONFIRMAÇÃO DO COMPROMISSO DE ATUAÇÃO
-// Só marca compromisso como concluído quando:
-// 1. a SDR já perguntou sobre o resultado depender da atuação;
-// 2. o lead respondeu positivamente;
-// 3. ainda não estamos em confirmação de dados pessoais.
-     
-if (
-  currentLead?.etapas?.compromissoPerguntado === true &&
-  currentLead?.etapas?.compromisso !== true &&
-    isCommitmentConfirmation(text) &&
+const leadTrouxeObjecaoBloqueanteAgora =
+  semanticIntent?.blockingObjection === true ||
+  semanticIntent?.priceObjection === true ||
+  semanticIntent?.riskObjection === true ||
+  semanticIntent?.stockObjection === true ||
+  /caro|não quero|nao quero|não tenho|nao tenho|vou pensar|depois|isentar|isenção|isencao|desconto|sem taxa|muito alto/i.test(text || "");
+
+const leadSinalizouContinuidadeAposTaxa =
+  investimentoJaFoiTrabalhado &&
+  !leadTrouxeObjecaoBloqueanteAgora &&
   !currentLead?.aguardandoConfirmacaoCampo &&
-  !awaitingConfirmation
+  !awaitingConfirmation &&
+  String(text || "").trim().length > 0;
+
+if (
+  leadSinalizouContinuidadeAposTaxa &&
+  currentLead?.faseQualificacao !== "coletando_dados" &&
+  currentLead?.faseQualificacao !== "dados_parciais" &&
+  currentLead?.faseQualificacao !== "aguardando_dados"
 ) {
+  const etapasAliviadasParaPreCadastro = {
+    ...(currentLead?.etapas || {}),
+
+    // Não estamos dizendo que o lead fez uma prova formal de cada etapa.
+    // Estamos dizendo que, para fins de fluidez, o funil pode seguir.
+    programa: true,
+    beneficios: true,
+    estoque: true,
+    responsabilidades: true,
+    investimento: true,
+    taxaPerguntada: false,
+    compromissoPerguntado: false,
+    compromisso: true
+  };
+
   await saveLeadProfile(from, {
-    etapas: {
-      ...(currentLead?.etapas || {}),
-      compromisso: true,
-      compromissoPerguntado: false
+    etapas: etapasAliviadasParaPreCadastro,
+    taxaAlinhada: true,
+    taxaObjectionCount: 0,
+    ultimaObjecaoTaxa: null,
+    interesseReal: true,
+    faseQualificacao: "qualificando",
+    status: "qualificando",
+    liberadoPreCadastroPorSinalAposTaxa: true,
+    ultimaEvidenciaLiberacaoPreCadastro: {
+      criterio: "sinal_continuidade_apos_taxa",
+      ultimaMensagemLead: text,
+      registradoEm: new Date()
     }
   });
 
   currentLead = await loadLeadProfile(from);
+
+  console.log("✅ Pré-cadastro liberado por sinal leve após taxa:", {
+    user: from,
+    ultimaMensagemLead: text,
+    faseQualificacao: currentLead?.faseQualificacao,
+    taxaAlinhada: currentLead?.taxaAlinhada === true,
+    interesseReal: currentLead?.interesseReal === true,
+    podeIniciarColeta: canStartDataCollection(currentLead || {})
+  });
 }
      
 // 🔥 ATUALIZA STATUS / FASE DO CRM COM BASE NA CLASSIFICAÇÃO
