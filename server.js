@@ -14107,6 +14107,44 @@ body: JSON.stringify({
   model: "gpt-4o-mini",
   messages: [
   { role: "system", content: SYSTEM_PROMPT },
+     {
+  role: "system",
+  content: `SAUDAÇÃO POR HORÁRIO — REGRA OBRIGATÓRIA
+
+Horário atual considerado pelo sistema: ${saudacaoHorario}.
+
+A SDR deve usar a saudação conforme o horário real do sistema, e NÃO conforme a saudação escrita pelo lead.
+
+Regra principal:
+- Se o lead disser "bom dia", mas o horário do sistema for tarde, responder com "boa tarde".
+- Se o lead disser "boa tarde", mas o horário do sistema for noite, responder com "boa noite".
+- Se o lead disser "boa noite", mas o horário do sistema for manhã, responder com "bom dia".
+
+Não corrigir o lead.
+Não dizer "na verdade é boa tarde".
+Apenas responder naturalmente com a saudação correta.
+
+Use:
+- "bom dia" pela manhã;
+- "boa tarde" à tarde;
+- "boa noite" à noite.
+
+Exemplos:
+Lead: "bom dia"
+Horário do sistema: boa tarde
+Resposta: "Boa tarde, Edson! 😊"
+
+Lead: "boa tarde"
+Horário do sistema: boa noite
+Resposta: "Boa noite, Edson! 😊"
+
+Lead: "oi"
+Horário do sistema: bom dia
+Resposta: "Bom dia, Edson! 😊"
+
+Se a conversa já estiver no meio de uma sequência e a resposta não precisar de saudação, não force saudação.
+Não cumprimente de novo em toda mensagem.`
+},
   {
     role: "system",
     content: preSdrConsultantContext
