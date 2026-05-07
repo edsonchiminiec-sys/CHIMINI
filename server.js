@@ -14513,7 +14513,11 @@ const bufferedMessageIds = Array.isArray(buffered.messageIds) && buffered.messag
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
 
-currentLead = await loadLeadProfile(from);
+// ✅ currentLead precisa nascer com "let".
+// Explicação simples:
+// antes o código usava currentLead sem criar a variável.
+// Em Node/ESM isso quebra com: ReferenceError: currentLead is not defined.
+let currentLead = await loadLeadProfile(from);
 
 currentLead = await cleanupStaleOperationalMemory({
   user: from,
@@ -14526,7 +14530,6 @@ auditLog("currentLead ANTES do processamento da mensagem", {
   mensagemLead: text,
   currentLead: buildLeadAuditSnapshot(currentLead || {})
 });
-
 if (!currentLead) {
   await saveLeadProfile(from, {
     user: from,
