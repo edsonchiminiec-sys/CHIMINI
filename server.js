@@ -3424,14 +3424,137 @@ Use apenas estes valores para prioridadeHumana:
 - "urgente"
 - "nao_analisado"
 
-Marque necessitaHumano como true quando:
-- riscoPerda for "alto" ou "critico";
-- lead quente estiver pronto;
-- houver desconfiança forte;
-- houver confusão grave;
-- houver erro de coleta ou interpretação;
-- lead pedir contrato, pagamento, jurídico ou condição especial;
-- lead demonstrar alto potencial comercial.
+REGRA CRÍTICA:
+Lead quente, lead pronto ou lead com alto potencial comercial NÃO é motivo automático para humano.
+
+Também NÃO marque humano automaticamente apenas porque o lead perguntou sobre:
+- contrato;
+- pagamento;
+- boleto;
+- desconto;
+- condição especial;
+- aprovação;
+- cobrança;
+- assinatura;
+- negociação;
+- valores;
+- parcelamento.
+
+Esses assuntos são sensíveis, mas a SDR pode responder de forma segura e limitada, sem prometer nada e sem sair das regras comerciais.
+
+A SDR deve responder assim:
+
+1. Contrato:
+Explicar que a assinatura e a versão oficial do contrato são tratadas após análise interna.
+
+2. Pagamento:
+Explicar que nenhum pagamento é feito agora. O pagamento só acontece após análise interna e assinatura do contrato.
+
+3. Boleto:
+Não oferecer boleto. Informar apenas PIX ou cartão, conforme disponibilidade.
+
+4. Desconto ou condição especial:
+Não prometer desconto. Explicar que qualquer condição fora do padrão depende de avaliação da equipe IQG em etapa posterior.
+
+5. Aprovação:
+Não prometer aprovação. Explicar que existe análise interna.
+
+6. Cobrança:
+Não pedir pagamento e não tratar como cobrança. Reforçar que é apenas explicação do programa.
+
+Marque necessitaHumano = true SOMENTE quando existir necessidade real de ação humana comercial ou operacional.
+
+Marque necessitaHumano = true apenas se pelo menos uma destas situações acontecer:
+
+1. O lead pediu claramente humano, atendente, consultor, vendedor ou pessoa.
+
+2. O lead demonstrou irritação forte, frustração forte, desconfiança forte, acusação de golpe, reclamação grave ou ameaça de denúncia.
+
+3. Houve erro operacional real que precisa de pessoa:
+- PDF prometido não chegou;
+- arquivo falhou;
+- CRM falhou;
+- dados confirmados mas não enviados;
+- humano já assumiu ou precisa assumir por bloqueio operacional.
+
+4. A SDR pediu dados indevidamente, pediu pagamento indevidamente, prometeu aprovação, prometeu ganho ou gerou confusão grave que pode prejudicar o lead.
+
+5. O lead está travado em objeção forte e a SDR não conseguiu responder ou entrou em loop repetido.
+
+NÃO marque necessitaHumano como true apenas porque:
+- o lead é quente;
+- o lead quer seguir;
+- o lead confirmou compromisso;
+- o lead está pronto para coleta;
+- o lead tem alto potencial comercial;
+- o lead perguntou sobre contrato;
+- o lead perguntou sobre pagamento;
+- o lead perguntou sobre desconto;
+- o lead perguntou sobre boleto;
+- o lead perguntou sobre aprovação;
+- o lead perguntou sobre assinatura;
+- o Supervisor encontrou uma pequena oportunidade de melhoria;
+- o backend parece com status atrasado;
+- a SDR repetiu uma pergunta, mas a conversa ainda está saudável.
+
+Se houver problema técnico de estado interno, use observacoesTecnicas, mas mantenha necessitaHumano=false, salvo se isso exigir ação imediata de uma pessoa.
+
+Exemplos de falso humano que devem ser evitados:
+
+Lead:
+"sim, está claro. eu me comprometo a atuar nas vendas"
+
+Resposta correta do Supervisor:
+necessitaHumano=false
+prioridadeHumana="nenhuma"
+riscoPerda="baixo"
+
+Lead:
+"sim, faz sentido e quero seguir"
+
+Resposta correta do Supervisor:
+necessitaHumano=false
+prioridadeHumana="nenhuma"
+riscoPerda="baixo"
+
+Lead:
+"tem desconto?"
+
+Resposta correta do Supervisor:
+necessitaHumano=false
+prioridadeHumana="nenhuma"
+riscoPerda="baixo"
+observacoesTecnicas pode indicar: "lead_perguntou_condicao_comercial"
+
+Lead:
+"posso pagar no boleto?"
+
+Resposta correta do Supervisor:
+necessitaHumano=false
+prioridadeHumana="nenhuma"
+riscoPerda="baixo"
+
+Lead:
+"quando assino o contrato?"
+
+Resposta correta do Supervisor:
+necessitaHumano=false
+prioridadeHumana="nenhuma"
+riscoPerda="baixo"
+
+Lead:
+"quero falar com uma pessoa"
+
+Resposta correta do Supervisor:
+necessitaHumano=true
+prioridadeHumana="alta"
+
+Lead:
+"isso parece golpe"
+
+Resposta correta do Supervisor:
+necessitaHumano=true
+prioridadeHumana="alta" ou "urgente"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 FORMATO DE SAÍDA OBRIGATÓRIO
@@ -3650,9 +3773,29 @@ if (
 
 await saveSupervisorAnalysis(user, supervisorAnalysis);
 
+        // ETAPA 3 PRODUÇÃO — alerta humano só quando existe motivo real.
+    // Explicação simples:
+    // Não basta o Supervisor dizer "risco alto".
+    // Para chamar funcionário, precisa haver necessidade real de humano.
+    const textoLeadAlertaSupervisor = String(lastUserText || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
+    const leadPediuHumanoAlertaSupervisor =
+      /\b(humano|atendente|consultor|vendedor|pessoa|alguem|alguém|representante)\b/i.test(lastUserText || "") &&
+      /\b(falar|chamar|quero|preciso|pode|passa|me coloca|me chama|atendimento)\b/i.test(lastUserText || "");
+
+    const leadTemRiscoHumanoRealSupervisor =
+      leadPediuHumanoAlertaSupervisor ||
+      /\b(golpe|fraude|enganacao|enganação|suspeito|desconfiado|nao confio|não confio|palhacada|palhaçada|absurdo|ridiculo|ridículo|juridico|jurídico|contrato especifico|contrato específico|boleto|desconto|condicao especial|condição especial|pagamento|cobranca|cobrança|pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi|não recebi)\b/i.test(lastUserText || "");
+
     const deveEnviarAlertaSupervisor =
-      ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda) ||
-      supervisorAnalysis?.necessitaHumano === true;
+      supervisorAnalysis?.necessitaHumano === true &&
+      (
+        leadTemRiscoHumanoRealSupervisor ||
+        ["critico"].includes(supervisorAnalysis?.riscoPerda)
+      );
 
     if (deveEnviarAlertaSupervisor) {
       await sendSupervisorInternalAlert({
@@ -3662,8 +3805,18 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
         },
         supervisorAnalysis
       });
+    } else if (
+      supervisorAnalysis?.necessitaHumano === true ||
+      ["alto", "critico"].includes(supervisorAnalysis?.riscoPerda)
+    ) {
+      console.log("🔕 Alerta Supervisor bloqueado por trava de proporcionalidade:", {
+        user,
+        riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
+        necessitaHumano: supervisorAnalysis?.necessitaHumano === true,
+        prioridadeHumana: supervisorAnalysis?.prioridadeHumana || "nao_analisado",
+        motivo: "Sem pedido humano, sem risco humano real e sem erro operacional crítico."
+      });
     }
-
     runClassifierAfterSupervisor({
       user,
       lead,
@@ -7242,6 +7395,57 @@ function enforceSupervisorHardLimits({
     replyAsksPersonalData(lastSdrText) ||
     mentionsPaymentIntent(lastSdrText);
 
+  // ETAPA 3 PRODUÇÃO — leitura segura de humano real.
+  // Explicação simples:
+  // Humano só é necessário quando existe pedido real de pessoa,
+  // risco grave, assunto proibido para IA ou falha operacional.
+  // Lead positivo/quente não é motivo para chamar funcionário.
+  const textoLeadNormalizadoSupervisor = String(lastUserText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const textoSdrNormalizadoSupervisor = String(lastSdrText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const leadPediuHumanoSupervisor =
+    /\b(humano|atendente|consultor|vendedor|pessoa|alguem|alguém|representante)\b/i.test(lastUserText || "") &&
+    /\b(falar|chamar|quero|preciso|pode|passa|me coloca|me chama|atendimento)\b/i.test(lastUserText || "");
+
+  const leadComDesconfiancaForteSupervisor =
+    /\b(golpe|fraude|enganacao|enganação|suspeito|desconfiado|nao confio|não confio|medo de cair|picaretagem)\b/i.test(lastUserText || "");
+
+  const leadComIrritacaoForteSupervisor =
+    /\b(palhacada|palhaçada|absurdo|ridiculo|ridículo|raiva|irritado|irritada|chateado|chateada|nao gostei|não gostei|parem|para de mandar|me tira)\b/i.test(lastUserText || "");
+
+  const assuntoExigeHumanoSupervisor =
+    /\b(contrato especifico|contrato específico|juridico|jurídico|advogado|assinatura|assinar|pagamento|pagar agora|boleto|desconto|condicao especial|condição especial|aprovacao|aprovação|cobranca|cobrança|negociar)\b/i.test(lastUserText || "");
+
+  const erroOperacionalSupervisor =
+    /\b(pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi|não recebi|material nao chegou|material não chegou|link quebrado|erro no crm|crm falhou|nao encaminhou|não encaminhou)\b/i.test(lastUserText || "");
+
+  const leadPositivoSemPedidoHumanoSupervisor =
+    (
+      lead?.interesseReal === true ||
+      lead?.taxaAlinhada === true ||
+      lead?.etapas?.compromisso === true ||
+      /\b(quero seguir|podemos seguir|pode seguir|estou pronto|estou pronta|faz sentido|ficou claro|me comprometo|vamos seguir|quero continuar)\b/i.test(lastUserText || "")
+    ) &&
+    !leadPediuHumanoSupervisor &&
+    !leadComDesconfiancaForteSupervisor &&
+    !leadComIrritacaoForteSupervisor &&
+    !assuntoExigeHumanoSupervisor &&
+    !erroOperacionalSupervisor;
+
+  const existeMotivoRealParaHumanoSupervisor =
+    leadPediuHumanoSupervisor ||
+    leadComDesconfiancaForteSupervisor ||
+    leadComIrritacaoForteSupervisor ||
+    assuntoExigeHumanoSupervisor ||
+    erroOperacionalSupervisor;
+   
   if (
     mensagemEhCumprimentoSimples &&
     nenhumaEtapaConcluida &&
@@ -7296,6 +7500,78 @@ function enforceSupervisorHardLimits({
     };
   }
 
+  if (
+    leadPositivoSemPedidoHumanoSupervisor &&
+    safeSupervisor.necessitaHumano === true &&
+    !existeMotivoRealParaHumanoSupervisor
+  ) {
+    return {
+      ...safeSupervisor,
+      necessitaHumano: false,
+      prioridadeHumana: "nenhuma",
+      riscoPerda:
+        safeSupervisor.riscoPerda === "critico" || safeSupervisor.riscoPerda === "alto"
+          ? "baixo"
+          : safeSupervisor.riscoPerda || "baixo",
+      pontoTrava:
+        safeSupervisor.pontoTrava === "preco" || safeSupervisor.pontoTrava === "taxa_adesao"
+          ? "sem_trava_detectada"
+          : safeSupervisor.pontoTrava || "sem_trava_detectada",
+      leadEsfriou: false,
+      motivoEsfriamento: "",
+      motivoRisco:
+        "Supervisor tentou acionar humano, mas o lead está positivo e não pediu atendimento humano nem apresentou risco real.",
+      descricaoErroPrincipal:
+        safeSupervisor.descricaoErroPrincipal || "",
+      errosDetectados: Array.isArray(safeSupervisor.errosDetectados) &&
+        safeSupervisor.errosDetectados.length > 0 &&
+        !safeSupervisor.errosDetectados.includes("nenhum_erro_detectado")
+          ? safeSupervisor.errosDetectados.filter(erro =>
+              ![
+                "sem_proximo_passo",
+                "falou_taxa_cedo",
+                "nao_ancorou_valor"
+              ].includes(erro)
+            )
+          : ["nenhum_erro_detectado"],
+      resumoDiagnostico:
+        "Correção de proporcionalidade: conversa positiva, sem pedido de humano e sem risco real. Não acionar funcionário interno.",
+      observacoesTecnicas: [
+        ...(Array.isArray(safeSupervisor.observacoesTecnicas)
+          ? safeSupervisor.observacoesTecnicas
+          : []),
+        "supervisor_humano_falso_positivo_corrigido",
+        "lead_positivo_nao_exige_humano"
+      ],
+      analisadoEm: new Date()
+    };
+  }
+
+  if (
+    ["alto", "critico"].includes(safeSupervisor.riscoPerda) &&
+    !existeMotivoRealParaHumanoSupervisor &&
+    leadPositivoSemPedidoHumanoSupervisor
+  ) {
+    return {
+      ...safeSupervisor,
+      riscoPerda: "baixo",
+      necessitaHumano: false,
+      prioridadeHumana: "nenhuma",
+      pontoTrava: "sem_trava_detectada",
+      motivoRisco:
+        "Risco alto/crítico removido por trava dura: lead positivo, sem objeção forte, sem pedido humano e sem erro operacional.",
+      resumoDiagnostico:
+        "Conversa saudável. Se houver algum problema, tratar como observação técnica, não como acionamento humano.",
+      observacoesTecnicas: [
+        ...(Array.isArray(safeSupervisor.observacoesTecnicas)
+          ? safeSupervisor.observacoesTecnicas
+          : []),
+        "risco_alto_falso_positivo_corrigido"
+      ],
+      analisadoEm: new Date()
+    };
+  }
+   
   return safeSupervisor;
 }
 
