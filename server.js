@@ -2271,6 +2271,316 @@ function decideCommercialRouteFromSemanticIntent({
   return fallback;
 }
 
+function normalizeSemanticConfidence(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+function hasUsableSemanticConfidence(value = "") {
+  const confidence = normalizeSemanticConfidence(value);
+
+  return confidence === "media" || confidence === "alta";
+}
+
+function semanticListIncludesAny(list = [], targets = []) {
+  const normalizedList = Array.isArray(list)
+    ? list.map(item =>
+        String(item || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+      )
+    : [];
+
+  return targets.some(target =>
+    normalizedList.some(item => item.includes(target))
+  );
+}
+
+function hasActiveSemanticObjection(semanticIntent = {}) {
+  return (
+    semanticIntent?.blockingObjection === true ||
+    semanticIntent?.priceObjection === true ||
+    semanticIntent?.stockObjection === true ||
+    semanticIntent?.riskObjection === true ||
+    semanticIntent?.delayOrAbandonment === true ||
+    semanticIntent?.humanRequest === true
+  );
+}
+
+function buildSemanticQualificationPatch({
+  lead = {},
+  semanticIntent = null,
+  semanticContinuity = null
+} = {}) {
+  /*
+    ETAPA 2 PRODUÇÃO — Consolidação semântica.
+
+    Explicação simples:
+    Esta função NÃO procura frase exata do lead.
+
+    Ela não faz:
+    - se escreveu "faz sentido", aprova;
+    - se escreveu "quero seguir", aprova;
+    - se escreveu "me comprometo", aprova.
+
+    Ela faz:
+    - olha o que o Classificador Semântico entendeu;
+    - olha o que o Historiador Semântico entendeu;
+    - olha qual foi o último tema explicado pela SDR;
+    - olha se existe objeção nova;
+    - olha se a confiança é média/alta;
+    - então consolida ou não consolida o estado do lead.
+  */
+
+  const patch = {};
+  const reasons = [];
+
+  const currentEtapas = {
+    programa: false,
+    beneficios: false,
+    estoque: false,
+    responsabilidades: false,
+    investimento: false,
+    taxaPerguntada: false,
+    compromissoPerguntado: false,
+    compromisso: false,
+    ...(lead?.etapas || {})
+  };
+
+  const updatedEtapas = {
+    ...currentEtapas
+  };
+
+  const semanticConfidenceOk = hasUsableSemanticConfidence(semanticIntent?.confidence || "");
+  const continuityConfidenceOk = hasUsableSemanticConfidence(semanticContinuity?.confidence || "");
+
+  const hasObjection = hasActiveSemanticObjection(semanticIntent || {});
+
+  const lastSdrTopics = semanticContinuity?.temaUltimaRespostaSdr || [];
+  const currentLeadTopics = semanticContinuity?.temaMensagemAtualLead || [];
+
+  const lastTopicWasInvestment =
+    semanticListIncludesAny(lastSdrTopics, [
+      "investimento",
+      "taxa",
+      "adesao",
+      "adesão",
+      "pagamento",
+      "parcelamento"
+    ]) ||
+    semanticListIncludesAny(currentLeadTopics, [
+      "investimento",
+      "taxa",
+      "adesao",
+      "adesão",
+      "pagamento",
+      "parcelamento"
+    ]) ||
+    lead?.etapasAguardandoEntendimento?.investimento === true ||
+    lead?.sinalPerguntaTaxa === true ||
+    lead?.etapas?.taxaPerguntada === true;
+
+  const lastTopicWasCommitment =
+    semanticListIncludesAny(lastSdrTopics, [
+      "compromisso",
+      "responsabilidade",
+      "responsabilidades",
+      "atuacao",
+      "atuação",
+      "vendas",
+      "resultado"
+    ]) ||
+    semanticListIncludesAny(currentLeadTopics, [
+      "compromisso",
+      "responsabilidade",
+      "responsabilidades",
+      "atuacao",
+      "atuação",
+      "vendas",
+      "resultado"
+    ]) ||
+    lead?.etapasAguardandoEntendimento?.compromisso === true ||
+    lead?.etapas?.compromissoPerguntado === true;
+
+  const leadShowedUnderstanding =
+    semanticContinuity?.leadEntendeuUltimaExplicacao === true &&
+    semanticContinuity?.naoRepetirUltimoTema === true &&
+    continuityConfidenceOk;
+
+  const leadShowedProgress =
+    semanticContinuity?.leadQuerAvancar === true &&
+    continuityConfidenceOk;
+
+  const classifierSawRealInterest =
+    semanticIntent?.positiveRealInterest === true &&
+    semanticConfidenceOk;
+
+  const classifierSawCommitment =
+    semanticIntent?.positiveCommitment === true &&
+    semanticConfidenceOk;
+
+  /*
+    1. Consolidar investimento/taxa.
+
+    Exemplo:
+    A SDR explicou investimento.
+    O Historiador entendeu que o lead compreendeu ou quer avançar.
+    Não existe objeção nova.
+
+    Resultado:
+    investimento=true
+    taxaAlinhada=true
+  */
+  const shouldConfirmInvestment =
+    !hasObjection &&
+    lastTopicWasInvestment &&
+    (
+      leadShowedUnderstanding ||
+      leadShowedProgress ||
+      classifierSawRealInterest
+    );
+
+  if (shouldConfirmInvestment && updatedEtapas.investimento !== true) {
+    updatedEtapas.investimento = true;
+    reasons.push("investimento_confirmado_por_contexto_semantico");
+  }
+
+  if (shouldConfirmInvestment && lead?.taxaAlinhada !== true) {
+    patch.taxaAlinhada = true;
+    patch.taxaModoConversao = false;
+    patch.sinalObjecaoTaxa = false;
+    reasons.push("taxa_alinhada_por_contexto_semantico");
+  }
+
+  /*
+    2. Consolidar compromisso.
+
+    Exemplo:
+    O tema era compromisso/responsabilidades/atuação.
+    O lead demonstrou entendimento, avanço ou compromisso.
+    Não existe objeção nova.
+
+    Resultado:
+    compromisso=true
+  */
+  const shouldConfirmCommitment =
+    !hasObjection &&
+    (
+      classifierSawCommitment ||
+      (
+        lastTopicWasCommitment &&
+        (leadShowedUnderstanding || leadShowedProgress)
+      ) ||
+      (
+        updatedEtapas.investimento === true &&
+        (patch.taxaAlinhada === true || lead?.taxaAlinhada === true) &&
+        leadShowedProgress &&
+        classifierSawRealInterest
+      )
+    );
+
+  if (shouldConfirmCommitment && updatedEtapas.compromisso !== true) {
+    updatedEtapas.compromisso = true;
+    updatedEtapas.compromissoPerguntado = true;
+    patch.compromissoConfirmadoEm = new Date();
+    reasons.push("compromisso_confirmado_por_contexto_semantico");
+  }
+
+  /*
+    3. Consolidar interesse real.
+
+    Interesse real não é palavra mágica.
+    É o conjunto:
+    - etapas principais conduzidas;
+    - investimento entendido;
+    - taxa alinhada;
+    - compromisso validado;
+    - lead demonstrou avanço real;
+    - sem objeção nova.
+  */
+  const allCoreStepsReady =
+    updatedEtapas.programa === true &&
+    updatedEtapas.beneficios === true &&
+    updatedEtapas.estoque === true &&
+    updatedEtapas.responsabilidades === true &&
+    updatedEtapas.investimento === true &&
+    updatedEtapas.compromisso === true;
+
+  const taxaEstaAlinhada =
+    patch.taxaAlinhada === true ||
+    lead?.taxaAlinhada === true;
+
+  const shouldConfirmRealInterest =
+    !hasObjection &&
+    allCoreStepsReady &&
+    taxaEstaAlinhada &&
+    (
+      classifierSawRealInterest ||
+      leadShowedProgress
+    );
+
+  if (shouldConfirmRealInterest && lead?.interesseReal !== true) {
+    patch.interesseReal = true;
+    patch.status = "qualificando";
+    patch.faseQualificacao = "qualificando";
+    reasons.push("interesse_real_confirmado_por_contexto_semantico");
+  }
+
+  const etapasChanged =
+    JSON.stringify(currentEtapas) !== JSON.stringify(updatedEtapas);
+
+  if (etapasChanged) {
+    patch.etapas = updatedEtapas;
+  }
+
+  if (reasons.length === 0) {
+    return {
+      shouldSave: false,
+      patch: {},
+      reasons: []
+    };
+  }
+
+  patch.ultimaConsolidacaoSemantica = {
+    reasons,
+    semanticIntent: {
+      positiveRealInterest: semanticIntent?.positiveRealInterest === true,
+      positiveCommitment: semanticIntent?.positiveCommitment === true,
+      softUnderstandingOnly: semanticIntent?.softUnderstandingOnly === true,
+      blockingObjection: semanticIntent?.blockingObjection === true,
+      priceObjection: semanticIntent?.priceObjection === true,
+      stockObjection: semanticIntent?.stockObjection === true,
+      riskObjection: semanticIntent?.riskObjection === true,
+      delayOrAbandonment: semanticIntent?.delayOrAbandonment === true,
+      humanRequest: semanticIntent?.humanRequest === true,
+      confidence: semanticIntent?.confidence || "",
+      reason: semanticIntent?.reason || ""
+    },
+    semanticContinuity: {
+      leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
+      leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
+      leadCriticouRepeticao: semanticContinuity?.leadCriticouRepeticao === true,
+      naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
+      temaUltimaRespostaSdr: semanticContinuity?.temaUltimaRespostaSdr || [],
+      temaMensagemAtualLead: semanticContinuity?.temaMensagemAtualLead || [],
+      confidence: semanticContinuity?.confidence || "",
+      reason: semanticContinuity?.reason || ""
+    },
+    registradoEm: new Date()
+  };
+
+  return {
+    shouldSave: true,
+    patch,
+    reasons
+  };
+}
+
 function buildBothProgramsComparisonResponse() {
   return `São dois caminhos diferentes 😊
 
@@ -8122,14 +8432,25 @@ function canStartDataCollection(lead = {}) {
   }
 
   /*
-    CORREÇÃO:
-    A entrada no pré-cadastro fica aliviada no ACEITE do lead,
-    mas NÃO fica aliviada na condução das etapas.
+    ETAPA 2 PRODUÇÃO — portão seguro da coleta.
 
-    Ou seja:
-    - não exige frase específica do lead para cada etapa;
-    - mas exige que o funil tenha passado por programa, benefícios,
-      estoque, responsabilidades e investimento.
+    Explicação simples:
+    A coleta só pode começar quando o lead realmente passou pelo caminho
+    comercial obrigatório e o backend consolidou os sinais principais.
+
+    Não basta a SDR ter mencionado um tema.
+    Não basta o lead dizer uma palavra solta.
+
+    Precisa estar consolidado no estado do lead:
+    - programa explicado;
+    - benefícios explicados;
+    - estoque explicado;
+    - responsabilidades explicadas;
+    - investimento explicado;
+    - taxa alinhada;
+    - compromisso validado;
+    - interesse real confirmado;
+    - sem objeção ativa.
   */
   const etapasObrigatoriasConduzidas =
     etapas.programa === true &&
@@ -8138,11 +8459,29 @@ function canStartDataCollection(lead = {}) {
     etapas.responsabilidades === true &&
     etapas.investimento === true;
 
-  const taxaSemObjecaoAtiva =
+  const taxaAlinhada =
+    lead?.taxaAlinhada === true;
+
+  const compromissoValidado =
+    etapas.compromisso === true;
+
+  const interesseRealConfirmado =
+    lead?.interesseReal === true;
+
+  const semObjecaoAtiva =
     lead?.sinalObjecaoTaxa !== true &&
+    lead?.sinalObjecaoEstoque !== true &&
+    lead?.sinalObjecaoRisco !== true &&
+    lead?.bloqueioComercialAtivo !== true &&
     Number(lead?.taxaObjectionCount || 0) <= 1;
 
-  return etapasObrigatoriasConduzidas && taxaSemObjecaoAtiva;
+  return Boolean(
+    etapasObrigatoriasConduzidas &&
+    taxaAlinhada &&
+    compromissoValidado &&
+    interesseRealConfirmado &&
+    semObjecaoAtiva
+  );
 }
 
 function canAskForRealInterest(lead = {}) {
@@ -14353,13 +14692,77 @@ if (
     semanticContinuity
   });
 
-  console.log("🧠 Historiador Semântico orientou continuidade antes do Pré-SDR:", {
+    console.log("🧠 Historiador Semântico orientou continuidade antes do Pré-SDR:", {
     user: from,
     leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
     leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
     leadCriticouRepeticao: semanticContinuity?.leadCriticouRepeticao === true,
     naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
     proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "nao_analisado"
+  });
+}
+
+// 🧠 ETAPA 2 PRODUÇÃO — consolidação semântica de taxa, compromisso e interesse real.
+// Este bloco NÃO usa palavras mágicas.
+// Ele usa a interpretação do Classificador Semântico + Historiador Semântico.
+const semanticQualificationPatch = buildSemanticQualificationPatch({
+  lead: currentLead || {},
+  semanticIntent,
+  semanticContinuity
+});
+
+if (semanticQualificationPatch.shouldSave) {
+  await saveLeadProfile(from, {
+    ...semanticQualificationPatch.patch,
+    ultimaMensagem: text
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  backendStrategicGuidance.push({
+    tipo: "consolidacao_semantica_qualificacao",
+    prioridade: "alta",
+    motivo: "Backend consolidou taxa, compromisso ou interesse real com base em interpretação semântica contextual.",
+    orientacaoParaPreSdr:
+      [
+        "O backend consolidou sinais comerciais usando Classificador Semântico e Historiador Semântico.",
+        "Não repetir explicações já entendidas.",
+        currentLead?.taxaAlinhada === true
+          ? "Taxa/investimento já estão alinhados no contexto."
+          : "",
+        currentLead?.etapas?.compromisso === true
+          ? "Compromisso de atuação já está validado no contexto."
+          : "",
+        currentLead?.interesseReal === true
+          ? "Interesse real já está confirmado. Se a coleta estiver liberada, conduzir para o primeiro dado pendente."
+          : "",
+        "Se ainda faltar alguma pendência, validar apenas a menor pendência obrigatória com pergunta curta."
+      ].filter(Boolean).join("\n"),
+    detalhes: {
+      reasons: semanticQualificationPatch.reasons || [],
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      investimento: currentLead?.etapas?.investimento === true,
+      compromisso: currentLead?.etapas?.compromisso === true,
+      interesseReal: currentLead?.interesseReal === true,
+      podeIniciarColeta: canStartDataCollection(currentLead || {})
+    }
+  });
+
+  console.log("🧠 Consolidação semântica aplicada ao lead:", {
+    user: from,
+    reasons: semanticQualificationPatch.reasons || [],
+    taxaAlinhada: currentLead?.taxaAlinhada === true,
+    investimento: currentLead?.etapas?.investimento === true,
+    compromisso: currentLead?.etapas?.compromisso === true,
+    interesseReal: currentLead?.interesseReal === true,
+    podeIniciarColeta: canStartDataCollection(currentLead || {})
+  });
+
+  auditLog("Consolidacao semantica aplicada", {
+    user: maskPhone(from),
+    ultimaMensagemLead: text,
+    reasons: semanticQualificationPatch.reasons || [],
+    currentLead: buildLeadAuditSnapshot(currentLead || {})
   });
 }
    
