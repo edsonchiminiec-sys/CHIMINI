@@ -545,6 +545,111 @@ function keepAllowedValue(value, allowedValues, fallback) {
   return fallback;
 }
 
+function maskPhone(value = "") {
+  const digits = onlyDigits(value);
+
+  if (!digits) return "";
+
+  if (digits.length <= 4) {
+    return "****";
+  }
+
+  return `${digits.slice(0, 4)}*****${digits.slice(-2)}`;
+}
+
+function maskCPF(value = "") {
+  const digits = onlyDigits(value);
+
+  if (!digits) return "";
+
+  if (digits.length !== 11) {
+    return "***.***.***-**";
+  }
+
+  return `${digits.slice(0, 3)}.***.***-${digits.slice(-2)}`;
+}
+
+function buildLeadAuditSnapshot(lead = {}) {
+  return {
+    user: maskPhone(lead.user || ""),
+    status: lead.status || "",
+    faseQualificacao: lead.faseQualificacao || "",
+    statusOperacional: lead.statusOperacional || "",
+    faseFunil: lead.faseFunil || "",
+    temperaturaComercial: lead.temperaturaComercial || "",
+    rotaComercial: lead.rotaComercial || "",
+    origemConversao: lead.origemConversao || "",
+
+    interesseReal: lead.interesseReal === true,
+    interesseAfiliado: lead.interesseAfiliado === true,
+    sinalAfiliadoExplicito: lead.sinalAfiliadoExplicito === true,
+    sinalComparacaoProgramas: lead.sinalComparacaoProgramas === true,
+
+    taxaAlinhada: lead.taxaAlinhada === true,
+    taxaModoConversao: lead.taxaModoConversao === true,
+    taxaObjectionCount: Number(lead.taxaObjectionCount || 0),
+
+    aguardandoConfirmacaoCampo: lead.aguardandoConfirmacaoCampo === true,
+    aguardandoConfirmacao: lead.aguardandoConfirmacao === true,
+    campoEsperado: lead.campoEsperado || "",
+    campoPendente: lead.campoPendente || "",
+
+    dadosConfirmadosPeloLead: lead.dadosConfirmadosPeloLead === true,
+    crmEnviado: lead.crmEnviado === true,
+
+    nome: lead.nome ? "[PREENCHIDO]" : "",
+    cpf: lead.cpf ? maskCPF(lead.cpf) : "",
+    telefone: lead.telefone ? maskPhone(lead.telefone) : "",
+    cidade: lead.cidade || "",
+    estado: lead.estado || "",
+
+    etapas: lead.etapas || {},
+    etapasAguardandoEntendimento: lead.etapasAguardandoEntendimento || {},
+
+    ultimaMensagem: lead.ultimaMensagem || "",
+    ultimaDecisaoBackend: lead.ultimaDecisaoBackend || null,
+
+    supervisorResumo: lead.supervisor
+      ? {
+          riscoPerda: lead.supervisor.riscoPerda || "",
+          pontoTrava: lead.supervisor.pontoTrava || "",
+          necessitaHumano: lead.supervisor.necessitaHumano === true,
+          prioridadeHumana: lead.supervisor.prioridadeHumana || "",
+          errosDetectados: lead.supervisor.errosDetectados || []
+        }
+      : null,
+
+    classificacaoResumo: lead.classificacao
+      ? {
+          temperaturaComercial: lead.classificacao.temperaturaComercial || "",
+          perfilComportamentalPrincipal: lead.classificacao.perfilComportamentalPrincipal || "",
+          intencaoPrincipal: lead.classificacao.intencaoPrincipal || "",
+          objecaoPrincipal: lead.classificacao.objecaoPrincipal || "",
+          confiancaClassificacao: lead.classificacao.confiancaClassificacao || ""
+        }
+      : null,
+
+    consultoriaResumo: lead.consultoria
+      ? {
+          estrategiaRecomendada: lead.consultoria.estrategiaRecomendada || "",
+          ofertaMaisAdequada: lead.consultoria.ofertaMaisAdequada || "",
+          momentoIdealHumano: lead.consultoria.momentoIdealHumano || "",
+          prioridadeComercial: lead.consultoria.prioridadeComercial || ""
+        }
+      : null
+  };
+}
+
+function auditLog(title, payload = {}) {
+  if (!DEBUG_AUDIT) return;
+
+  try {
+    console.log(`🔎 AUDIT — ${title}:`, JSON.stringify(payload, null, 2));
+  } catch (error) {
+    console.log(`🔎 AUDIT — ${title}:`, payload);
+  }
+}
+
 function buildDefaultSupervisorAnalysis() {
   return {
     houveErroSdr: false,
@@ -745,6 +850,12 @@ function getLeadLifecycleFields(data = {}) {
 ========================= */
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "iqg_token_123";
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
+
+// 🔎 MODO AUDITORIA DOS GPTS
+// Ligue no Render colocando DEBUG_AUDIT=true.
+// Desligue colocando DEBUG_AUDIT=false.
+// Isto NÃO muda o atendimento. Só mostra logs melhores.
+const DEBUG_AUDIT = String(process.env.DEBUG_AUDIT || "false").toLowerCase() === "true";
 
 const BUSINESS_START_HOUR = 8;
 const BUSINESS_END_HOUR = 18;
@@ -1568,6 +1679,19 @@ async function runConsultantAssistant({
     historicoRecente: recentHistory
   };
 
+auditLog("Payload enviado ao Consultor Pre-SDR", {
+  lead: buildLeadAuditSnapshot(lead || {}),
+  ultimaMensagemLead: lastUserText || "",
+  ultimaRespostaSdr: lastSdrText || "",
+  supervisorResumo: supervisorAnalysis || {},
+  classificacaoResumo: classification || {},
+  semanticIntent: semanticIntent || {},
+  commercialRouteDecision: commercialRouteDecision || {},
+  backendStrategicGuidance: backendStrategicGuidance || [],
+  memoriaConversacional: conversationMemory || {},
+  historicoRecente: recentHistory || []
+});
+   
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -13140,18 +13264,19 @@ console.log("🔀 Decisão central de rota comercial observada pelo backend:", {
   user: from,
   ultimaMensagemLead: text,
   rota: commercialRouteDecision.rota,
-   auditLog("Decisao de rota comercial", {
-  user: maskPhone(from),
-  ultimaMensagemLead: text,
-  currentLead: buildLeadAuditSnapshot(currentLead || {}),
-  semanticIntent: semanticIntent || {},
-  commercialRouteDecision
-});
   deveResponderAgora: commercialRouteDecision.deveResponderAgora,
   deveCompararProgramas: commercialRouteDecision.deveCompararProgramas,
   deveManterHomologado: commercialRouteDecision.deveManterHomologado,
   origemConversao: commercialRouteDecision.origemConversao,
   motivo: commercialRouteDecision.motivo
+});
+
+auditLog("Decisao de rota comercial", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  currentLead: buildLeadAuditSnapshot(currentLead || {}),
+  semanticIntent: semanticIntent || {},
+  commercialRouteDecision
 });
 
 const podeUsarSinalDeRotaAgora =
