@@ -1457,7 +1457,29 @@ Regras:
 - identificar o tema da pergunta/objeção;
 - orientar a SDR a responder esse tema primeiro;
 - não permitir que a SDR apenas avance fase;
-- não permitir que a SDR ignore a dúvida para seguir roteiro.
+- não permitir que a SDR ignore a dúvida para seguir roteiro;
+- não orientar coleta de dados na mesma resposta se a dúvida ainda for sobre produto, catálogo, kit, estoque, reposição, taxa, contrato, pagamento ou funcionamento do programa.
+
+Regra importante:
+Quando a última mensagem do lead é pergunta comercial aberta, a próxima melhor ação NÃO deve ser "conduzir para coleta".
+A próxima melhor ação deve ser:
+1. responder a pergunta;
+2. se fizer sentido, perguntar se ficou claro ou se pode explicar o próximo ponto;
+3. só avançar para coleta em mensagem posterior, quando o lead demonstrar continuidade real e o backend permitir.
+
+Exemplo:
+Lead:
+"e se eu precisar de mais produtos depois?"
+
+Orientação correta:
+"Responder sobre reposição/comodato. Não pedir dados nesta resposta. Depois perguntar se ficou claro."
+
+Exemplo:
+Lead:
+"tem catálogo desses produtos?"
+
+Orientação correta:
+"Responder que há catálogo/material dos produtos e orientar envio se disponível. Não pedir CPF. Não tratar a frase como nome."
 
 6. Se memoriaConversacional.ultimaInteracao.temasMensagemAtualLead tiver temas:
 - usar esses temas para priorizar a resposta;
@@ -2710,26 +2732,30 @@ function hasActiveSemanticObjection(semanticIntent = {}) {
 function buildSemanticQualificationPatch({
   lead = {},
   semanticIntent = null,
-  semanticContinuity = null
+  semanticContinuity = null,
+  history = [],
+  lastUserText = "",
+  lastSdrText = ""
 } = {}) {
   /*
-    ETAPA 2 PRODUÇÃO — Consolidação semântica.
+    ETAPA 13.1 PRODUÇÃO — consolidação semântica com coerência real.
 
     Explicação simples:
-    Esta função NÃO procura frase exata do lead.
+    Esta função ajuda o backend a marcar:
+    - taxa alinhada;
+    - compromisso validado;
+    - interesse real.
 
-    Ela não faz:
-    - se escreveu "faz sentido", aprova;
-    - se escreveu "quero seguir", aprova;
-    - se escreveu "me comprometo", aprova.
+    Mas ela NÃO pode fazer isso quando o lead ainda está perguntando algo.
 
-    Ela faz:
-    - olha o que o Classificador Semântico entendeu;
-    - olha o que o Historiador Semântico entendeu;
-    - olha qual foi o último tema explicado pela SDR;
-    - olha se existe objeção nova;
-    - olha se a confiança é média/alta;
-    - então consolida ou não consolida o estado do lead.
+    Exemplo:
+    Lead perguntou:
+    "e se eu precisar de mais produtos depois?"
+
+    Isso é pergunta comercial aberta.
+    Não é aceite de taxa.
+    Não é compromisso.
+    Não é autorização para pedir CPF.
   */
 
   const patch = {};
@@ -2751,15 +2777,143 @@ function buildSemanticQualificationPatch({
     ...currentEtapas
   };
 
-  const semanticConfidenceOk = hasUsableSemanticConfidence(semanticIntent?.confidence || "");
-  const continuityConfidenceOk = hasUsableSemanticConfidence(semanticContinuity?.confidence || "");
+  const normalizeLocal = value =>
+    String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const userText = normalizeLocal(lastUserText);
+  const sdrText = normalizeLocal(lastSdrText);
+
+  const recentHistoryText = Array.isArray(history)
+    ? normalizeLocal(
+        history
+          .slice(-12)
+          .map(message => `${message.role || ""}: ${message.content || ""}`)
+          .join("\n")
+      )
+    : "";
+
+  const semanticConfidenceOk =
+    hasUsableSemanticConfidence(semanticIntent?.confidence || "");
+
+  const continuityConfidenceOk =
+    hasUsableSemanticConfidence(semanticContinuity?.confidence || "");
 
   const hasObjection = hasActiveSemanticObjection(semanticIntent || {});
 
+  const currentLeadTopics = Array.isArray(semanticIntent?.questionTopics)
+    ? semanticIntent.questionTopics
+    : [];
+
+  const semanticSaysCurrentMessageIsQuestion =
+    semanticIntent?.asksQuestion === true &&
+    semanticIntent?.positiveRealInterest !== true &&
+    semanticIntent?.positiveCommitment !== true;
+
+  const leadRequestedFileNow =
+    Boolean(semanticIntent?.requestedFile) ||
+    /\b(catalogo|catálogo|folder|pdf|material|kit|manual|contrato|curso)\b/i.test(lastUserText || "");
+
+  const currentTextLooksCommercialQuestion =
+    semanticSaysCurrentMessageIsQuestion ||
+    leadRequestedFileNow ||
+    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|material|manual|estoque|comodato|reposicao|reposição|repor|mais produtos|taxa|valor|preco|preço|investimento|contrato|pagamento|boleto|pix|cartao|cartão)\b/i.test(lastUserText || "");
+
+  const currentMessageIsOpenCommercialQuestion =
+    currentTextLooksCommercialQuestion &&
+    semanticIntent?.positiveRealInterest !== true &&
+    semanticIntent?.positiveCommitment !== true &&
+    semanticIntent?.dataCorrectionIntent !== true;
+
+  /*
+    Se existe pergunta comercial aberta, marcamos isso no lead.
+    Assim o backend avisa os agentes:
+    "responda a dúvida antes de coletar dados".
+  */
+  if (currentMessageIsOpenCommercialQuestion) {
+    patch.pendenciaPerguntaComercialAberta = true;
+    patch.pendenciaPerguntaComercialAbertaEm = new Date();
+    patch.motivoPendenciaPerguntaComercialAberta =
+      "lead_fez_pergunta_comercial_antes_da_coleta";
+    reasons.push("pergunta_comercial_aberta_impede_consolidacao_e_coleta");
+  }
+
+  /*
+    Se antes havia uma pergunta aberta, mas agora o lead demonstra continuidade real,
+    limpamos a pendência.
+  */
+  const leadAgoraDemonstrouContinuidadeReal =
+    !currentMessageIsOpenCommercialQuestion &&
+    !hasObjection &&
+    semanticConfidenceOk &&
+    (
+      semanticIntent?.positiveRealInterest === true ||
+      semanticIntent?.positiveCommitment === true ||
+      semanticContinuity?.leadQuerAvancar === true
+    );
+
+  if (
+    lead?.pendenciaPerguntaComercialAberta === true &&
+    leadAgoraDemonstrouContinuidadeReal
+  ) {
+    patch.pendenciaPerguntaComercialAberta = false;
+    patch.pendenciaPerguntaComercialResolvidaEm = new Date();
+    reasons.push("pergunta_comercial_aberta_resolvida_por_continuidade_real");
+  }
+
+  /*
+    A partir daqui, se a mensagem atual ainda é pergunta comercial aberta,
+    NÃO consolidamos taxa, compromisso nem interesse real.
+  */
+  if (currentMessageIsOpenCommercialQuestion) {
+    patch.ultimaConsolidacaoSemantica = {
+      reasons,
+      bloqueouConsolidacao: true,
+      motivo:
+        "A última mensagem do lead é pergunta comercial aberta. Responder primeiro antes de avançar para coleta.",
+      semanticIntent: {
+        asksQuestion: semanticIntent?.asksQuestion === true,
+        questionTopics: semanticIntent?.questionTopics || [],
+        requestedFile: semanticIntent?.requestedFile || "",
+        positiveRealInterest: semanticIntent?.positiveRealInterest === true,
+        positiveCommitment: semanticIntent?.positiveCommitment === true,
+        confidence: semanticIntent?.confidence || "",
+        reason: semanticIntent?.reason || ""
+      },
+      semanticContinuity: {
+        leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
+        leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
+        naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
+        proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "",
+        confidence: semanticContinuity?.confidence || "",
+        reason: semanticContinuity?.reason || ""
+      },
+      registradoEm: new Date()
+    };
+
+    return {
+      shouldSave: true,
+      patch,
+      reasons
+    };
+  }
+
   const lastSdrTopics = semanticContinuity?.temaUltimaRespostaSdr || [];
-  const currentLeadTopics = semanticContinuity?.temaMensagemAtualLead || [];
+  const currentConversationTopics = semanticContinuity?.temaMensagemAtualLead || [];
 
-  const lastTopicWasInvestment =
+  /*
+    Agora a regra fica mais inteligente:
+    Para confirmar investimento/taxa, a SDR precisa ter falado de investimento/taxa
+    na resposta anterior ou no histórico recente.
+
+    Não basta lead perguntar sobre estoque, kit, catálogo ou reposição.
+  */
+  const lastReplyActuallyExplainedInvestment =
+    /\b(taxa|adesao|adesão|investimento|r\$|1990|1\.990|10x|parcelado|cartao|cartão|pix|pagamento)\b/i.test(lastSdrText || "") ||
     semanticListIncludesAny(lastSdrTopics, [
       "investimento",
       "taxa",
@@ -2767,20 +2921,20 @@ function buildSemanticQualificationPatch({
       "adesão",
       "pagamento",
       "parcelamento"
-    ]) ||
-    semanticListIncludesAny(currentLeadTopics, [
-      "investimento",
-      "taxa",
-      "adesao",
-      "adesão",
-      "pagamento",
-      "parcelamento"
-    ]) ||
-    lead?.etapasAguardandoEntendimento?.investimento === true ||
-    lead?.sinalPerguntaTaxa === true ||
-    lead?.etapas?.taxaPerguntada === true;
+    ]);
 
-  const lastTopicWasCommitment =
+  const historyHasInvestmentContext =
+    /\b(taxa de adesao|taxa de adesão|r\$ ?1\.?990|1990|1\.990|investimento|10x de r\$ ?199|parcelado|pagamento apos analise|pagamento após análise)\b/i.test(recentHistoryText);
+
+  const canEvaluateInvestmentUnderstanding =
+    lastReplyActuallyExplainedInvestment || historyHasInvestmentContext;
+
+  /*
+    Para confirmar compromisso, precisa ter contexto real de compromisso,
+    responsabilidades ou atuação.
+  */
+  const lastReplyActuallyExplainedCommitment =
+    /\b(compromisso|responsabilidade|responsabilidades|atuacao|atuação|vendas|conservar|conservacao|conservação|comunicar vendas|resultado depende|dedicacao|dedicação)\b/i.test(lastSdrText || "") ||
     semanticListIncludesAny(lastSdrTopics, [
       "compromisso",
       "responsabilidade",
@@ -2789,51 +2943,41 @@ function buildSemanticQualificationPatch({
       "atuação",
       "vendas",
       "resultado"
-    ]) ||
-    semanticListIncludesAny(currentLeadTopics, [
-      "compromisso",
-      "responsabilidade",
-      "responsabilidades",
-      "atuacao",
-      "atuação",
-      "vendas",
-      "resultado"
-    ]) ||
-    lead?.etapasAguardandoEntendimento?.compromisso === true ||
-    lead?.etapas?.compromissoPerguntado === true;
+    ]);
+
+  const historyHasCommitmentContext =
+    /\b(compromisso|responsabilidades|responsabilidade|atuar nas vendas|atuacao comercial|atuação comercial|resultado depende|dedicacao|dedicação|conservar produtos|comunicar vendas)\b/i.test(recentHistoryText);
+
+  const canEvaluateCommitment =
+    lastReplyActuallyExplainedCommitment || historyHasCommitmentContext;
 
   const leadShowedUnderstanding =
     semanticContinuity?.leadEntendeuUltimaExplicacao === true &&
     semanticContinuity?.naoRepetirUltimoTema === true &&
-    continuityConfidenceOk;
+    continuityConfidenceOk &&
+    !hasObjection;
 
   const leadShowedProgress =
     semanticContinuity?.leadQuerAvancar === true &&
-    continuityConfidenceOk;
+    continuityConfidenceOk &&
+    !hasObjection;
 
   const classifierSawRealInterest =
     semanticIntent?.positiveRealInterest === true &&
-    semanticConfidenceOk;
+    semanticConfidenceOk &&
+    !hasObjection;
 
   const classifierSawCommitment =
     semanticIntent?.positiveCommitment === true &&
-    semanticConfidenceOk;
+    semanticConfidenceOk &&
+    !hasObjection;
 
   /*
     1. Consolidar investimento/taxa.
-
-    Exemplo:
-    A SDR explicou investimento.
-    O Historiador entendeu que o lead compreendeu ou quer avançar.
-    Não existe objeção nova.
-
-    Resultado:
-    investimento=true
-    taxaAlinhada=true
+    Só consolida se houve contexto real de taxa/investimento.
   */
   const shouldConfirmInvestment =
-    !hasObjection &&
-    lastTopicWasInvestment &&
+    canEvaluateInvestmentUnderstanding &&
     (
       leadShowedUnderstanding ||
       leadShowedProgress ||
@@ -2842,61 +2986,38 @@ function buildSemanticQualificationPatch({
 
   if (shouldConfirmInvestment && updatedEtapas.investimento !== true) {
     updatedEtapas.investimento = true;
-    reasons.push("investimento_confirmado_por_contexto_semantico");
+    reasons.push("investimento_confirmado_por_contexto_real_de_taxa");
   }
 
   if (shouldConfirmInvestment && lead?.taxaAlinhada !== true) {
     patch.taxaAlinhada = true;
     patch.taxaModoConversao = false;
     patch.sinalObjecaoTaxa = false;
-    reasons.push("taxa_alinhada_por_contexto_semantico");
+    reasons.push("taxa_alinhada_por_contexto_real_de_investimento");
   }
 
   /*
     2. Consolidar compromisso.
-
-    Exemplo:
-    O tema era compromisso/responsabilidades/atuação.
-    O lead demonstrou entendimento, avanço ou compromisso.
-    Não existe objeção nova.
-
-    Resultado:
-    compromisso=true
+    Só consolida se houve contexto real de responsabilidades/compromisso.
   */
   const shouldConfirmCommitment =
-    !hasObjection &&
+    canEvaluateCommitment &&
     (
       classifierSawCommitment ||
-      (
-        lastTopicWasCommitment &&
-        (leadShowedUnderstanding || leadShowedProgress)
-      ) ||
-      (
-        updatedEtapas.investimento === true &&
-        (patch.taxaAlinhada === true || lead?.taxaAlinhada === true) &&
-        leadShowedProgress &&
-        classifierSawRealInterest
-      )
+      leadShowedUnderstanding ||
+      leadShowedProgress
     );
 
   if (shouldConfirmCommitment && updatedEtapas.compromisso !== true) {
     updatedEtapas.compromisso = true;
     updatedEtapas.compromissoPerguntado = true;
     patch.compromissoConfirmadoEm = new Date();
-    reasons.push("compromisso_confirmado_por_contexto_semantico");
+    reasons.push("compromisso_confirmado_por_contexto_real_de_responsabilidades");
   }
 
   /*
     3. Consolidar interesse real.
-
-    Interesse real não é palavra mágica.
-    É o conjunto:
-    - etapas principais conduzidas;
-    - investimento entendido;
-    - taxa alinhada;
-    - compromisso validado;
-    - lead demonstrou avanço real;
-    - sem objeção nova.
+    Só consolida se tudo já está coerente E não há pergunta aberta.
   */
   const allCoreStepsReady =
     updatedEtapas.programa === true &&
@@ -2911,19 +3032,24 @@ function buildSemanticQualificationPatch({
     lead?.taxaAlinhada === true;
 
   const shouldConfirmRealInterest =
-    !hasObjection &&
     allCoreStepsReady &&
     taxaEstaAlinhada &&
+    !hasObjection &&
+    !currentMessageIsOpenCommercialQuestion &&
     (
       classifierSawRealInterest ||
-      leadShowedProgress
+      (
+        leadShowedProgress &&
+        canEvaluateInvestmentUnderstanding &&
+        canEvaluateCommitment
+      )
     );
 
   if (shouldConfirmRealInterest && lead?.interesseReal !== true) {
     patch.interesseReal = true;
     patch.status = "qualificando";
     patch.faseQualificacao = "qualificando";
-    reasons.push("interesse_real_confirmado_por_contexto_semantico");
+    reasons.push("interesse_real_confirmado_com_todas_as_etapas_coerentes");
   }
 
   const etapasChanged =
@@ -2943,7 +3069,11 @@ function buildSemanticQualificationPatch({
 
   patch.ultimaConsolidacaoSemantica = {
     reasons,
+    bloqueouConsolidacao: false,
     semanticIntent: {
+      asksQuestion: semanticIntent?.asksQuestion === true,
+      questionTopics: semanticIntent?.questionTopics || [],
+      requestedFile: semanticIntent?.requestedFile || "",
       positiveRealInterest: semanticIntent?.positiveRealInterest === true,
       positiveCommitment: semanticIntent?.positiveCommitment === true,
       softUnderstandingOnly: semanticIntent?.softUnderstandingOnly === true,
@@ -2963,6 +3093,7 @@ function buildSemanticQualificationPatch({
       naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
       temaUltimaRespostaSdr: semanticContinuity?.temaUltimaRespostaSdr || [],
       temaMensagemAtualLead: semanticContinuity?.temaMensagemAtualLead || [],
+      proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "",
       confidence: semanticContinuity?.confidence || "",
       reason: semanticContinuity?.reason || ""
     },
@@ -9699,6 +9830,20 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
+   /*
+    ETAPA 13.1 PRODUÇÃO — pergunta comercial aberta impede coleta.
+
+    Explicação simples:
+    Se o lead ainda fez uma pergunta sobre produto, catálogo, estoque,
+    reposição, taxa, contrato ou qualquer dúvida comercial,
+    primeiro a SDR precisa responder.
+
+    Só depois, se o lead demonstrar continuidade, a coleta pode seguir.
+  */
+  if (lead?.pendenciaPerguntaComercialAberta === true) {
+    return false;
+  }
+   
   if (
     lead?.aguardandoConfirmacaoCampo === true ||
     lead?.aguardandoConfirmacao === true ||
@@ -11993,6 +12138,30 @@ function isLikelyPureDataAnswer(text = "", currentLead = {}) {
     return false;
   }
 
+  /*
+    ETAPA 13.1 PRODUÇÃO — frase comercial não pode virar dado cadastral.
+
+    Explicação simples:
+    Se o sistema está esperando "nome", mas o lead escreve:
+    "tem catálogo desses produtos?"
+    "não conheço os produtos da IQG"
+    "me manda o kit"
+    "e a taxa?"
+
+    Isso NÃO é nome.
+    É conversa comercial.
+  */
+  const looksLikeCommercialConversation =
+    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|pdf|material|manual|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto|pix|cartao|cartão|adesao|adesão)\b/i.test(cleanText) ||
+    cleanText.length > 80;
+
+  if (
+    currentLead?.campoEsperado === "nome" &&
+    looksLikeCommercialConversation
+  ) {
+    return false;
+  }
+   
   if (isPositiveConfirmation(cleanText) || isNegativeConfirmation(cleanText)) {
     return true;
   }
@@ -16605,12 +16774,16 @@ if (
 // 🧠 ETAPA 2 PRODUÇÃO — consolidação semântica de taxa, compromisso e interesse real.
 // Este bloco NÃO usa palavras mágicas.
 // Ele usa a interpretação do Classificador Semântico + Historiador Semântico.
+   
 const semanticQualificationPatch = buildSemanticQualificationPatch({
   lead: currentLead || {},
   semanticIntent,
-  semanticContinuity
+  semanticContinuity,
+  history,
+  lastUserText: text,
+  lastSdrText: lastAssistantText
 });
-
+   
 if (semanticQualificationPatch.shouldSave) {
   await saveLeadProfile(from, {
     ...semanticQualificationPatch.patch,
@@ -16999,8 +17172,9 @@ Antes disso, eu consigo te orientar sobre as regras principais do programa, resp
 Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
 }
      
-     const respostaLower = resposta.toLowerCase();
-     const jaExplicouPrograma =
+    const respostaLower = String(resposta || "").toLowerCase();
+
+const jaExplicouPrograma =
   historyText.includes("parceria") &&
   historyText.includes("iqg");
 
@@ -17033,24 +17207,45 @@ const leadConfirmouCiencia =
     historyText.includes("depende da sua atuacao nas vendas")
   );
 
-const podeIniciarColeta = canStartDataCollection(currentLead) &&
-  currentLead?.interesseReal === true;
+/*
+  ETAPA 13.1 PRODUÇÃO — início de coleta sem salto automático.
+
+  Explicação simples:
+  Antes, se o backend achava que podia coletar, ele forçava a coleta
+  mesmo que a resposta da SDR ainda estivesse respondendo uma dúvida.
+
+  Agora:
+  - não existe mais início forçado;
+  - só inicia coleta se a resposta realmente pedir o nome completo;
+  - se a última mensagem do lead era pergunta comercial, não inicia coleta;
+  - pergunta sobre produto, kit, catálogo, reposição, taxa ou contrato vem antes de CPF.
+*/
+const leadTemPerguntaComercialAbertaAntesDaColeta =
+  currentLead?.pendenciaPerguntaComercialAberta === true ||
+  (
+    semanticIntent?.asksQuestion === true &&
+    semanticIntent?.positiveRealInterest !== true &&
+    semanticIntent?.positiveCommitment !== true
+  ) ||
+  Boolean(semanticIntent?.requestedFile) ||
+  /\b(catalogo|catálogo|folder|pdf|material|kit|manual|produto|produtos|iqg|nano|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto)\b/i.test(text || "");
+
+const podeIniciarColeta =
+  canStartDataCollection(currentLead || {}) &&
+  currentLead?.interesseReal === true &&
+  leadTemPerguntaComercialAbertaAntesDaColeta !== true;
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
-  respostaLower.includes("pode me enviar seu nome completo") ||
-  respostaLower.includes("vamos seguir com a pré-análise") ||
-  respostaLower.includes("seguir com a pré-análise aos poucos");
+  respostaLower.includes("pode me enviar seu nome completo");
 
-     const deveForcarInicioColeta =
-  podeIniciarColeta &&
-  currentLead?.faseQualificacao !== "coletando_dados" &&
-  !currentLead?.aguardandoConfirmacaoCampo &&
-  !currentLead?.aguardandoConfirmacao;
-
-// 🔒 Só inicia coleta se realmente pode iniciar
+/*
+  Importante:
+  Removemos o antigo "deveForcarInicioColeta".
+  O backend não deve transformar uma resposta genérica em coleta.
+*/
 if (
-  (startedDataCollection || deveForcarInicioColeta) &&
+  startedDataCollection &&
   podeIniciarColeta &&
   currentLead?.faseQualificacao !== "coletando_dados"
 ) {
@@ -17072,12 +17267,43 @@ if (
     dadosConfirmadosPeloLead: false,
 
     faseQualificacao: "coletando_dados",
-    status: "coletando_dados"
+    status: "coletando_dados",
+    faseFunil: "coleta_dados",
+
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "inicio_coleta_dados",
+      motivo: "resposta_final_pediu_nome_completo_e_backend_permitiu_coleta",
+      acao: "iniciar_coleta_pelo_nome",
+      mensagemLead: text,
+      detalhes: {
+        campoEsperado: "nome",
+        perguntaComercialAberta: false
+      }
+    })
   });
 
   resposta = "Perfeito 😊 Vamos seguir então.\n\nPrimeiro, pode me enviar seu nome completo?";
-}
+} else if (
+  currentLead?.faseQualificacao !== "coletando_dados" &&
+  canStartDataCollection(currentLead || {}) === true &&
+  leadTemPerguntaComercialAbertaAntesDaColeta === true
+) {
+  console.log("🧭 Coleta não iniciada porque existe pergunta comercial aberta:", {
+    user: from,
+    ultimaMensagemLead: text,
+    requestedFile: semanticIntent?.requestedFile || "",
+    questionTopics: semanticIntent?.questionTopics || [],
+    pendenciaPerguntaComercialAberta: currentLead?.pendenciaPerguntaComercialAberta === true
+  });
 
+  auditLog("Coleta nao iniciada por pergunta comercial aberta", {
+    user: maskPhone(from),
+    ultimaMensagemLead: text,
+    currentLead: buildLeadAuditSnapshot(currentLead || {}),
+    semanticIntent: semanticIntent || {}
+  });
+}
+     
 let respostaFinal = resposta;
 
 auditLog("Primeira resposta gerada pela SDR antes das travas", {
