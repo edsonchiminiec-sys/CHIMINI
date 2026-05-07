@@ -616,8 +616,10 @@ function buildLeadAuditSnapshot(lead = {}) {
     etapas: lead.etapas || {},
     etapasAguardandoEntendimento: lead.etapasAguardandoEntendimento || {},
 
-    ultimaMensagem: lead.ultimaMensagem || "",
+        ultimaMensagem: lead.ultimaMensagem || "",
     ultimaDecisaoBackend: lead.ultimaDecisaoBackend || null,
+    ultimaDecisaoBackendLimpaEm: lead.ultimaDecisaoBackendLimpaEm || null,
+    ultimaDecisaoBackendLimpaMotivo: lead.ultimaDecisaoBackendLimpaMotivo || "",
 
     supervisorResumo: lead.supervisor
       ? {
@@ -648,6 +650,222 @@ function buildLeadAuditSnapshot(lead = {}) {
         }
       : null
   };
+}
+
+function isStaleBackendDecisionForCurrentLead({
+  lead = {},
+  text = ""
+} = {}) {
+  /*
+    ETAPA 11 PRODUÇÃO — decisão antiga não pode contaminar etapa atual.
+
+    Explicação simples:
+    ultimaDecisaoBackend é como um bilhete antigo na mesa.
+
+    Se o bilhete dizia:
+    "corrigir telefone"
+
+    Mas agora o lead já está informando cidade,
+    esse bilhete antigo precisa sair da mesa.
+
+    Isso não muda regra comercial.
+    Só evita que os agentes e logs olhem para uma decisão vencida.
+  */
+
+  const decision = lead?.ultimaDecisaoBackend || null;
+
+  if (!decision || typeof decision !== "object") {
+    return false;
+  }
+
+  const tipo = decision.tipo || "";
+  const detalhes = decision.detalhes || {};
+  const faseFunilAtual = lead?.faseFunil || "";
+  const faseAtual = lead?.faseQualificacao || lead?.status || "";
+  const campoEsperadoAtual = lead?.campoEsperado || "";
+  const campoPendenteAtual = lead?.campoPendente || "";
+
+  const textoAtual = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const mensagemDaDecisao = String(decision.mensagemLead || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const campoEsperadoDecisao =
+    detalhes.campoEsperado ||
+    detalhes.campoPendente ||
+    "";
+
+  const faseFunilDecisao = detalhes.faseFunil || "";
+  const faseAtualDecisao = detalhes.faseAtual || "";
+
+  const textoMudou =
+    textoAtual &&
+    mensagemDaDecisao &&
+    textoAtual !== mensagemDaDecisao;
+
+  /*
+    Caso 1:
+    Decisão antiga era sobre campo de coleta,
+    mas o campo atual mudou.
+
+    Exemplo real que vimos:
+    decisão antiga: telefone incorreto
+    etapa atual: cidade
+  */
+  const decisaoDeCampoColeta =
+    [
+      "pergunta_durante_coleta",
+      "confirmacao_campo",
+      "confirmacao_negativa",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(tipo) ||
+    Boolean(campoEsperadoDecisao);
+
+  const campoMudou =
+    campoEsperadoDecisao &&
+    campoEsperadoAtual &&
+    campoEsperadoDecisao !== campoEsperadoAtual;
+
+  if (decisaoDeCampoColeta && campoMudou) {
+    return true;
+  }
+
+  /*
+    Caso 2:
+    Decisão antiga era de coleta,
+    mas o lead não está mais na mesma fase de coleta.
+  */
+  const faseFunilMudou =
+    faseFunilDecisao &&
+    faseFunilAtual &&
+    faseFunilDecisao !== faseFunilAtual;
+
+  const faseAtualMudou =
+    faseAtualDecisao &&
+    faseAtual &&
+    faseAtualDecisao !== faseAtual;
+
+  if (decisaoDeCampoColeta && (faseFunilMudou || faseAtualMudou) && textoMudou) {
+    return true;
+  }
+
+  /*
+    Caso 3:
+    Decisão antiga era objeção de taxa/pergunta de investimento,
+    mas agora o lead já está em coleta, confirmação, CRM ou Afiliado.
+  */
+  const decisaoComercialPreColeta =
+    [
+      "sinal_pergunta_taxa",
+      "objecao_taxa",
+      "interesse_forte_bloqueado",
+      "corrigir_conducao_sdr",
+      "continuidade_semantica"
+    ].includes(tipo);
+
+  const leadJaPassouDaParteComercial =
+    [
+      "coleta_dados",
+      "confirmacao_dados",
+      "pre_analise",
+      "crm",
+      "afiliado"
+    ].includes(faseFunilAtual) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "dados_confirmados",
+      "enviado_crm",
+      "afiliado"
+    ].includes(faseAtual);
+
+  if (decisaoComercialPreColeta && leadJaPassouDaParteComercial && textoMudou) {
+    return true;
+  }
+
+  /*
+    Caso 4:
+    Decisão pós-CRM só é válida se o lead realmente continua pós-CRM.
+  */
+  if (
+    tipo === "lead_pos_crm" &&
+    lead?.crmEnviado !== true &&
+    lead?.statusOperacional !== "enviado_crm" &&
+    faseFunilAtual !== "crm"
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function cleanupStaleOperationalMemory({
+  user,
+  lead = {},
+  text = ""
+} = {}) {
+  /*
+    ETAPA 11 PRODUÇÃO — limpeza leve no Mongo.
+
+    Se a ultimaDecisaoBackend estiver velha,
+    limpamos somente ela e registramos log técnico.
+
+    Não limpamos dados do lead.
+    Não limpamos CPF.
+    Não limpamos telefone.
+    Não limpamos cidade/UF.
+    Não limpamos CRM.
+  */
+
+  if (!user || !lead) {
+    return lead;
+  }
+
+  if (!isStaleBackendDecisionForCurrentLead({ lead, text })) {
+    return lead;
+  }
+
+  await saveLeadProfile(user, {
+    ultimaDecisaoBackend: null,
+    ultimaDecisaoBackendLimpaEm: new Date(),
+    ultimaDecisaoBackendLimpaMotivo:
+      "decisao_operacional_antiga_nao_compativel_com_estado_atual",
+    ultimaMensagem: text || lead?.ultimaMensagem || ""
+  });
+
+  const cleanedLead = await loadLeadProfile(user);
+
+  console.log("🧹 Memória operacional antiga limpa:", {
+    user,
+    tipoDecisaoAntiga: lead?.ultimaDecisaoBackend?.tipo || "",
+    faseFunilAtual: lead?.faseFunil || "",
+    faseQualificacaoAtual: lead?.faseQualificacao || "",
+    campoEsperadoAtual: lead?.campoEsperado || "",
+    mensagemAtual: text
+  });
+
+  auditLog("Memoria operacional antiga limpa", {
+    user: maskPhone(user),
+    motivo: "ultimaDecisaoBackend antiga removida",
+    decisaoAntiga: lead?.ultimaDecisaoBackend || null,
+    leadDepois: buildLeadAuditSnapshot(cleanedLead || {})
+  });
+
+  return cleanedLead || lead;
 }
 
 function auditLog(title, payload = {}) {
@@ -14038,7 +14256,7 @@ const whatsappProfileName = contact?.profile?.name || "";
     const from = message.from;
 const state = getState(from);
 
-const leadBeforeProcessing = await loadLeadProfile(from);
+let leadBeforeProcessing = await loadLeadProfile(from);
 
      console.log("🔎 Lead antes do processamento:", {
   from,
@@ -14058,6 +14276,23 @@ console.log("🔕 Follow-ups antigos cancelados por nova mensagem do lead:", {
   user: from,
   ultimaMensagemLead: text,
   novaFollowupVersion: getState(from).followupVersion
+});
+
+     // 🧹 ETAPA 11 PRODUÇÃO — limpa decisão operacional antiga antes dos agentes.
+// Exemplo: decisão antiga de "telefone incorreto" não pode contaminar etapa de cidade.
+leadBeforeProcessing = await cleanupStaleOperationalMemory({
+  user: from,
+  lead: leadBeforeProcessing || {},
+  text
+});
+
+console.log("🧹 Lead após limpeza leve de memória operacional:", {
+  user: from,
+  status: leadBeforeProcessing?.status || null,
+  faseQualificacao: leadBeforeProcessing?.faseQualificacao || null,
+  faseFunil: leadBeforeProcessing?.faseFunil || null,
+  campoEsperado: leadBeforeProcessing?.campoEsperado || "",
+  ultimaDecisaoBackend: leadBeforeProcessing?.ultimaDecisaoBackend?.tipo || null
 });
 
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
@@ -14206,8 +14441,15 @@ const bufferedMessageIds = Array.isArray(buffered.messageIds) && buffered.messag
 // 🔥 carrega histórico antes de classificar
 let history = await loadConversation(from);
 
-let currentLead = await loadLeadProfile(from);
-     auditLog("currentLead ANTES do processamento da mensagem", {
+currentLead = await loadLeadProfile(from);
+
+currentLead = await cleanupStaleOperationalMemory({
+  user: from,
+  lead: currentLead || {},
+  text
+});
+
+auditLog("currentLead ANTES do processamento da mensagem", {
   user: maskPhone(from),
   mensagemLead: text,
   currentLead: buildLeadAuditSnapshot(currentLead || {})
