@@ -84,9 +84,14 @@ async function ensureIndexes() {
     { expireAfterSeconds: 300 }
   );
 
-  await db.collection("internal_alert_locks").createIndex(
+    await db.collection("internal_alert_locks").createIndex(
     { createdAt: 1 },
     { expireAfterSeconds: 3600 }
+  );
+
+  await db.collection("file_send_logs").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 7 * 24 * 60 * 60 }
   );
 }
 
@@ -6136,14 +6141,38 @@ ${whatsappLink}
   await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
 }
 async function sendWhatsAppDocument(to, file) {
+  /*
+    ETAPA 7 PRODUÇÃO — envio rastreável de documento.
+
+    Explicação simples:
+    Esta função baixa o PDF, sobe para o WhatsApp e envia ao lead.
+    Se qualquer parte falhar, ela joga erro.
+    Se der certo, ela devolve um comprovante com dados do upload/envio.
+  */
+
+  if (!file?.link || !file?.filename) {
+    throw new Error("Arquivo inválido: link ou filename ausente.");
+  }
+
   const fileResponse = await fetch(file.link);
 
   if (!fileResponse.ok) {
     throw new Error(`Erro ao baixar arquivo: ${fileResponse.status}`);
   }
 
+  const contentType = fileResponse.headers?.get?.("content-type") || "";
   const arrayBuffer = await fileResponse.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+
+  if (!buffer || buffer.length === 0) {
+    throw new Error("Arquivo baixado vazio.");
+  }
+
+  console.log("📄 PDF baixado para envio:", {
+    filename: file.filename,
+    contentType,
+    tamanhoBytes: buffer.length
+  });
 
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
@@ -6167,10 +6196,15 @@ async function sendWhatsAppDocument(to, file) {
 
   const uploadData = await upload.json();
 
-  if (!upload.ok) {
+  if (!upload.ok || !uploadData?.id) {
     console.error("Erro ao subir documento para WhatsApp:", uploadData);
     throw new Error("Falha ao subir documento para WhatsApp");
   }
+
+  console.log("📄 PDF subiu para WhatsApp:", {
+    filename: file.filename,
+    mediaId: uploadData.id
+  });
 
   const sendDocument = await fetch(
     `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
@@ -6187,7 +6221,7 @@ async function sendWhatsAppDocument(to, file) {
         document: {
           id: uploadData.id,
           filename: file.filename,
-          caption: file.caption
+          caption: file.caption || ""
         }
       })
     }
@@ -6199,6 +6233,21 @@ async function sendWhatsAppDocument(to, file) {
     console.error("Erro ao enviar documento WhatsApp:", sendDocumentData);
     throw new Error("Falha ao enviar documento WhatsApp");
   }
+
+  console.log("📄 PDF enviado ao WhatsApp com sucesso:", {
+    to,
+    filename: file.filename,
+    mediaId: uploadData.id,
+    messageId: sendDocumentData?.messages?.[0]?.id || ""
+  });
+
+  return {
+    ok: true,
+    filename: file.filename,
+    mediaId: uploadData.id,
+    messageId: sendDocumentData?.messages?.[0]?.id || "",
+    response: sendDocumentData
+  };
 }
 async function getWhatsAppMediaUrl(mediaId) {
   const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
@@ -12522,7 +12571,38 @@ function removeFileAction(actions = [], keyToRemove = "") {
 }
 
 async function sendFileOnce(from, key) {
-  if (!FILES[key]) return false;
+  /*
+    ETAPA 7 PRODUÇÃO — arquivo só é marcado como enviado depois do sucesso real.
+
+    Explicação simples:
+    Antes, o sistema marcava "enviado" antes de enviar.
+    Se o WhatsApp falhasse, o Mongo ficava dizendo que enviou, mas o lead não recebia.
+
+    Agora:
+    1. tenta enviar primeiro;
+    2. se der certo, marca sentFiles;
+    3. se falhar, NÃO marca sentFiles;
+    4. grava log do erro para auditoria.
+  */
+
+  if (!FILES[key]) {
+    console.error("❌ Arquivo solicitado não existe em FILES:", {
+      user: from,
+      arquivo: key
+    });
+
+    await connectMongo();
+
+    await db.collection("file_send_logs").insertOne({
+      user: from,
+      fileKey: key,
+      status: "failed",
+      reason: "file_key_not_found",
+      createdAt: new Date()
+    });
+
+    return false;
+  }
 
   await connectMongo();
 
@@ -12533,27 +12613,90 @@ async function sendFileOnce(from, key) {
   if (lead?.sentFiles?.[key]) {
     console.log("📎 Arquivo não reenviado porque já foi enviado:", {
       user: from,
-      arquivo: key
+      arquivo: key,
+      enviadoEm: lead.sentFiles[key]
+    });
+
+    await db.collection("file_send_logs").insertOne({
+      user: from,
+      fileKey: key,
+      filename: FILES[key]?.filename || "",
+      status: "skipped_already_sent",
+      alreadySentAt: lead.sentFiles[key],
+      createdAt: new Date()
     });
 
     return false;
   }
 
-  await db.collection("leads").updateOne(
-    { user: from },
-    {
-      $set: {
-        [sentField]: new Date(),
-        updatedAt: new Date()
-      }
-    },
-    { upsert: true }
-  );
+  try {
+    await db.collection("file_send_logs").insertOne({
+      user: from,
+      fileKey: key,
+      filename: FILES[key]?.filename || "",
+      status: "started",
+      createdAt: new Date()
+    });
 
-  await delay(2000);
-  await sendWhatsAppDocument(from, FILES[key]);
+    await delay(2000);
 
-  return true;
+    const sendResult = await sendWhatsAppDocument(from, FILES[key]);
+
+    await db.collection("leads").updateOne(
+      { user: from },
+      {
+        $set: {
+          [sentField]: new Date(),
+          [`sentFileDetails.${key}`]: {
+            filename: FILES[key]?.filename || "",
+            mediaId: sendResult?.mediaId || "",
+            messageId: sendResult?.messageId || "",
+            sentAt: new Date()
+          },
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+
+    await db.collection("file_send_logs").insertOne({
+      user: from,
+      fileKey: key,
+      filename: FILES[key]?.filename || "",
+      status: "success",
+      mediaId: sendResult?.mediaId || "",
+      messageId: sendResult?.messageId || "",
+      createdAt: new Date()
+    });
+
+    console.log("✅ Arquivo marcado como enviado após sucesso real:", {
+      user: from,
+      arquivo: key,
+      filename: FILES[key]?.filename || "",
+      mediaId: sendResult?.mediaId || "",
+      messageId: sendResult?.messageId || ""
+    });
+
+    return true;
+  } catch (error) {
+    console.error("❌ Falha ao enviar arquivo. NÃO será marcado como enviado:", {
+      user: from,
+      arquivo: key,
+      filename: FILES[key]?.filename || "",
+      erro: error.message
+    });
+
+    await db.collection("file_send_logs").insertOne({
+      user: from,
+      fileKey: key,
+      filename: FILES[key]?.filename || "",
+      status: "failed",
+      errorMessage: error.message,
+      createdAt: new Date()
+    });
+
+    return false;
+  }
 }
 
 function getBrazilNow() {
