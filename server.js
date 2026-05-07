@@ -877,15 +877,21 @@ const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
 ========================= */
 
 function getState(from) {
-  if (!leadState[from]) {
-    leadState[from] = {
+  if 
+   leadState[from] = {
   folderSent: false,
   sentFiles: {},
   closed: false,
   inactivityTimer: null,
   shortTimer: null,
   followupTimers: [],
-  inactivityFollowupCount: 0
+  inactivityFollowupCount: 0,
+
+  // Controle de segurança dos follow-ups.
+  // Cada vez que o lead manda mensagem ou a conversa muda,
+  // essa versão sobe. Timer antigo com versão velha não envia nada.
+  followupVersion: 0,
+  followupScheduledAtMs: 0
 };
   }
 
@@ -12215,6 +12221,19 @@ const leadBeforeProcessing = await loadLeadProfile(from);
   status: leadBeforeProcessing?.status || null,
   faseQualificacao: leadBeforeProcessing?.faseQualificacao || null,
   stateClosed: state.closed
+});
+
+// 🔕 ETAPA 1 PRODUÇÃO — nova mensagem do lead cancela follow-ups antigos.
+// Explicação simples:
+// Se o lead respondeu, qualquer follow-up antigo perdeu o sentido.
+// Isso evita o erro de falar de benefícios depois que a conversa já chegou em investimento,
+// responsabilidades, coleta ou outro tema mais avançado.
+clearTimers(from);
+
+console.log("🔕 Follow-ups antigos cancelados por nova mensagem do lead:", {
+  user: from,
+  ultimaMensagemLead: text,
+  novaFollowupVersion: getState(from).followupVersion
 });
 
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
