@@ -3773,10 +3773,13 @@ if (
 
 await saveSupervisorAnalysis(user, supervisorAnalysis);
 
-        // ETAPA 3 PRODUÇÃO — alerta humano só quando existe motivo real.
+           // ETAPA 3 PRODUÇÃO — alerta humano só quando existe motivo real.
     // Explicação simples:
     // Não basta o Supervisor dizer "risco alto".
     // Para chamar funcionário, precisa haver necessidade real de humano.
+    //
+    // Perguntas sobre contrato, pagamento, boleto, desconto, assinatura,
+    // aprovação, cobrança ou condição especial NÃO enviam alerta humano sozinhas.
     const textoLeadAlertaSupervisor = String(lastUserText || "")
       .toLowerCase()
       .normalize("NFD")
@@ -3788,7 +3791,7 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
 
     const leadTemRiscoHumanoRealSupervisor =
       leadPediuHumanoAlertaSupervisor ||
-      /\b(golpe|fraude|enganacao|enganação|suspeito|desconfiado|nao confio|não confio|palhacada|palhaçada|absurdo|ridiculo|ridículo|juridico|jurídico|contrato especifico|contrato específico|boleto|desconto|condicao especial|condição especial|pagamento|cobranca|cobrança|pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi|não recebi)\b/i.test(lastUserText || "");
+      /\b(golpe|fraude|enganacao|enganação|suspeito|desconfiado|nao confio|não confio|palhacada|palhaçada|absurdo|ridiculo|ridículo|vou denunciar|denuncia|denúncia|pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi o pdf|não recebi o pdf|nao recebi o arquivo|não recebi o arquivo|material nao chegou|material não chegou|crm falhou|erro no crm|nao encaminhou|não encaminhou)\b/i.test(lastUserText || "");
 
     const deveEnviarAlertaSupervisor =
       supervisorAnalysis?.necessitaHumano === true &&
@@ -3817,7 +3820,7 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
         motivo: "Sem pedido humano, sem risco humano real e sem erro operacional crítico."
       });
     }
-    runClassifierAfterSupervisor({
+     runClassifierAfterSupervisor({
       user,
       lead,
       history,
@@ -7395,11 +7398,14 @@ function enforceSupervisorHardLimits({
     replyAsksPersonalData(lastSdrText) ||
     mentionsPaymentIntent(lastSdrText);
 
-  // ETAPA 3 PRODUÇÃO — leitura segura de humano real.
+    // ETAPA 3 PRODUÇÃO — leitura segura de humano real.
   // Explicação simples:
   // Humano só é necessário quando existe pedido real de pessoa,
-  // risco grave, assunto proibido para IA ou falha operacional.
-  // Lead positivo/quente não é motivo para chamar funcionário.
+  // risco grave de confiança, irritação forte ou falha operacional.
+  //
+  // Perguntas sobre contrato, pagamento, boleto, desconto, assinatura,
+  // aprovação ou condição especial NÃO chamam humano automaticamente.
+  // A IA deve responder com segurança, sem prometer, sem negociar e sem inventar.
   const textoLeadNormalizadoSupervisor = String(lastUserText || "")
     .toLowerCase()
     .normalize("NFD")
@@ -7418,13 +7424,13 @@ function enforceSupervisorHardLimits({
     /\b(golpe|fraude|enganacao|enganação|suspeito|desconfiado|nao confio|não confio|medo de cair|picaretagem)\b/i.test(lastUserText || "");
 
   const leadComIrritacaoForteSupervisor =
-    /\b(palhacada|palhaçada|absurdo|ridiculo|ridículo|raiva|irritado|irritada|chateado|chateada|nao gostei|não gostei|parem|para de mandar|me tira)\b/i.test(lastUserText || "");
-
-  const assuntoExigeHumanoSupervisor =
-    /\b(contrato especifico|contrato específico|juridico|jurídico|advogado|assinatura|assinar|pagamento|pagar agora|boleto|desconto|condicao especial|condição especial|aprovacao|aprovação|cobranca|cobrança|negociar)\b/i.test(lastUserText || "");
+    /\b(palhacada|palhaçada|absurdo|ridiculo|ridículo|raiva|irritado|irritada|chateado|chateada|nao gostei|não gostei|parem|para de mandar|me tira|vou denunciar|denuncia|denúncia)\b/i.test(lastUserText || "");
 
   const erroOperacionalSupervisor =
-    /\b(pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi|não recebi|material nao chegou|material não chegou|link quebrado|erro no crm|crm falhou|nao encaminhou|não encaminhou)\b/i.test(lastUserText || "");
+    /\b(pdf nao chegou|pdf não chegou|arquivo nao chegou|arquivo não chegou|nao recebi o pdf|não recebi o pdf|nao recebi o arquivo|não recebi o arquivo|material nao chegou|material não chegou|link quebrado|erro no crm|crm falhou|nao encaminhou|não encaminhou)\b/i.test(lastUserText || "");
+
+  const assuntoSensivelRespondivelPelaIaSupervisor =
+    /\b(contrato|juridico|jurídico|pagamento|boleto|desconto|condicao especial|condição especial|aprovacao|aprovação|cobranca|cobrança|assinatura|assinar|parcelamento|pix|cartao|cartão)\b/i.test(lastUserText || "");
 
   const leadPositivoSemPedidoHumanoSupervisor =
     (
@@ -7436,14 +7442,12 @@ function enforceSupervisorHardLimits({
     !leadPediuHumanoSupervisor &&
     !leadComDesconfiancaForteSupervisor &&
     !leadComIrritacaoForteSupervisor &&
-    !assuntoExigeHumanoSupervisor &&
     !erroOperacionalSupervisor;
 
   const existeMotivoRealParaHumanoSupervisor =
     leadPediuHumanoSupervisor ||
     leadComDesconfiancaForteSupervisor ||
     leadComIrritacaoForteSupervisor ||
-    assuntoExigeHumanoSupervisor ||
     erroOperacionalSupervisor;
    
   if (
