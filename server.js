@@ -14514,9 +14514,8 @@ const bufferedMessageIds = Array.isArray(buffered.messageIds) && buffered.messag
 let history = await loadConversation(from);
 
 // ✅ currentLead precisa nascer com "let".
-// Explicação simples:
-// antes o código usava currentLead sem criar a variável.
-// Em Node/ESM isso quebra com: ReferenceError: currentLead is not defined.
+// Sem isso, o Node quebra com:
+// ReferenceError: currentLead is not defined
 let currentLead = await loadLeadProfile(from);
 
 currentLead = await cleanupStaleOperationalMemory({
