@@ -1010,6 +1010,17 @@ if (!finalBuffer) {
 function clearTimers(from) {
   const state = getState(from);
 
+  /*
+    Controle de versão dos follow-ups.
+
+    Explicação simples:
+    Toda vez que limpamos os timers, aumentamos uma "senha".
+    Se um timer antigo acordar depois, ele vai ver que a senha mudou
+    e NÃO vai mandar mensagem fora de contexto.
+  */
+  state.followupVersion = Number(state.followupVersion || 0) + 1;
+  state.followupScheduledAtMs = 0;
+
   if (state.inactivityTimer) {
     clearTimeout(state.inactivityTimer);
     state.inactivityTimer = null;
@@ -11768,6 +11779,266 @@ Se quiser retomar a conversa, é só me chamar por aqui.`;
   );
 }
    
+function isLeadInProtectedFollowupState(lead = {}) {
+  const status = lead?.status || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
+  const statusOperacional = lead?.statusOperacional || "";
+  const faseFunil = lead?.faseFunil || "";
+
+  const isHumanOrFinal =
+    lead?.botBloqueadoPorHumano === true ||
+    lead?.humanoAssumiu === true ||
+    lead?.atendimentoHumanoAtivo === true ||
+    lead?.crmEnviado === true ||
+    lead?.dadosConfirmadosPeloLead === true ||
+    ["em_atendimento", "enviado_crm", "fechado", "perdido", "erro_envio_crm"].includes(statusOperacional) ||
+    ["enviado_crm", "em_atendimento", "fechado", "perdido", "dados_confirmados"].includes(status) ||
+    ["enviado_crm", "em_atendimento", "fechado", "perdido", "dados_confirmados"].includes(faseQualificacao) ||
+    ["pre_analise", "crm", "encerrado"].includes(faseFunil);
+
+  const isDataFlow =
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    ["coleta_dados", "confirmacao_dados"].includes(faseFunil) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(status) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(faseQualificacao);
+
+  return isHumanOrFinal || isDataFlow;
+}
+
+function getSafeStageFollowupMessage(lead = {}, step = 1) {
+  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+  const prefixo = nome ? `${nome}, ` : "";
+
+  const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
+  const faseFunil = lead.faseFunil || "";
+  const faseQualificacao = lead.faseQualificacao || "";
+  const status = lead.status || "";
+  const fase = faseFunil || faseQualificacao || status;
+
+  const isAfiliado =
+    rotaComercial === "afiliado" ||
+    fase === "afiliado" ||
+    lead.interesseAfiliado === true;
+
+  if (isAfiliado) {
+    if (step <= 1) {
+      return `${prefixo}conseguiu acessar o cadastro de afiliado? 😊 O link é: https://minhaiqg.com.br/`;
+    }
+
+    return `${prefixo}se quiser começar sem estoque físico e sem a taxa de adesão do Homologado, o Programa de Afiliados pode ser um bom primeiro passo. O cadastro é aqui: https://minhaiqg.com.br/`;
+  }
+
+  const isAmbos =
+    rotaComercial === "ambos" ||
+    fase === "ambos";
+
+  if (isAmbos) {
+    if (step <= 1) {
+      return `${prefixo}ficou clara a diferença entre o Programa de Afiliados e o Parceiro Homologado? 😊`;
+    }
+
+    return `${prefixo}se quiser, posso te ajudar a escolher o caminho mais adequado: Afiliado, Homologado ou os dois.`;
+  }
+
+  /*
+    IMPORTANTE:
+    Aqui NÃO estamos positivando lead por palavra.
+    Estamos apenas escolhendo o texto do follow-up conforme a fase atual salva no lead.
+    A decisão de avanço continua sendo do backend/GPTs nas próximas etapas.
+  */
+
+  if (fase === "investimento" || faseQualificacao === "qualificando") {
+    if (step <= 1) {
+      return `${prefixo}fez sentido a explicação sobre o investimento e a taxa de adesão? 😊`;
+    }
+
+    return `${prefixo}ficou alguma dúvida sobre o investimento, parcelamento ou sobre o pagamento acontecer somente após análise interna e contrato?`;
+  }
+
+  if (fase === "compromisso") {
+    if (step <= 1) {
+      return `${prefixo}ficou claro que o resultado depende da atuação do parceiro nas vendas? 😊`;
+    }
+
+    return `${prefixo}se essa parte do compromisso de atuação estiver clara, podemos seguir para o próximo passo.`;
+  }
+
+  if (fase === "responsabilidades") {
+    if (step <= 1) {
+      return `${prefixo}ficou clara essa parte das responsabilidades do parceiro com o estoque e as vendas? 😊`;
+    }
+
+    return `${prefixo}se responsabilidades e atuação estiverem claras, posso te explicar o próximo ponto do programa.`;
+  }
+
+  if (fase === "estoque") {
+    if (step <= 1) {
+      return `${prefixo}ficou claro como funciona o estoque em comodato? 😊`;
+    }
+
+    return `${prefixo}o ponto principal é que o estoque é cedido em comodato e continua sendo da IQG até a venda. Ficou alguma dúvida sobre isso?`;
+  }
+
+  if (fase === "beneficios" || faseQualificacao === "morno") {
+    if (step <= 1) {
+      return `${prefixo}ficou alguma dúvida sobre os benefícios ou sobre o suporte que a IQG oferece ao parceiro? 😊`;
+    }
+
+    return `${prefixo}quer que eu te explique agora como funciona o estoque inicial em comodato?`;
+  }
+
+  if (fase === "esclarecimento" || fase === "inicio" || faseQualificacao === "novo" || status === "novo") {
+    if (step <= 1) {
+      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG? 😊`;
+    }
+
+    return `${prefixo}quer que eu te explique de forma simples como funciona na prática para começar como Parceiro Homologado?`;
+  }
+
+  if (step <= 1) {
+    return `${prefixo}ficou alguma dúvida sobre o Programa Parceiro Homologado IQG? 😊`;
+  }
+
+  return `${prefixo}posso te ajudar com mais algum ponto sobre o programa?`;
+}
+
+async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {}) {
+  const cleanMessage = sanitizeWhatsAppText(messageToSend || "");
+
+  if (!cleanMessage) return;
+
+  try {
+    const history = await loadConversation(from);
+
+    const updatedHistory = [
+      ...(Array.isArray(history) ? history : []),
+      {
+        role: "assistant",
+        content: cleanMessage,
+        origem: "followup_automatico",
+        followupStep: meta.step || null,
+        createdAt: new Date()
+      }
+    ].slice(-30);
+
+    await saveConversation(from, updatedHistory);
+
+    await saveLeadProfile(from, {
+      ultimoFollowupAutomatico: {
+        mensagem: cleanMessage,
+        step: meta.step || null,
+        faseFunil: meta.faseFunil || "",
+        faseQualificacao: meta.faseQualificacao || "",
+        enviadoEm: new Date()
+      }
+    });
+
+    auditLog("Follow-up automatico salvo no historico", {
+      user: maskPhone(from),
+      mensagem: cleanMessage,
+      step: meta.step || null,
+      faseFunil: meta.faseFunil || "",
+      faseQualificacao: meta.faseQualificacao || ""
+    });
+  } catch (error) {
+    console.error("⚠️ Follow-up enviado, mas falhou ao salvar no histórico:", {
+      user: from,
+      erro: error.message
+    });
+  }
+}
+
+async function sendAutomaticFollowupIfStillValid({
+  from,
+  followup,
+  scheduleVersion
+} = {}) {
+  const currentState = getState(from);
+
+  if (currentState.closed) return false;
+
+  if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
+    console.log("🔕 Follow-up cancelado: versão antiga do timer.", {
+      user: from,
+      scheduleVersion,
+      currentVersion: currentState.followupVersion
+    });
+
+    return false;
+  }
+
+  const latestLead = await loadLeadProfile(from);
+
+  if (shouldStopBotByLifecycle(latestLead) || isLeadInProtectedFollowupState(latestLead)) {
+    currentState.closed = shouldStopBotByLifecycle(latestLead) ? true : currentState.closed;
+    clearTimers(from);
+
+    console.log("🔕 Follow-up cancelado: lead em estado protegido/finalizado/coleta/humano.", {
+      user: from,
+      status: latestLead?.status || "-",
+      faseQualificacao: latestLead?.faseQualificacao || "-",
+      statusOperacional: latestLead?.statusOperacional || "-",
+      faseFunil: latestLead?.faseFunil || "-"
+    });
+
+    return false;
+  }
+
+  const messageToSend = followup.getMessage
+    ? followup.getMessage(latestLead)
+    : getSafeStageFollowupMessage(latestLead, followup.step || 1);
+
+  if (!messageToSend || !String(messageToSend).trim()) {
+    console.log("🔕 Follow-up cancelado: mensagem vazia.", {
+      user: from,
+      step: followup.step || null
+    });
+
+    return false;
+  }
+
+  await sendWhatsAppMessage(from, messageToSend);
+
+  await saveAutomaticFollowupToHistory(from, messageToSend, {
+    step: followup.step || null,
+    faseFunil: latestLead?.faseFunil || "",
+    faseQualificacao: latestLead?.faseQualificacao || ""
+  });
+
+  console.log("⏰ Follow-up automático enviado:", {
+    user: from,
+    step: followup.step || null,
+    faseFunil: latestLead?.faseFunil || "-",
+    faseQualificacao: latestLead?.faseQualificacao || "-"
+  });
+
+  if (followup.closeAfter) {
+    currentState.closed = true;
+    clearTimers(from);
+  }
+
+  return true;
+}
+
 function scheduleLeadFollowups(from) {
   const state = getState(from);
 
@@ -11775,44 +12046,54 @@ function scheduleLeadFollowups(from) {
 
   clearTimers(from);
 
+  const scheduleVersion = Number(state.followupVersion || 0);
+
   state.inactivityFollowupCount = 0;
   state.followupTimers = [];
+  state.followupScheduledAtMs = Date.now();
 
   const followups = [
-  {
-    delay: 6 * 60 * 1000,
-    getMessage: (lead) => getSmartFollowupMessage(lead, 1)
-  },
-  {
-    delay: 30 * 60 * 1000,
-    getMessage: (lead) => getSmartFollowupMessage(lead, 2)
-  },
     {
+      step: 1,
+      delay: 6 * 60 * 1000,
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 1)
+    },
+    {
+      step: 2,
+      delay: 30 * 60 * 1000,
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 2)
+    },
+    {
+      step: 3,
       delay: 6 * 60 * 60 * 1000,
-      message: "Passando só para saber se ficou alguma dúvida sobre o programa 😊",
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 3),
       businessOnly: true
     },
     {
+      step: 4,
       delay: 12 * 60 * 60 * 1000,
-      message: "Você vê isso como renda extra ou algo mais estruturado?",
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 4),
       businessOnly: true
     },
     {
+      step: 5,
       delay: 18 * 60 * 60 * 1000,
-      message: "Você já trabalha com vendas ou atendimento?",
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 5),
       businessOnly: true
     },
     {
+      step: 6,
       delay: 24 * 60 * 60 * 1000,
-      message: "Quer que eu siga com sua pré-análise?",
+      getMessage: (lead) => getSafeStageFollowupMessage(lead, 6),
       businessOnly: true
     },
-   {
-  delay: 30 * 60 * 60 * 1000,
-  getMessage: (lead) => getFinalFollowupMessage(lead),
-  businessOnly: true,
-  closeAfter: true
-}
+    {
+      step: 7,
+      delay: 30 * 60 * 60 * 1000,
+      getMessage: (lead) => getFinalFollowupMessage(lead),
+      businessOnly: true,
+      closeAfter: true
+    }
   ];
 
   for (const followup of followups) {
@@ -11820,43 +12101,29 @@ function scheduleLeadFollowups(from) {
       try {
         const currentState = getState(from);
 
-if (currentState.closed) return;
+        if (currentState.closed) return;
 
-const latestLead = await loadLeadProfile(from);
+        if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
+          console.log("🔕 Follow-up ignorado antes de rodar: timer antigo.", {
+            user: from,
+            step: followup.step,
+            scheduleVersion,
+            currentVersion: currentState.followupVersion
+          });
 
-if (shouldStopBotByLifecycle(latestLead)) {
-  currentState.closed = true;
-  clearTimers(from);
-  return;
-}
+          return;
+        }
 
         if (followup.businessOnly && !isBusinessTime()) {
           const nextBusinessDelay = getDelayUntilNextBusinessTime();
 
           const businessTimer = setTimeout(async () => {
             try {
-const latestState = getState(from);
-
-if (latestState.closed) return;
-
-const latestLead = await loadLeadProfile(from);
-
-if (shouldStopBotByLifecycle(latestLead)) {
-  latestState.closed = true;
-  clearTimers(from);
-  return;
-}
-
-const businessMessageToSend = followup.getMessage
-  ? followup.getMessage(latestLead)
-  : followup.message;
-
-await sendWhatsAppMessage(from, businessMessageToSend);
-               
-              if (followup.closeAfter) {
-                latestState.closed = true;
-                clearTimers(from);
-              }
+              await sendAutomaticFollowupIfStillValid({
+                from,
+                followup,
+                scheduleVersion
+              });
             } catch (error) {
               console.error("Erro no follow-up em horário comercial:", error);
             }
@@ -11866,25 +12133,24 @@ await sendWhatsAppMessage(from, businessMessageToSend);
           return;
         }
 
-        const leadAtual = await loadLeadProfile(from);
-
-const messageToSend = followup.getMessage
-  ? followup.getMessage(leadAtual)
-  : followup.message;
-
-await sendWhatsAppMessage(from, messageToSend);
-         
-        if (followup.closeAfter) {
-          currentState.closed = true;
-          clearTimers(from);
-        }
+        await sendAutomaticFollowupIfStillValid({
+          from,
+          followup,
+          scheduleVersion
+        });
       } catch (error) {
-        console.error("Erro no follow-up automático:", error);
+        console.error("Erro no follow-up:", error);
       }
     }, followup.delay);
 
     state.followupTimers.push(timer);
   }
+
+  console.log("⏱️ Follow-ups agendados com versão segura:", {
+    user: from,
+    scheduleVersion,
+    totalTimers: followups.length
+  });
 }
 
 app.get("/webhook", (req, res) => {
