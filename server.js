@@ -6404,6 +6404,142 @@ function hasExplicitFileRequest(text = "") {
   );
 }
 
+function shouldForceFolderForBenefits({
+  lead = {},
+  respostaFinal = "",
+  actions = [],
+  leadText = ""
+} = {}) {
+  /*
+    ETAPA 8 PRODUÇÃO — folder obrigatório em benefícios.
+
+    Explicação simples:
+    Se a SDR explicou benefícios do Parceiro Homologado,
+    o folder precisa ser enviado.
+
+    Não vamos depender só do GPT lembrar de escrever [ACTION:SEND_FOLDER].
+    O backend confere a resposta final e adiciona o comando se faltar.
+
+    Segurança:
+    - não envia se já foi enviado;
+    - não envia se o lead está em Afiliado;
+    - não envia em coleta/CRM/humano;
+    - não envia contrato;
+    - só força folder do Homologado quando a resposta realmente fala de benefícios/suporte.
+  */
+
+  const resposta = String(respostaFinal || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const textoLead = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const rotaAfiliado =
+    lead?.rotaComercial === "afiliado" ||
+    lead?.origemConversao === "afiliado" ||
+    lead?.faseFunil === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado" ||
+    lead?.interesseAfiliado === true;
+
+  if (rotaAfiliado) {
+    return false;
+  }
+
+  const fluxoProtegido =
+    lead?.crmEnviado === true ||
+    lead?.botBloqueadoPorHumano === true ||
+    lead?.humanoAssumiu === true ||
+    lead?.atendimentoHumanoAtivo === true ||
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.faseFunil === "coleta_dados" ||
+    lead?.faseFunil === "confirmacao_dados" ||
+    lead?.faseFunil === "pre_analise" ||
+    lead?.faseFunil === "crm" ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true;
+
+  if (fluxoProtegido) {
+    return false;
+  }
+
+  const folderJaEnviado =
+    lead?.sentFiles?.folder === true ||
+    Boolean(lead?.sentFiles?.folder) ||
+    Boolean(lead?.sentFileDetails?.folder);
+
+  if (folderJaEnviado) {
+    return false;
+  }
+
+  if (Array.isArray(actions) && actions.includes("folder")) {
+    return false;
+  }
+
+  if (resposta.includes("[action:send_folder]")) {
+    return false;
+  }
+
+    const falaDeBeneficiosHomologado =
+    resposta.includes("beneficio") ||
+    resposta.includes("beneficios") ||
+    resposta.includes("suporte da industria") ||
+    resposta.includes("suporte da iqg") ||
+    resposta.includes("materiais") ||
+    resposta.includes("material explicativo") ||
+    resposta.includes("folder") ||
+    resposta.includes("vou te enviar um material") ||
+    resposta.includes("vou enviar um material") ||
+    resposta.includes("te envio um material") ||
+    resposta.includes("vou te mandar um material") ||
+    resposta.includes("vou mandar um material") ||
+    resposta.includes("treinamento") ||
+    resposta.includes("treinamentos") ||
+    resposta.includes("nao comeca sozinho") ||
+    resposta.includes("não começa sozinho") ||
+    resposta.includes("estrutura da iqg") ||
+    resposta.includes("produtos em comodato") ||
+    resposta.includes("pronta-entrega") ||
+    resposta.includes("demonstracao") ||
+    resposta.includes("demonstração");
+  const contextoBeneficios =
+    lead?.faseFunil === "beneficios" ||
+    lead?.faseQualificacao === "morno" ||
+    lead?.etapas?.beneficios === true ||
+    lead?.etapasAguardandoEntendimento?.beneficios === true ||
+    textoLead.includes("beneficio") ||
+    textoLead.includes("beneficios") ||
+    textoLead.includes("vantagem") ||
+    textoLead.includes("vantagens") ||
+    textoLead.includes("suporte") ||
+    textoLead.includes("material") ||
+    textoLead.includes("folder");
+
+  const respostaMisturaAfiliado =
+    resposta.includes("afiliado") ||
+    resposta.includes("minhaiqg.com.br") ||
+    resposta.includes("link exclusivo") ||
+    resposta.includes("divulgar por link") ||
+    resposta.includes("comissao por vendas") ||
+    resposta.includes("comissão por vendas");
+
+  return Boolean(
+    falaDeBeneficiosHomologado &&
+    contextoBeneficios &&
+    !respostaMisturaAfiliado
+  );
+}
+
 function extractActions(reply = "") {
   const actions = [];
 
@@ -16676,14 +16812,46 @@ if (containsInternalContextLeak(respostaFinal)) {
   }
 }
 
-     // 📎 BLOCO 8B — SINCRONIZA ACTIONS DA RESPOSTA FINAL
+    // 📄 ETAPA 8 PRODUÇÃO — folder obrigatório quando benefícios forem explicados.
+// Explicação simples:
+// Se a SDR explicou benefícios e esqueceu o comando do folder,
+// o backend adiciona [ACTION:SEND_FOLDER] antes de sincronizar actions.
+if (
+  shouldForceFolderForBenefits({
+    lead: currentLead || {},
+    respostaFinal,
+    actions,
+    leadText: text
+  })
+) {
+  respostaFinal = `${String(respostaFinal || "").trim()}
+
+[ACTION:SEND_FOLDER]`;
+
+  console.log("📄 Folder obrigatório adicionado pelo backend na fase de benefícios:", {
+    user: from,
+    faseFunil: currentLead?.faseFunil || "-",
+    faseQualificacao: currentLead?.faseQualificacao || "-",
+    folderJaEnviado: Boolean(currentLead?.sentFiles?.folder)
+  });
+
+  auditLog("Folder obrigatorio adicionado pelo backend", {
+    user: maskPhone(from),
+    ultimaMensagemLead: text,
+    faseFunil: currentLead?.faseFunil || "",
+    faseQualificacao: currentLead?.faseQualificacao || "",
+    respostaFinalComAction: respostaFinal
+  });
+}
+
+// 📎 BLOCO 8B — SINCRONIZA ACTIONS DA RESPOSTA FINAL
 // Como a SDR pode ter revisado a resposta, os comandos de arquivo precisam
 // ser extraídos novamente da resposta final real que será enviada ao lead.
 const syncedFinalReply = syncActionsFromFinalReply({
   respostaFinal,
   actions
 });
-
+     
 respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 
 console.log("📎 Actions sincronizados com a resposta final:", {
