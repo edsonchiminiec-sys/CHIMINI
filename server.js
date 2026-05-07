@@ -89,9 +89,14 @@ async function ensureIndexes() {
     { expireAfterSeconds: 3600 }
   );
 
-  await db.collection("file_send_logs").createIndex(
+   await db.collection("file_send_logs").createIndex(
     { createdAt: 1 },
     { expireAfterSeconds: 7 * 24 * 60 * 60 }
+  );
+
+  await db.collection("crm_send_logs").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 30 * 24 * 60 * 60 }
   );
 }
 
@@ -6121,24 +6126,73 @@ async function sendTypingIndicator(messageId) {
   }
 }
 
+function buildConsultantCrmMessage(lead = {}) {
+  const leadPhone = onlyDigits(lead.telefoneWhatsApp || lead.user || lead.telefone || "");
+  const whatsappLink = leadPhone ? `https://wa.me/${leadPhone}` : "-";
+
+  const nome = lead.nome || lead.nomeWhatsApp || "Não informado";
+  const cpf = lead.cpf || "Não informado";
+  const telefone = lead.telefone || lead.telefoneWhatsApp || lead.user || "Não informado";
+  const cidade = lead.cidade || "Não informada";
+  const estado = lead.estado || "Não informado";
+
+  const rota =
+    lead.rotaComercial ||
+    lead.origemConversao ||
+    "homologado";
+
+  const etapas = lead.etapas || {};
+
+  return `🔥 Novo pré-cadastro Parceiro Homologado IQG
+
+Lead: ${nome}
+WhatsApp: ${leadPhone || "-"}
+Link: ${whatsappLink}
+
+Dados confirmados:
+Nome: ${nome}
+CPF: ${cpf}
+Telefone: ${telefone}
+Cidade/UF: ${cidade}/${estado}
+
+Status comercial:
+Rota: ${rota}
+Taxa alinhada: ${lead.taxaAlinhada === true ? "sim" : "não"}
+Compromisso: ${etapas.compromisso === true ? "sim" : "não"}
+Interesse real: ${lead.interesseReal === true ? "sim" : "não"}
+
+Observação:
+O lead confirmou os dados no WhatsApp. Validar informações, tirar dúvidas finais e orientar a finalização da adesão.`;
+}
+
 async function notifyConsultant(lead) {
-  if (!process.env.CONSULTANT_PHONE) return;
+  /*
+    ETAPA 9 PRODUÇÃO — notificação real ao consultor.
 
-  const leadPhone = lead.telefoneWhatsApp || lead.user;
-  const whatsappLink = `https://wa.me/${leadPhone}`;
+    Explicação simples:
+    Se não tiver CONSULTANT_PHONE configurado, não existe para onde enviar.
+    Então isso precisa ser erro, não silêncio.
+  */
 
-  const message = `
-🔥 Lead quente!
+  if (!process.env.CONSULTANT_PHONE) {
+    throw new Error("CONSULTANT_PHONE não configurado. Não foi possível notificar o consultor.");
+  }
 
-Telefone: ${leadPhone}
-Mensagem: ${lead.ultimaMensagem || "-"}
-Status: ${lead.status}
-
-Abrir conversa:
-${whatsappLink}
-`;
+  const message = buildConsultantCrmMessage(lead || {});
 
   await sendWhatsAppMessage(process.env.CONSULTANT_PHONE, message);
+
+  console.log("📣 Consultor notificado com pré-cadastro confirmado:", {
+    user: lead?.user || lead?.telefoneWhatsApp || "-",
+    nome: lead?.nome || "-",
+    telefone: lead?.telefone || lead?.telefoneWhatsApp || "-",
+    rota: lead?.rotaComercial || lead?.origemConversao || "homologado"
+  });
+
+  return {
+    ok: true,
+    consultantPhone: process.env.CONSULTANT_PHONE
+  };
 }
 async function sendWhatsAppDocument(to, file) {
   /*
@@ -12277,47 +12331,274 @@ Responda em até 3 blocos curtos.`
 }
 
 function canSendLeadToCRM(lead = {}) {
+  /*
+    ETAPA 9 PRODUÇÃO — regra segura para envio ao CRM/consultor.
+
+    Explicação simples:
+    Para enviar ao consultor, não basta ter nome, CPF e telefone.
+    O lead precisa:
+    - ter confirmado os dados;
+    - estar no caminho Homologado;
+    - ter entendido investimento/taxa;
+    - ter compromisso validado;
+    - ter interesse real;
+    - ter todos os dados obrigatórios.
+  */
+
+  const etapas = lead.etapas || {};
+
   const dadosConfirmados = lead.dadosConfirmadosPeloLead === true;
+
+  const temDadosObrigatorios =
+    Boolean(lead.nome) &&
+    Boolean(lead.cpf) &&
+    Boolean(lead.telefone) &&
+    Boolean(lead.cidade) &&
+    Boolean(lead.estado);
+
+  const rotaAfiliado =
+    lead.rotaComercial === "afiliado" ||
+    lead.origemConversao === "afiliado" ||
+    lead.interesseAfiliado === true ||
+    lead.status === "afiliado" ||
+    lead.faseQualificacao === "afiliado" ||
+    lead.faseFunil === "afiliado";
+
+  if (rotaAfiliado) {
+    return false;
+  }
 
   const faseAntigaValida = [
     "dados_confirmados",
     "qualificado"
   ].includes(lead.faseQualificacao);
 
-  const statusAntigoValido = lead.status === "quente";
+  const statusAntigoValido =
+    lead.status === "quente" ||
+    lead.status === "dados_confirmados";
 
   const faseNovaValida = [
     "confirmacao_dados",
     "pre_analise"
   ].includes(lead.faseFunil);
 
-  const temperaturaNovaValida = lead.temperaturaComercial === "quente";
+  const temperaturaNovaValida =
+    lead.temperaturaComercial === "quente";
 
   const statusOperacionalPermiteEnvio =
     ![
       "em_atendimento",
       "enviado_crm",
       "fechado",
-      "perdido"
+      "perdido",
+      "erro_envio_crm"
     ].includes(lead.statusOperacional);
 
-  const temDadosObrigatorios =
-    lead.nome &&
-    lead.cpf &&
-    lead.telefone &&
-    lead.cidade &&
-    lead.estado;
+  const qualificacaoComercialOk =
+    lead.interesseReal === true &&
+    lead.taxaAlinhada === true &&
+    etapas.investimento === true &&
+    etapas.compromisso === true;
 
   const caminhoAntigoValido = faseAntigaValida && statusAntigoValido;
   const caminhoNovoValido = faseNovaValida && temperaturaNovaValida;
 
-  return (
+  return Boolean(
     dadosConfirmados &&
     lead.crmEnviado !== true &&
     statusOperacionalPermiteEnvio &&
     temDadosObrigatorios &&
+    qualificacaoComercialOk &&
     (caminhoAntigoValido || caminhoNovoValido)
   );
+}
+
+async function sendLeadToCrmOnce({
+  from,
+  lead = {},
+  ultimaMensagem = ""
+} = {}) {
+  /*
+    ETAPA 9 PRODUÇÃO — envio único e rastreável ao consultor/CRM.
+
+    Explicação simples:
+    Antes, o sistema podia marcar crmEnviado antes de notificar o consultor.
+    Agora ele só marca crmEnviado depois que notifyConsultant() dá certo.
+  */
+
+  await connectMongo();
+
+  const leadAtual = await loadLeadProfile(from);
+  const leadParaEnviar = {
+    ...(leadAtual || {}),
+    ...(lead || {}),
+    user: from,
+    telefoneWhatsApp: from,
+    ultimaMensagem: ultimaMensagem || lead?.ultimaMensagem || leadAtual?.ultimaMensagem || ""
+  };
+
+  if (!canSendLeadToCRM(leadParaEnviar)) {
+    await db.collection("crm_send_logs").insertOne({
+      user: from,
+      status: "skipped_not_allowed",
+      reason: "canSendLeadToCRM_false",
+      snapshot: buildLeadAuditSnapshot(leadParaEnviar || {}),
+      createdAt: new Date()
+    });
+
+    console.log("🚫 CRM não enviado: requisitos ainda não permitem envio.", {
+      user: from,
+      canSendLeadToCRM: false,
+      snapshot: buildLeadAuditSnapshot(leadParaEnviar || {})
+    });
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "canSendLeadToCRM_false"
+    };
+  }
+
+  const lockResult = await db.collection("leads").findOneAndUpdate(
+    {
+      user: from,
+      crmEnviado: { $ne: true },
+      crmSendInProgress: { $ne: true }
+    },
+    {
+      $set: {
+        crmSendInProgress: true,
+        crmSendStartedAt: new Date(),
+        crmSendStatus: "in_progress",
+        crmLastAttemptAt: new Date(),
+        updatedAt: new Date()
+      }
+    },
+    {
+      returnDocument: "after"
+    }
+  );
+
+  const lockedLead = lockResult?.value || lockResult;
+
+  if (!lockedLead) {
+    const existingLead = await loadLeadProfile(from);
+
+    await db.collection("crm_send_logs").insertOne({
+      user: from,
+      status: existingLead?.crmEnviado === true ? "skipped_already_sent" : "skipped_locked",
+      reason: existingLead?.crmEnviado === true
+        ? "crm_already_sent"
+        : "crm_send_in_progress_or_lock_failed",
+      snapshot: buildLeadAuditSnapshot(existingLead || {}),
+      createdAt: new Date()
+    });
+
+    console.log("🔒 CRM não enviado: já enviado ou envio em andamento.", {
+      user: from,
+      crmEnviado: existingLead?.crmEnviado === true,
+      crmSendInProgress: existingLead?.crmSendInProgress === true
+    });
+
+    return {
+      ok: existingLead?.crmEnviado === true,
+      alreadySent: existingLead?.crmEnviado === true,
+      skipped: true,
+      reason: existingLead?.crmEnviado === true
+        ? "crm_already_sent"
+        : "crm_send_in_progress_or_lock_failed"
+    };
+  }
+
+  try {
+    const notificationResult = await notifyConsultant({
+      ...lockedLead,
+      user: from,
+      telefoneWhatsApp: from,
+      ultimaMensagem: ultimaMensagem || lockedLead?.ultimaMensagem || ""
+    });
+
+    await db.collection("leads").updateOne(
+      { user: from },
+      {
+        $set: {
+          crmEnviado: true,
+          crmEnviadoEm: new Date(),
+          crmSendInProgress: false,
+          crmSendStatus: "success",
+          crmSendError: "",
+          crmNotificationResult: notificationResult || {},
+          faseQualificacao: "enviado_crm",
+          status: "enviado_crm",
+          statusOperacional: "enviado_crm",
+          faseFunil: "crm",
+          temperaturaComercial: "quente",
+          rotaComercial:
+            lockedLead?.rotaComercial ||
+            lockedLead?.origemConversao ||
+            "homologado",
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    const sentLead = await loadLeadProfile(from);
+
+    await db.collection("crm_send_logs").insertOne({
+      user: from,
+      status: "success",
+      consultantPhone: process.env.CONSULTANT_PHONE || "",
+      snapshot: buildLeadAuditSnapshot(sentLead || {}),
+      createdAt: new Date()
+    });
+
+    console.log("🚀 Lead enviado ao consultor/CRM com sucesso:", {
+      user: from,
+      crmEnviado: true,
+      statusOperacional: "enviado_crm"
+    });
+
+    return {
+      ok: true,
+      alreadySent: false,
+      lead: sentLead
+    };
+  } catch (error) {
+    await db.collection("leads").updateOne(
+      { user: from },
+      {
+        $set: {
+          crmEnviado: false,
+          crmSendInProgress: false,
+          crmSendStatus: "failed",
+          crmSendError: error.message,
+          statusOperacional: "erro_envio_crm",
+          ultimoErroEnvioCrmEm: new Date(),
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    await db.collection("crm_send_logs").insertOne({
+      user: from,
+      status: "failed",
+      errorMessage: error.message,
+      snapshot: buildLeadAuditSnapshot(lockedLead || {}),
+      createdAt: new Date()
+    });
+
+    console.error("❌ Falha ao enviar lead ao consultor/CRM:", {
+      user: from,
+      erro: error.message
+    });
+
+    return {
+      ok: false,
+      skipped: false,
+      reason: "notify_consultant_failed",
+      errorMessage: error.message
+    };
+  }
 }
 
 function normalizeForRepeatCheck(text = "") {
@@ -15474,73 +15755,56 @@ if (awaitingConfirmation && isPositiveConfirmation(text)) {
     aguardandoConfirmacao: false,
     faseQualificacao: "dados_confirmados",
     status: "quente",
-    qualificadoEm: new Date()
+    qualificadoEm: new Date(),
+
+    // Limpeza de campos temporários da coleta.
+    cidadePendente: null,
+    estadoPendente: null,
+    campoPendente: null,
+    valorPendente: null,
+    campoEsperado: null,
+    aguardandoConfirmacaoCampo: false,
+
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "dados_confirmados_pelo_lead",
+      motivo: "lead_confirmou_resumo_final_dados",
+      acao: "enviar_crm_se_requisitos_ok",
+      mensagemLead: text,
+      detalhes: {
+        dadosConfirmadosPeloLead: true
+      }
+    })
   });
 
   const confirmedLead = await loadLeadProfile(from);
 
-  if (canSendLeadToCRM(confirmedLead)) {
-    const alreadySent = await db.collection("leads").findOne({
-      user: from,
-      crmEnviado: true
-    });
+  const crmResult = await sendLeadToCrmOnce({
+    from,
+    lead: confirmedLead || {},
+    ultimaMensagem: text
+  });
 
-    if (alreadySent) {
-      console.log("⚠️ Lead já enviado ao CRM anteriormente");
-    } else {
-      const lockedLead = await db.collection("leads").findOneAndUpdate(
-        {
-          user: from,
-          crmEnviado: { $ne: true },
-          dadosConfirmadosPeloLead: true,
-          faseQualificacao: { $in: ["dados_confirmados", "qualificado"] },
-          status: "quente"
-        },
-        {
-          $set: {
-  crmEnviado: true,
-  crmEnviadoEm: new Date(),
-  faseQualificacao: "enviado_crm",
-  status: "enviado_crm",
-  statusOperacional: "enviado_crm",
-  faseFunil: "crm",
-  temperaturaComercial: "quente",
-  rotaComercial: confirmedLead?.rotaComercial || confirmedLead?.origemConversao || "homologado",
-  updatedAt: new Date()
-}
-        },
-        { returnDocument: "after" }
-      );
+  let confirmedMsg = "";
 
-      if (lockedLead.value) {
-        console.log("🚀 Lead travado para envio ao CRM");
-      }
+  if (crmResult.ok || crmResult.alreadySent) {
+    confirmedMsg = `Perfeito, suas informações foram confirmadas ✅
 
-      currentLead = await loadLeadProfile(from);
-    }
-  }
-
-    const confirmedMsg = `Perfeito, pré-cadastro confirmado ✅
-
-Vou encaminhar suas informações para a equipe comercial de consultores da IQG.
+Encaminhei seus dados para a equipe comercial de consultores da IQG.
 
 Eles vão entrar em contato em breve para validar os dados, tirar qualquer dúvida final e orientar a finalização da adesão ao Programa Parceiro Homologado.
 
-Só reforçando: essa etapa ainda é um pré-cadastro, não uma aprovação automática nem cobrança. O próximo passo acontece com o consultor IQG.`;
+Só reforçando: essa etapa ainda é um pré-cadastro, não é aprovação automática e também não é cobrança. O próximo passo acontece com o consultor IQG.`;
+  } else {
+    confirmedMsg = `Perfeito, suas informações foram confirmadas ✅
+
+Tive uma instabilidade para encaminhar automaticamente seus dados para a equipe agora.
+
+Vou deixar isso registrado no sistema da IQG para verificação interna. Essa etapa ainda é um pré-cadastro, não é aprovação automática e também não é cobrança.`;
+  }
 
   await sendWhatsAppMessage(from, confirmedMsg);
 
-  try {
-    await notifyConsultant({
-      user: from,
-      telefoneWhatsApp: from,
-      ultimaMensagem: text,
-      status: "quente"
-    });
-  } catch (error) {
-    console.error("Erro ao notificar consultor:", error);
-  }
-   
   state.closed = true;
   clearTimers(from);
 
@@ -15552,7 +15816,7 @@ Só reforçando: essa etapa ainda é um pré-cadastro, não uma aprovação auto
 
   return;
 }
-
+     
 if (
   hasAllRequiredLeadFields(extractedData) &&
   !currentLead?.dadosConfirmadosPeloLead &&
