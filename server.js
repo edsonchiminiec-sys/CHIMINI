@@ -14352,32 +14352,19 @@ let leadBeforeProcessing = await loadLeadProfile(from);
 
 // 🔕 ETAPA 1 PRODUÇÃO — nova mensagem do lead cancela follow-ups antigos.
 // Explicação simples:
-// Se o lead respondeu, qualquer follow-up antigo perdeu o sentido.
-// Isso evita o erro de falar de benefícios depois que a conversa já chegou em investimento,
-// responsabilidades, coleta ou outro tema mais avançado.
+// Neste ponto do webhook a variável "text" ainda NÃO foi criada.
+// Por isso usamos apenas uma prévia segura da mensagem recebida.
+// A limpeza real de memória com "text" acontece mais abaixo, depois que texto/áudio/buffer são processados.
 clearTimers(from);
+
+const mensagemPreviewAntesTexto =
+  message.text?.body ||
+  (message.audio?.id ? "[audio]" : `[${message.type || "mensagem"}]`);
 
 console.log("🔕 Follow-ups antigos cancelados por nova mensagem do lead:", {
   user: from,
-  ultimaMensagemLead: text,
+  ultimaMensagemLeadPreview: mensagemPreviewAntesTexto,
   novaFollowupVersion: getState(from).followupVersion
-});
-
-     // 🧹 ETAPA 11 PRODUÇÃO — limpa decisão operacional antiga antes dos agentes.
-// Exemplo: decisão antiga de "telefone incorreto" não pode contaminar etapa de cidade.
-leadBeforeProcessing = await cleanupStaleOperationalMemory({
-  user: from,
-  lead: leadBeforeProcessing || {},
-  text
-});
-
-console.log("🧹 Lead após limpeza leve de memória operacional:", {
-  user: from,
-  status: leadBeforeProcessing?.status || null,
-  faseQualificacao: leadBeforeProcessing?.faseQualificacao || null,
-  faseFunil: leadBeforeProcessing?.faseFunil || null,
-  campoEsperado: leadBeforeProcessing?.campoEsperado || "",
-  ultimaDecisaoBackend: leadBeforeProcessing?.ultimaDecisaoBackend?.tipo || null
 });
 
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
