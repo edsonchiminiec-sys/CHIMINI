@@ -17241,9 +17241,11 @@ const startedDataCollection =
 
 /*
   Importante:
-  Removemos o antigo "deveForcarInicioColeta".
   O backend não deve transformar uma resposta genérica em coleta.
+  A coleta só começa quando a resposta final realmente pede o nome completo
+  e quando não existe pergunta comercial aberta do lead.
 */
+     
 if (
   startedDataCollection &&
   podeIniciarColeta &&
