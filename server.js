@@ -1607,8 +1607,15 @@ async function runConsultantAssistant({
   }
 
   const rawText = data.choices?.[0]?.message?.content || "";
+const parsedConsultantAdvice = parseConsultantAdviceJson(rawText);
 
-  return parseConsultantAdviceJson(rawText);
+auditLog("Resposta do Consultor Pre-SDR", {
+  ultimaMensagemLead: lastUserText || "",
+  rawText,
+  parsedConsultantAdvice
+});
+
+return parsedConsultantAdvice;
 }
 
 async function runConversationContinuityAnalyzer({
@@ -1768,18 +1775,28 @@ Valores sugeridos para proximaAcaoSemantica:
     const rawText = data.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(rawText);
 
-    return {
-      ...fallback,
-      ...parsed,
-      temaUltimaRespostaSdr: Array.isArray(parsed?.temaUltimaRespostaSdr)
-        ? parsed.temaUltimaRespostaSdr
-        : [],
-      temaMensagemAtualLead: Array.isArray(parsed?.temaMensagemAtualLead)
-        ? parsed.temaMensagemAtualLead
-        : [],
-      confidence: parsed?.confidence || "baixa",
-      reason: parsed?.reason || ""
-    };
+    const semanticContinuityResult = {
+  ...fallback,
+  ...parsed,
+  temaUltimaRespostaSdr: Array.isArray(parsed?.temaUltimaRespostaSdr)
+    ? parsed.temaUltimaRespostaSdr
+    : [],
+  temaMensagemAtualLead: Array.isArray(parsed?.temaMensagemAtualLead)
+    ? parsed.temaMensagemAtualLead
+    : [],
+  confidence: parsed?.confidence || "baixa",
+  reason: parsed?.reason || ""
+};
+
+auditLog("Resposta do Historiador Semantico", {
+  ultimaMensagemLead: lastUserText || "",
+  ultimaRespostaSdr: lastSdrText || "",
+  lead: buildLeadAuditSnapshot(lead || {}),
+  historicoRecente: recentHistory || [],
+  semanticContinuityResult
+});
+
+return semanticContinuityResult;
   } catch (error) {
     console.error("Falha no Historiador Semântico de Continuidade:", error.message);
     return fallback;
@@ -1961,7 +1978,7 @@ Responda somente JSON válido neste formato:
     const rawText = data.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(rawText);
 
-   return {
+   const semanticIntentResult = {
   ...fallback,
   ...parsed,
   questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
@@ -1972,6 +1989,16 @@ Responda somente JSON válido neste formato:
   confidence: parsed?.confidence || "baixa",
   reason: parsed?.reason || ""
 };
+
+auditLog("Resposta do Classificador Semantico", {
+  ultimaMensagemLead: lastUserText || "",
+  ultimaRespostaSdr: lastSdrText || "",
+  lead: buildLeadAuditSnapshot(lead || {}),
+  historicoRecente: recentHistory || [],
+  semanticIntentResult
+});
+
+return semanticIntentResult;
   } catch (error) {
     console.error("Falha no classificador semântico:", error.message);
     return fallback;
@@ -11947,6 +11974,11 @@ const bufferedMessageIds = Array.isArray(buffered.messageIds) && buffered.messag
 let history = await loadConversation(from);
 
 let currentLead = await loadLeadProfile(from);
+     auditLog("currentLead ANTES do processamento da mensagem", {
+  user: maskPhone(from),
+  mensagemLead: text,
+  currentLead: buildLeadAuditSnapshot(currentLead || {})
+});
 
 if (!currentLead) {
   await saveLeadProfile(from, {
@@ -13108,6 +13140,13 @@ console.log("🔀 Decisão central de rota comercial observada pelo backend:", {
   user: from,
   ultimaMensagemLead: text,
   rota: commercialRouteDecision.rota,
+   auditLog("Decisao de rota comercial", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  currentLead: buildLeadAuditSnapshot(currentLead || {}),
+  semanticIntent: semanticIntent || {},
+  commercialRouteDecision
+});
   deveResponderAgora: commercialRouteDecision.deveResponderAgora,
   deveCompararProgramas: commercialRouteDecision.deveCompararProgramas,
   deveManterHomologado: commercialRouteDecision.deveManterHomologado,
@@ -14329,6 +14368,13 @@ if (
 
 let respostaFinal = resposta;
 
+auditLog("Primeira resposta gerada pela SDR antes das travas", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  respostaInicialSdr: respostaFinal,
+  currentLead: buildLeadAuditSnapshot(currentLead || {})
+});
+
 // BLOCO 11B:
 // Lista única de problemas encontrados antes do envio.
 // Qualquer trava comercial deve adicionar orientação aqui,
@@ -14751,6 +14797,14 @@ if (routeMixGuard.changed) {
   });
 }
 
+auditLog("Problemas encontrados pelas travas antes do envio", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  quantidadeProblemas: sdrReviewFindings.length,
+  problemas: sdrReviewFindings,
+  respostaAntesDaRevisao: respostaFinal
+});
+
 if (sdrReviewFindings.length > 0) {
   const primeiraRespostaSdr = respostaFinal;
 
@@ -14933,6 +14987,17 @@ await delay(800);
 await delay(typingTime);
 
 console.log("📤 SDR vai enviar resposta final:", {
+   auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  respostaFinal,
+  currentLead: buildLeadAuditSnapshot(currentLead || {}),
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
+  mencionouInvestimento: replyMentionsInvestment(respostaFinal),
+  pediuDados: replyAsksPersonalData(respostaFinal),
+  actions
+});
   user: from,
   ultimaMensagemLead: text,
   respostaFinal,
@@ -14952,6 +15017,12 @@ await sendWhatsAppMessage(from, respostaFinal);
 history.push({ role: "assistant", content: respostaFinal });
 
 const leadAtualizadoParaAgentes = await loadLeadProfile(from);
+auditLog("currentLead DEPOIS da resposta da SDR", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  ultimaRespostaSdr: respostaFinal,
+  leadAtualizadoParaAgentes: buildLeadAuditSnapshot(leadAtualizadoParaAgentes || {})
+});
 
 console.log("🧾 Contexto enviado aos agentes pós-SDR:", {
   user: from,
