@@ -2759,7 +2759,11 @@ inseguro:
 Demonstra medo, hesitação, pede confirmação, quer segurança para decidir.
 
 qualificado_pronto:
-Entendeu o programa, aceita responsabilidades, taxa e próximo passo.
+Use somente quando o histórico mostrar que o lead já entendeu o programa, benefícios, estoque, responsabilidades, investimento/taxa, validou compromisso de atuação e demonstrou intenção real de avançar.
+
+Não use "qualificado_pronto" apenas porque o lead disse "ok", "entendi", "faz sentido", "sim", "podemos seguir" ou resposta curta semelhante.
+
+Se o backend ainda não permitir coleta de dados, prefira "curioso_morno", "analitico", "direto_objetivo" ou "inseguro", conforme o contexto.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 TEMPERATURA COMERCIAL
@@ -2783,7 +2787,11 @@ morno:
 Tem curiosidade, pergunta, mas ainda não demonstrou decisão.
 
 quente:
-Demonstra intenção clara, entende o modelo e quer avançar.
+Demonstra intenção clara de avançar, sem objeção ativa, e o histórico indica que já entendeu os pontos principais do modelo.
+
+Não classifique como quente apenas por curiosidade, resposta curta, educação ou concordância genérica.
+
+Se o lead quer seguir, mas ainda falta confirmar taxa, compromisso ou etapas obrigatórias, use "morno" ou "travado", conforme o caso.
 
 travado:
 Existe interesse, mas alguma objeção impede avanço.
@@ -2864,7 +2872,20 @@ REGRAS IMPORTANTES
 
 4. Se o lead rejeitar estoque, produto físico ou taxa de adesão, pode haver indicação para Afiliados.
 
-5. Se o lead disser "quero entrar", "vamos seguir", "pode iniciar", ele pode ser quente, mas avalie se já entendeu taxa e responsabilidades.
+5. Se o lead demonstrar vontade de avançar, avalie o contexto inteiro antes de classificar.
+
+Não dependa de frases exatas.
+
+A intenção de avanço pode aparecer de várias formas naturais, mas só deve virar "quente" ou "qualificado_pronto" se o histórico mostrar que:
+- o programa foi explicado;
+- benefícios foram explicados;
+- estoque/comodato foi explicado;
+- responsabilidades foram explicadas;
+- investimento/taxa foi explicado;
+- não existe objeção ativa;
+- o lead demonstra continuidade real.
+
+Se ainda faltar alguma etapa obrigatória, classifique como "morno", "analitico", "curioso_morno" ou "direto_objetivo", conforme o comportamento.
 
 6. Se o lead perguntar "qual a pegadinha?", "é golpe?", "tem contrato?", considere perfil desconfiado.
 
@@ -2875,6 +2896,17 @@ REGRAS IMPORTANTES
 9. A classificação deve se basear em sinais observáveis no histórico.
 
 10. Não use dados pessoais sensíveis para inferir perfil comportamental.
+
+11. Não marque objecaoPrincipal como "preco_taxa_adesao" se o lead não reclamou, não questionou, não resistiu e não demonstrou incômodo com preço, taxa, valor, investimento ou pagamento.
+
+Perguntar "qual é o investimento?", "como paga?", "tem parcelamento?" ou "quando paga?" não é objeção de preço por si só. Pode ser apenas avaliação normal.
+
+12. Não classifique como "travado" se o lead está dizendo que entendeu, que faz sentido ou que quer continuar, sem apresentar objeção nova.
+
+13. Se houver dúvida entre "lead avaliando" e "lead com objeção", prefira:
+- temperaturaComercial: "morno"
+- objecaoPrincipal: "sem_objecao_detectada"
+- intencaoPrincipal: "avaliar_investimento" ou "tirar_duvida"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 CONFIANÇA DA CLASSIFICAÇÃO
@@ -7315,10 +7347,144 @@ function enforceClassifierHardLimits({
     };
   }
 
+   // 4) ETAPA 4 PRODUÇÃO — Classificador não pode marcar lead pronto cedo demais.
+  // Explicação simples:
+  // O Classificador pode interpretar perfil, mas quem manda na liberação real é o backend.
+  // Se o backend ainda não permite coleta, o lead não pode ser "qualificado_pronto".
+  const backendPermiteColeta = canStartDataCollection(lead || {});
+
+  const todasEtapasComerciaisConsolidadas =
+    etapas.programa === true &&
+    etapas.beneficios === true &&
+    etapas.estoque === true &&
+    etapas.responsabilidades === true &&
+    etapas.investimento === true &&
+    etapas.compromisso === true &&
+    lead?.taxaAlinhada === true &&
+    lead?.interesseReal === true;
+
+  const classificadorMarcouProntoCedo =
+    !backendPermiteColeta &&
+    !todasEtapasComerciaisConsolidadas &&
+    (
+      safeClassification.perfilComportamentalPrincipal === "qualificado_pronto" ||
+      safeClassification.intencaoPrincipal === "avancar_pre_analise" ||
+      safeClassification.nivelConsciencia === "alto"
+    );
+
+  if (classificadorMarcouProntoCedo) {
+    return {
+      ...safeClassification,
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "quente"
+          ? "morno"
+          : safeClassification.temperaturaComercial,
+
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "qualificado_pronto"
+          ? "curioso_morno"
+          : safeClassification.perfilComportamentalPrincipal,
+
+      nivelConsciencia:
+        safeClassification.nivelConsciencia === "alto"
+          ? (
+              etapas.investimento === true || lead?.taxaAlinhada === true
+                ? "medio"
+                : "baixo"
+            )
+          : safeClassification.nivelConsciencia,
+
+      intencaoPrincipal:
+        safeClassification.intencaoPrincipal === "avancar_pre_analise"
+          ? (
+              etapas.investimento === true || lead?.taxaAlinhada === true
+                ? "avaliar_investimento"
+                : "tirar_duvida"
+            )
+          : safeClassification.intencaoPrincipal,
+
+      confiancaClassificacao:
+        safeClassification.confiancaClassificacao === "alta"
+          ? "media"
+          : safeClassification.confiancaClassificacao,
+
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "qualificado_pronto_bloqueado_por_backend"
+      ],
+
+      resumoPerfil:
+        "O Classificador indicou prontidão acima do permitido, mas o backend corrigiu porque a coleta ainda não está liberada ou porque nem todos os requisitos comerciais foram consolidados.",
+
+      classificadoEm: new Date()
+    };
+  }
+
+  // 5) ETAPA 4 PRODUÇÃO — Classificador não pode inventar objeção de preço.
+  // Explicação simples:
+  // Se não existe sinal real de objeção de taxa/preço no backend e nem na mensagem atual,
+  // não pode marcar objecaoPrincipal como preco_taxa_adesao.
+  const classificadorInventouObjecaoPreco =
+    safeClassification.objecaoPrincipal === "preco_taxa_adesao" &&
+    lead?.sinalObjecaoTaxa !== true &&
+    !mensagemTemObjeçãoDePreço;
+
+  if (classificadorInventouObjecaoPreco) {
+    return {
+      ...safeClassification,
+
+      temperaturaComercial:
+        safeClassification.temperaturaComercial === "travado"
+          ? (
+              lead?.interesseReal === true || lead?.taxaAlinhada === true
+                ? "quente"
+                : "morno"
+            )
+          : safeClassification.temperaturaComercial,
+
+      perfilComportamentalPrincipal:
+        safeClassification.perfilComportamentalPrincipal === "sensivel_preco"
+          ? (
+              etapas.investimento === true || lead?.taxaAlinhada === true
+                ? "analitico"
+                : "curioso_morno"
+            )
+          : safeClassification.perfilComportamentalPrincipal,
+
+      objecaoPrincipal: "sem_objecao_detectada",
+
+      intencaoPrincipal:
+        safeClassification.intencaoPrincipal === "avaliar_investimento" ||
+        safeClassification.intencaoPrincipal === "avancar_pre_analise"
+          ? safeClassification.intencaoPrincipal
+          : "tirar_duvida",
+
+      confiancaClassificacao:
+        safeClassification.confiancaClassificacao === "alta"
+          ? "media"
+          : safeClassification.confiancaClassificacao,
+
+      sinaisObservados: [
+        ...(Array.isArray(safeClassification.sinaisObservados)
+          ? safeClassification.sinaisObservados
+          : []),
+        "objecao_preco_removida_por_ausencia_de_sinal_real"
+      ],
+
+      resumoPerfil:
+        "O Classificador havia marcado objeção de preço, mas o backend removeu porque não havia objeção real de taxa/preço na mensagem atual nem sinal ativo no lead.",
+
+      classificadoEm: new Date()
+    };
+  }
+
   return safeClassification;
 }
 
 function enforceConsultantHardLimits({
+   
   consultantAdvice = {},
   lead = {},
   lastUserText = "",
