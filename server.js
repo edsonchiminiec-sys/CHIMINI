@@ -1870,7 +1870,7 @@ Responda somente JSON válido, sem markdown, neste formato:
   "reason": ""
 }
 
-Valores sugeridos para proximaAcaoSemantica:
+Valores permitidos para proximaAcaoSemantica:
 - "responder_pergunta_atual"
 - "nao_repetir_e_avancar"
 - "nao_repetir_e_validar_pendencia_minima"
@@ -1878,6 +1878,39 @@ Valores sugeridos para proximaAcaoSemantica:
 - "retomar_coleta"
 - "manter_fase"
 - "nao_analisado"
+
+REGRA CRÍTICA SOBRE "retomar_coleta":
+
+Use "retomar_coleta" SOMENTE se o lead já estiver claramente em coleta, confirmação ou correção de dados.
+
+Isso só pode acontecer quando o estado do lead indicar pelo menos um destes sinais:
+- aguardandoConfirmacaoCampo = true;
+- aguardandoConfirmacao = true;
+- campoEsperado preenchido;
+- campoPendente preenchido;
+- faseFunil = "coleta_dados" ou "confirmacao_dados";
+- status/faseQualificacao ligados a coleta, confirmação ou correção.
+
+Nunca use "retomar_coleta" em:
+- início;
+- esclarecimento;
+- benefícios;
+- estoque;
+- responsabilidades;
+- investimento;
+- compromisso;
+- conversa inicial.
+
+Se não houver coleta ativa, mas o lead demonstrou entendimento ou continuidade, use:
+- "nao_repetir_e_avancar"; ou
+- "nao_repetir_e_validar_pendencia_minima"; ou
+- "manter_fase".
+
+Se houver dúvida nova do lead, use:
+- "responder_pergunta_atual".
+
+Se houver objeção, use:
+- "tratar_objecao".
 `
           },
           {
@@ -1941,6 +1974,140 @@ return semanticContinuityResult;
     console.error("Falha no Historiador Semântico de Continuidade:", error.message);
     return fallback;
   }
+}
+
+function enforceSemanticContinuityHardLimits({
+  semanticContinuity = {},
+  lead = {},
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  /*
+    ETAPA 5 PRODUÇÃO — trava dura do Historiador Semântico.
+
+    Explicação simples:
+    O Historiador pode entender continuidade, repetição e avanço.
+    Mas ele NÃO pode mandar "retomar_coleta" se o lead ainda não está em coleta.
+
+    Isso evita o erro:
+    lead acabou de chegar ou está entendendo o programa
+    ↓
+    Historiador manda retomar_coleta
+    ↓
+    Pré-SDR/SDR ficam com orientação errada.
+  */
+
+  const safeContinuity = {
+    leadEntendeuUltimaExplicacao: semanticContinuity?.leadEntendeuUltimaExplicacao === true,
+    leadQuerAvancar: semanticContinuity?.leadQuerAvancar === true,
+    leadCriticouRepeticao: semanticContinuity?.leadCriticouRepeticao === true,
+    naoRepetirUltimoTema: semanticContinuity?.naoRepetirUltimoTema === true,
+    temaUltimaRespostaSdr: Array.isArray(semanticContinuity?.temaUltimaRespostaSdr)
+      ? semanticContinuity.temaUltimaRespostaSdr
+      : [],
+    temaMensagemAtualLead: Array.isArray(semanticContinuity?.temaMensagemAtualLead)
+      ? semanticContinuity.temaMensagemAtualLead
+      : [],
+    proximaAcaoSemantica: semanticContinuity?.proximaAcaoSemantica || "nao_analisado",
+    orientacaoParaPreSdr: semanticContinuity?.orientacaoParaPreSdr || "",
+    confidence: semanticContinuity?.confidence || "baixa",
+    reason: semanticContinuity?.reason || ""
+  };
+
+  const status = lead?.status || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
+  const faseFunil = lead?.faseFunil || "";
+
+  const coletaAtiva =
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    Boolean(lead?.campoEsperado) ||
+    Boolean(lead?.campoPendente) ||
+    ["coleta_dados", "confirmacao_dados"].includes(faseFunil) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(status) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(faseQualificacao);
+
+  if (
+    safeContinuity.proximaAcaoSemantica === "retomar_coleta" &&
+    !coletaAtiva
+  ) {
+    return {
+      ...safeContinuity,
+      proximaAcaoSemantica:
+        safeContinuity.leadQuerAvancar === true || safeContinuity.naoRepetirUltimoTema === true
+          ? "nao_repetir_e_validar_pendencia_minima"
+          : "manter_fase",
+      orientacaoParaPreSdr:
+        [
+          "Correção do backend: o Historiador sugeriu retomar coleta, mas não existe coleta ativa.",
+          "Não pedir dados.",
+          "Não tratar a conversa como coleta.",
+          safeContinuity.leadQuerAvancar === true
+            ? "O lead demonstrou avanço; validar somente a menor pendência obrigatória ou avançar se o backend permitir."
+            : "",
+          safeContinuity.naoRepetirUltimoTema === true
+            ? "Não repetir o último tema já explicado."
+            : "",
+          "Conduzir de forma natural conforme a fase atual do funil."
+        ].filter(Boolean).join("\n"),
+      reason:
+        [
+          safeContinuity.reason || "",
+          "Trava dura: retomar_coleta bloqueado porque o lead não está em coleta/confirmação/correção."
+        ].filter(Boolean).join(" ")
+    };
+  }
+
+  /*
+    Se a confiança veio baixa, não deixamos o Historiador forçar avanço forte.
+    Ele ainda pode orientar cuidado, mas não deve empurrar a SDR.
+  */
+  const confidence = normalizeSemanticConfidence(safeContinuity.confidence || "");
+
+  if (
+    confidence === "baixa" &&
+    safeContinuity.leadQuerAvancar === true &&
+    safeContinuity.leadEntendeuUltimaExplicacao !== true
+  ) {
+    return {
+      ...safeContinuity,
+      leadQuerAvancar: false,
+      proximaAcaoSemantica:
+        safeContinuity.proximaAcaoSemantica === "nao_repetir_e_avancar"
+          ? "manter_fase"
+          : safeContinuity.proximaAcaoSemantica,
+      orientacaoParaPreSdr:
+        [
+          safeContinuity.orientacaoParaPreSdr || "",
+          "Correção do backend: confiança baixa para avanço. A SDR deve validar com pergunta curta, sem pular fase."
+        ].filter(Boolean).join("\n"),
+      reason:
+        [
+          safeContinuity.reason || "",
+          "Trava dura: avanço removido por baixa confiança sem entendimento confirmado."
+        ].filter(Boolean).join(" ")
+    };
+  }
+
+  return safeContinuity;
 }
 
 async function runLeadSemanticIntentClassifier({
@@ -15105,11 +15272,26 @@ if (semanticIntent?.mentionsOtherProductLine === true) {
   });
 }
    
-   const semanticContinuity = await runConversationContinuityAnalyzer({
+     let semanticContinuity = await runConversationContinuityAnalyzer({
   lead: currentLead || {},
   history,
   lastUserText: text,
   lastSdrText: lastAssistantText
+});
+
+semanticContinuity = enforceSemanticContinuityHardLimits({
+  semanticContinuity,
+  lead: currentLead || {},
+  lastUserText: text,
+  lastSdrText: lastAssistantText
+});
+
+auditLog("Historiador Semantico apos travas duras", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  ultimaRespostaSdr: lastAssistantText,
+  lead: buildLeadAuditSnapshot(currentLead || {}),
+  semanticContinuity
 });
 
 if (
