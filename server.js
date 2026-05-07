@@ -4307,6 +4307,100 @@ function enforceConsultantDirectionOnFinalReply({
   };
 }
 
+function isSafeHomologadoComodatoReply({
+  lead = {},
+  leadText = "",
+  respostaFinal = "",
+  commercialRouteDecision = null
+} = {}) {
+  /*
+    ETAPA 6 PRODUÇÃO — proteção contra falso positivo Homologado/Afiliado.
+
+    Explicação simples:
+    No Parceiro Homologado, é correto dizer:
+    - o parceiro não compra o estoque;
+    - o estoque é em comodato;
+    - o lote é cedido pela IQG;
+    - os produtos continuam sendo da IQG até a venda;
+    - a reposição pode ser em comodato.
+
+    Isso NÃO é Programa de Afiliados.
+
+    Afiliado é outra coisa:
+    - link;
+    - comissão online;
+    - cadastro em minhaiqg.com.br;
+    - sem estoque físico.
+  */
+
+  const rota =
+    commercialRouteDecision?.rota ||
+    lead?.rotaComercial ||
+    lead?.origemConversao ||
+    "homologado";
+
+  const resposta = String(respostaFinal || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const leadMsg = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const estaEmHomologado =
+    rota === "homologado" ||
+    commercialRouteDecision?.deveManterHomologado === true ||
+    lead?.interesseAfiliado !== true;
+
+  const falaComodatoHomologado =
+    resposta.includes("comodato") ||
+    resposta.includes("lote inicial") ||
+    resposta.includes("estoque inicial") ||
+    resposta.includes("estoque em comodato") ||
+    resposta.includes("cedido pela iqg") ||
+    resposta.includes("cedido em comodato") ||
+    resposta.includes("continua sendo da iqg") ||
+    resposta.includes("produtos continuam sendo da iqg") ||
+    resposta.includes("nao compra esse estoque") ||
+    resposta.includes("não compra esse estoque") ||
+    resposta.includes("nao precisa comprar o estoque") ||
+    resposta.includes("não precisa comprar o estoque") ||
+    resposta.includes("reposicao em comodato") ||
+    resposta.includes("reposição em comodato");
+
+  const misturaAfiliadoReal =
+    resposta.includes("minhaiqg.com.br") ||
+    resposta.includes("link de afiliado") ||
+    resposta.includes("link exclusivo") ||
+    resposta.includes("cadastro de afiliado") ||
+    resposta.includes("programa de afiliados") ||
+    resposta.includes("comissao online") ||
+    resposta.includes("comissão online") ||
+    resposta.includes("divulgar por link") ||
+    resposta.includes("venda pelo seu link");
+
+  const leadPediuAfiliadoOuComparacao =
+    leadMsg.includes("afiliado") ||
+    leadMsg.includes("afiliados") ||
+    leadMsg.includes("link") ||
+    leadMsg.includes("comissao") ||
+    leadMsg.includes("comissão") ||
+    leadMsg.includes("divulgar online") ||
+    leadMsg.includes("sem estoque") ||
+    leadMsg.includes("qual a diferenca") ||
+    leadMsg.includes("qual a diferença") ||
+    leadMsg.includes("os dois");
+
+  return Boolean(
+    estaEmHomologado &&
+    falaComodatoHomologado &&
+    !misturaAfiliadoReal &&
+    !leadPediuAfiliadoOuComparacao
+  );
+}
+
 async function runFinalRouteMixGuard({
   lead = {},
   leadText = "",
@@ -4324,7 +4418,26 @@ async function runFinalRouteMixGuard({
     return fallback;
   }
 
+  // ETAPA 6 PRODUÇÃO — não chamar GPT anti-mistura quando a resposta
+  // está claramente falando de comodato correto dentro do Homologado.
+  if (
+    isSafeHomologadoComodatoReply({
+      lead,
+      leadText,
+      respostaFinal,
+      commercialRouteDecision
+    })
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      motivo:
+        "Resposta aprovada localmente: comodato/estoque cedido é regra correta do Parceiro Homologado, não mistura com Afiliado."
+    };
+  }
+
   try {
+     
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -4383,6 +4496,26 @@ A resposta NÃO deve oferecer Afiliado do nada.
 A resposta só pode falar Afiliado se o lead perguntou claramente sobre Afiliado, comparação, link, comissão online, vender sem estoque ou os dois caminhos.
 Objeção de taxa, preço alto ou dúvida sobre pagamento NÃO significa automaticamente Afiliado.
 Se a dúvida for sobre taxa, responder dentro do Homologado.
+
+REGRA CRÍTICA — COMODATO NO HOMOLOGADO:
+No Parceiro Homologado é CORRETO dizer que:
+- o parceiro não compra o estoque;
+- o parceiro não precisa investir em estoque;
+- o lote inicial é cedido em comodato;
+- o estoque continua sendo da IQG até a venda;
+- a reposição pode ser feita em comodato;
+- o parceiro atua com produto físico, pronta-entrega e demonstração.
+
+Essas frases NÃO são mistura com Afiliado.
+Não marque hasRouteMix apenas porque a resposta diz que o parceiro não compra estoque ou que o estoque é cedido em comodato.
+
+Só marque mistura se a resposta de Homologado também trouxer elementos reais de Afiliado sem o lead pedir, como:
+- link de afiliado;
+- cadastro em minhaiqg.com.br;
+- comissão por link;
+- divulgação online como rota principal;
+- venda sem estoque físico no sentido de Afiliado;
+- Programa de Afiliados como alternativa sem contexto.
 
 3. Se a rota for "ambos":
 A resposta pode comparar os dois caminhos.
