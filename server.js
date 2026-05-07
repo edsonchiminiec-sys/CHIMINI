@@ -12846,6 +12846,186 @@ https://minhaiqg.com.br/
 Acesse o portal para fazer seu cadastro e consultar mais informações do programa.`;
 }
 
+function shouldSendAffiliateInstructionsNow({
+  text = "",
+  lead = {},
+  semanticIntent = null,
+  commercialRouteDecision = null,
+  awaitingConfirmation = false
+} = {}) {
+  /*
+    ETAPA 10 PRODUÇÃO — saída segura para Afiliados.
+
+    Explicação simples:
+    Esta função decide quando o sistema deve parar de insistir no Homologado
+    e enviar as instruções do Programa de Afiliados.
+
+    Importante:
+    - Não joga para Afiliado só porque o lead achou caro.
+    - Não joga para Afiliado só porque o lead disse "vou pensar".
+    - Envia Afiliado quando o lead pede claramente link, afiliado, sem estoque,
+      sem taxa, ou quando rejeita claramente continuar no Homologado.
+  */
+
+  const rawText = String(text || "").trim();
+
+  const t = normalizeTextForIntent(rawText);
+
+  const leadFinalizouHomologado =
+    leadHasFinishedPreCadastro(lead || {}) === true ||
+    lead?.crmEnviado === true ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm" ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm";
+
+  if (leadFinalizouHomologado) {
+    return {
+      shouldSend: false,
+      reason: "homologado_ja_finalizado"
+    };
+  }
+
+  const fluxoDeDadosProtegido =
+    awaitingConfirmation === true ||
+    isDataFlowState(lead || {}) ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final",
+      "aguardando_confirmacao_dados"
+    ].includes(lead?.faseQualificacao) ||
+    [
+      "coleta_dados",
+      "confirmacao_dados",
+      "pre_analise"
+    ].includes(lead?.faseFunil);
+
+  if (fluxoDeDadosProtegido) {
+    return {
+      shouldSend: false,
+      reason: "fluxo_de_dados_protegido"
+    };
+  }
+
+  if (lead?.afiliadoInstrucoesEnviadas === true) {
+    return {
+      shouldSend: false,
+      reason: "afiliado_ja_enviado"
+    };
+  }
+
+  const confidenceOk = hasUsableSemanticConfidence(semanticIntent?.confidence);
+
+  const routeAfiliadoClara =
+    commercialRouteDecision?.rota === "afiliado" &&
+    commercialRouteDecision?.deveResponderAgora === true;
+
+  const semanticAfiliadoClaro =
+    confidenceOk &&
+    semanticIntent?.wantsAffiliate === true &&
+    semanticIntent?.wantsHomologado !== true;
+
+  const fallbackAfiliadoTextoClaro =
+    isClearAffiliateFallbackIntent(rawText) ||
+    isAffiliateIntent(rawText) ||
+    t.includes("quero ser afiliado") ||
+    t.includes("quero afiliado") ||
+    t.includes("programa de afiliados") ||
+    t.includes("link de afiliado") ||
+    t.includes("cadastro de afiliado") ||
+    t.includes("vender por link") ||
+    t.includes("divulgar por link") ||
+    t.includes("so divulgar") ||
+    t.includes("só divulgar") ||
+    t.includes("sem estoque") ||
+    t.includes("sem taxa") ||
+    t.includes("sem adesao") ||
+    t.includes("sem adesão");
+
+  const rejeicaoClaraHomologado =
+    t.includes("nao quero mais seguir") ||
+    t.includes("não quero mais seguir") ||
+    t.includes("nao quero continuar") ||
+    t.includes("não quero continuar") ||
+    t.includes("nao vou continuar") ||
+    t.includes("não vou continuar") ||
+    t.includes("nao quero homologado") ||
+    t.includes("não quero homologado") ||
+    t.includes("nao quero esse programa") ||
+    t.includes("não quero esse programa") ||
+    t.includes("nao e pra mim") ||
+    t.includes("não é pra mim") ||
+    t.includes("desisti") ||
+    t.includes("vou desistir") ||
+    t.includes("quero desistir") ||
+    t.includes("deixa pra la") ||
+    t.includes("deixa pra lá") ||
+    t.includes("encerra") ||
+    t.includes("pode encerrar");
+
+  const objecaoPrecoSozinha =
+    confidenceOk &&
+    semanticIntent?.priceObjection === true &&
+    semanticIntent?.wantsAffiliate !== true &&
+    semanticIntent?.stockObjection !== true &&
+    fallbackAfiliadoTextoClaro !== true &&
+    rejeicaoClaraHomologado !== true;
+
+  if (objecaoPrecoSozinha) {
+    return {
+      shouldSend: false,
+      reason: "objecao_preco_sozinha_nao_vira_afiliado"
+    };
+  }
+
+  if (routeAfiliadoClara || semanticAfiliadoClaro || fallbackAfiliadoTextoClaro) {
+    return {
+      shouldSend: true,
+      responseMode: "direct_affiliate",
+      reason: "lead_pediu_afiliado_ou_modelo_sem_estoque"
+    };
+  }
+
+  const abandonoSemantico =
+    confidenceOk &&
+    (
+      semanticIntent?.delayOrAbandonment === true ||
+      semanticIntent?.blockingObjection === true
+    ) &&
+    semanticIntent?.wantsHomologado !== true &&
+    (
+      semanticIntent?.stockObjection === true ||
+      rejeicaoClaraHomologado === true
+    );
+
+  const repetiuTravaDepoisDeRecuperacao =
+    Number(lead?.recoveryAttempts || 0) >= 1 &&
+    (
+      rejeicaoClaraHomologado === true ||
+      abandonoSemantico === true
+    );
+
+  if (rejeicaoClaraHomologado || abandonoSemantico || repetiuTravaDepoisDeRecuperacao) {
+    return {
+      shouldSend: true,
+      responseMode: "fallback_after_homologado",
+      reason: "lead_rejeitou_ou_nao_quis_continuar_homologado"
+    };
+  }
+
+  return {
+    shouldSend: false,
+    reason: "sem_sinal_suficiente_para_afiliado"
+  };
+}
+
 function classifyLead(text = "", data = {}, history = []) {
   const t = text.toLowerCase();
 
@@ -15214,6 +15394,106 @@ const podeUsarSinalDeRotaAgora =
     awaitingConfirmation
   });
 
+const affiliateInstructionDecision = shouldSendAffiliateInstructionsNow({
+  text,
+  lead: currentLead || {},
+  semanticIntent,
+  commercialRouteDecision,
+  awaitingConfirmation
+});
+
+if (
+  podeUsarSinalDeRotaAgora &&
+  affiliateInstructionDecision.shouldSend === true
+) {
+  /*
+    ETAPA 10 PRODUÇÃO — envio obrigatório de instruções de Afiliado.
+
+    Explicação simples:
+    Quando o lead deixa claro que não quer seguir no Homologado,
+    ou pede Afiliado/link/sem estoque, o backend garante a orientação
+    de Afiliado e cancela follow-ups antigos do Homologado.
+  */
+
+  clearTimers(from);
+
+  const affiliateMsg =
+    affiliateInstructionDecision.responseMode === "direct_affiliate"
+      ? buildAffiliateResponse(false)
+      : buildAffiliateRecoveryResponse();
+
+  await saveLeadProfile(from, {
+    status: "afiliado",
+    faseQualificacao: "afiliado",
+    statusOperacional: "ativo",
+    faseFunil: "afiliado",
+    rotaComercial: "afiliado",
+    origemConversao:
+      affiliateInstructionDecision.responseMode === "direct_affiliate"
+        ? "interesse_direto_afiliado"
+        : "recuperado_para_afiliado",
+
+    interesseAfiliado: true,
+    sinalAfiliadoExplicito:
+      affiliateInstructionDecision.responseMode === "direct_affiliate",
+    afiliadoOferecidoComoAlternativa:
+      affiliateInstructionDecision.responseMode !== "direct_affiliate",
+
+    afiliadoInstrucoesEnviadas: true,
+    afiliadoInstrucoesEnviadasEm: new Date(),
+
+    homologadoFollowupsCanceladosEm: new Date(),
+    botBloqueadoPorHumano: false,
+    atendimentoHumanoAtivo: false,
+
+    aguardandoConfirmacaoCampo: false,
+    aguardandoConfirmacao: false,
+    campoEsperado: "",
+    campoPendente: "",
+
+    ultimaMensagem: text,
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "afiliado_instrucoes_enviadas",
+      motivo: affiliateInstructionDecision.reason,
+      acao: "enviar_instrucoes_afiliado_e_cancelar_followups_homologado",
+      mensagemLead: text,
+      detalhes: {
+        responseMode: affiliateInstructionDecision.responseMode,
+        rotaComercial: "afiliado",
+        afiliadoInstrucoesEnviadas: true,
+        homologadoFollowupsCancelados: true,
+        naoMarcarComoPerdido: true
+      }
+    })
+  });
+
+  currentLead = await loadLeadProfile(from);
+
+  await sendWhatsAppMessage(from, affiliateMsg);
+
+  await saveHistoryStep(from, history, text, affiliateMsg, !!message.audio?.id);
+
+  console.log("🔗 Instruções de Afiliado enviadas e follow-ups do Homologado cancelados:", {
+    user: from,
+    reason: affiliateInstructionDecision.reason,
+    responseMode: affiliateInstructionDecision.responseMode,
+    rotaComercial: "afiliado"
+  });
+
+  auditLog("Afiliado obrigatorio enviado", {
+    user: maskPhone(from),
+    ultimaMensagemLead: text,
+    affiliateInstructionDecision,
+    lead: buildLeadAuditSnapshot(currentLead || {})
+  });
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+     
 if (
   podeUsarSinalDeRotaAgora &&
   commercialRouteDecision.rota === "ambos" &&
@@ -15524,9 +15804,9 @@ if (
         "O Pré-SDR deve orientar a SDR a responder primeiro a manifestação atual do lead.",
         "A SDR deve tentar entender o motivo real da trava com tom leve, consultivo e sem pressão.",
         "Se a trava for taxa, dinheiro, risco, estoque ou insegurança, sustentar primeiro o Parceiro Homologado com valor percebido.",
-        "Não oferecer Afiliados automaticamente apenas porque o lead esfriou, achou caro ou disse que vai pensar.",
-        "Afiliados só devem ser mencionados se o lead pedir claramente link, online, venda sem estoque físico, redes sociais, e-commerce, alternativa sem taxa do Homologado, ou rejeitar explicitamente produto físico/estoque.",
-        "Não encerrar a conversa. Fazer uma pergunta simples para manter o lead em movimento."
+        "Não oferecer Afiliados automaticamente apenas porque o lead achou caro ou trouxe uma dúvida de taxa. Primeiro tratar objeção do Homologado.",
+"Se o lead pedir claramente link, online, venda sem estoque físico, redes sociais, e-commerce, alternativa sem taxa do Homologado, ou rejeitar explicitamente continuar no Homologado, o backend da Etapa 10 deve enviar as instruções de Afiliado.",
+"Não encerrar como perdido. Se ainda não for caso claro de Afiliado, fazer uma pergunta simples para entender a trava e manter o lead em movimento."
       ].join("\n")
   });
 
