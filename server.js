@@ -15112,17 +15112,6 @@ await delay(800);
 await delay(typingTime);
 
 console.log("📤 SDR vai enviar resposta final:", {
-   auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
-  user: maskPhone(from),
-  ultimaMensagemLead: text,
-  respostaFinal,
-  currentLead: buildLeadAuditSnapshot(currentLead || {}),
-  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
-  mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
-  mencionouInvestimento: replyMentionsInvestment(respostaFinal),
-  pediuDados: replyAsksPersonalData(respostaFinal),
-  actions
-});
   user: from,
   ultimaMensagemLead: text,
   respostaFinal,
@@ -15134,6 +15123,18 @@ console.log("📤 SDR vai enviar resposta final:", {
   mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
   mencionouInvestimento: replyMentionsInvestment(respostaFinal),
   pediuDados: replyAsksPersonalData(respostaFinal)
+});
+
+auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  respostaFinal,
+  currentLead: buildLeadAuditSnapshot(currentLead || {}),
+  etapaAtualCalculada: getCurrentFunnelStage(currentLead),
+  mencionouPreAnalise: /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal),
+  mencionouInvestimento: replyMentionsInvestment(respostaFinal),
+  pediuDados: replyAsksPersonalData(respostaFinal),
+  actions
 });
 
 // envia resposta
