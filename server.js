@@ -877,27 +877,26 @@ const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
 ========================= */
 
 function getState(from) {
-  if 
-   leadState[from] = {
-  folderSent: false,
-  sentFiles: {},
-  closed: false,
-  inactivityTimer: null,
-  shortTimer: null,
-  followupTimers: [],
-  inactivityFollowupCount: 0,
+  if (!leadState[from]) {
+    leadState[from] = {
+      folderSent: false,
+      sentFiles: {},
+      closed: false,
+      inactivityTimer: null,
+      shortTimer: null,
+      followupTimers: [],
+      inactivityFollowupCount: 0,
 
-  // Controle de segurança dos follow-ups.
-  // Cada vez que o lead manda mensagem ou a conversa muda,
-  // essa versão sobe. Timer antigo com versão velha não envia nada.
-  followupVersion: 0,
-  followupScheduledAtMs: 0
-};
+      // Controle de segurança dos follow-ups.
+      // Cada vez que o lead manda mensagem ou a conversa muda,
+      // essa versão sobe. Timer antigo com versão velha não envia nada.
+      followupVersion: 0,
+      followupScheduledAtMs: 0
+    };
   }
 
   return leadState[from];
 }
-
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
