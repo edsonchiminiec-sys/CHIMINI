@@ -3274,95 +3274,104 @@ Regra importante:
 Crítica de repetição é sinal de problema na condução, não sinal de interesse em Afiliado.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
-REGRA CENTRAL — RECLAMAÇÃO DE REPETIÇÃO NÃO É COMPARAÇÃO
+REGRA CENTRAL — ABANDONO DO HOMOLOGADO E SAÍDA PARA AFILIADO
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-Quando o lead reclamar que a SDR está repetindo, se perdendo ou ignorando o histórico, isso NÃO deve ser classificado como pedido de comparação entre programas.
+Quando o lead não quer continuar no Programa Parceiro Homologado antes de finalizar o pré-cadastro, isso NÃO deve ser tratado apenas como encerramento seco.
 
-Considere reclamação de repetição, perda de contexto ou irritação leve quando o lead disser algo como:
-- "você está repetitiva";
-- "você está se repetindo";
-- "já falou isso";
-- "já respondi";
-- "já falei";
-- "revisa o histórico";
-- "revisita o histórico";
-- "você precisa revisitar o histórico";
-- "você está se perdendo";
-- "você não está entendendo";
-- "você não leu a conversa";
-- "parece que esqueceu";
-- "de novo isso?";
-- "já falei que quero Homologado";
-- "já falei que é apenas Homologado";
-- "deve estar se perdendo".
+Regra comercial obrigatória da IQG:
 
-Nesses casos, NÃO classifique automaticamente como:
-- wantsBoth = true;
-- wantsAffiliate = true;
-- pedido de comparação;
-- interesse em Afiliado;
-- pedido de link;
-- pedido de novo resumo dos dois programas.
+Se o lead NÃO finalizou o pré-cadastro do Programa Parceiro Homologado, ele deve receber a alternativa do Programa de Afiliados.
 
-A classificação correta deve considerar:
-- a reclamação é sobre a qualidade da condução;
-- o lead está sinalizando que a SDR não respeitou o histórico;
-- a preferência mais recente do lead deve prevalecer;
-- se ele já escolheu Homologado, manter Homologado;
-- se ele já escolheu Afiliado, manter Afiliado;
-- se ele não escolheu nada, tratar como frustração/contexto ruim, não como escolha de rota.
+A classificação correta deve diferenciar três situações:
 
-Se o lead reclamar de repetição e também mencionar Homologado, como:
-- "já falei que apenas Homologados";
-- "eu falei 2";
-- "quero Homologado";
-- "não é Afiliado";
+1. Lead pediu Afiliado diretamente.
+2. Lead quer continuar no Homologado.
+3. Lead desistiu do Homologado antes do pré-cadastro.
 
-então a classificação correta é:
-wantsHomologado = true
-wantsAffiliate = false
-wantsBoth = false
-positiveRealInterest pode ser true se ele ainda demonstra continuidade
-blockingObjection pode ser true se a irritação for forte
-reason deve mencionar que o lead corrigiu a rota e reclamou da repetição.
-
-Se o lead reclamar de repetição sem escolher programa, a classificação correta é:
-wantsHomologado = false, salvo contexto recente claro de Homologado
-wantsAffiliate = false, salvo contexto recente claro de Afiliado
-wantsBoth = false
-blockingObjection pode ser true se houver frustração forte
-reason deve mencionar perda de contexto/repetição.
-
-Exemplo errado:
-Lead: "Vc está repetitiva... kkkk"
-Classificação errada:
-wantsBoth = true
+Situação 1 — Lead pediu Afiliado diretamente:
+Se o lead pedir link, Afiliado, comissão por link, cadastro de Afiliado, divulgação online ou venda sem estoque físico:
 wantsAffiliate = true
+wantsHomologado = false, salvo se também pedir os dois
+delayOrAbandonment = false, salvo se também houver desistência clara
 
-Exemplo correto:
-Lead: "Vc está repetitiva... kkkk"
-Classificação correta:
-wantsBoth = false
-wantsAffiliate = false
-blockingObjection pode ser true se o contexto indicar incômodo
-reason: "Lead criticou repetição da SDR; não pediu comparação nem Afiliado."
-
-Exemplo errado:
-Lead: "Já falei que apenas homologados"
-Classificação errada:
-wantsBoth = true
-
-Exemplo correto:
-Lead: "Já falei que apenas homologados"
-Classificação correta:
+Situação 2 — Lead quer continuar no Homologado:
+Se o lead disser que quer Homologado, quer se homologar, quer parceiro homologado, quer vender produtos físicos ou quer seguir com o Homologado:
 wantsHomologado = true
 wantsAffiliate = false
-wantsBoth = false
-reason: "Lead reforçou preferência por Homologado e criticou a repetição/erro de rota."
+delayOrAbandonment = false
+
+Situação 3 — Lead desistiu do Homologado antes do pré-cadastro:
+Se o lead disser algo como:
+- "não quero nada";
+- "não quero mais";
+- "não quero continuar";
+- "deixamos quieto";
+- "deixa quieto";
+- "deixa pra lá";
+- "deixa para lá";
+- "tchau";
+- "pode encerrar";
+- "encerra";
+- "não tenho interesse";
+- "não é pra mim";
+- "vou deixar";
+- "não vou seguir";
+- "não quero esse programa";
+- "paremos por aqui";
+- "desisti";
+- "vou desistir";
+
+e o lead ainda NÃO finalizou o pré-cadastro, então a classificação correta é:
+wantsHomologado = false
+positiveRealInterest = false
+positiveCommitment = false
+delayOrAbandonment = true
+blockingObjection pode ser true se houver frustração, irritação ou rejeição clara
+wantsAffiliate = false, salvo se o lead também pediu Afiliado diretamente
+reason deve mencionar que o lead abandonou o caminho Homologado antes de finalizar o pré-cadastro e que, pela regra comercial, a alternativa adequada é Afiliado.
+
+Não classifique isso como:
+- interesse real no Homologado;
+- compromisso positivo;
+- pronto para coleta;
+- pedido de humano automático;
+- apenas conversa perdida sem próxima saída.
+
+Exemplo errado:
+Lead: "não quero nada, tchau"
+Classificação errada:
+positiveRealInterest = true
+
+Exemplo errado:
+Lead: "deixamos quieto"
+Classificação errada:
+wantsHomologado = true
+
+Exemplo correto:
+Lead: "não quero nada, tchau"
+Classificação correta:
+wantsHomologado = false
+wantsAffiliate = false
+positiveRealInterest = false
+positiveCommitment = false
+delayOrAbandonment = true
+blockingObjection = true ou false conforme o tom
+reason: "Lead abandonou o caminho Homologado antes de finalizar o pré-cadastro. A saída comercial adequada é oferecer Afiliado como alternativa, sem insistir no Homologado."
+
+Exemplo correto:
+Lead: "deixamos quieto, não vou seguir"
+Classificação correta:
+delayOrAbandonment = true
+positiveRealInterest = false
+positiveCommitment = false
+reason: "Lead não quer continuar no Homologado. Como o pré-cadastro não foi finalizado, a alternativa adequada é Afiliado."
 
 Regra importante:
-Crítica de repetição é sinal de problema na condução, não sinal de interesse em Afiliado.
+Não invente que o lead quer Afiliado se ele não pediu Afiliado.
+Mas reconheça que, pela regra comercial da IQG, a saída correta quando o Homologado não finaliza é apresentar Afiliado como alternativa.
+
+A classificação deve ajudar o backend e o Pré-SDR a não insistirem no Homologado, e também a não encerrarem seco sem alternativa.
 
 CONTEXTO COMERCIAL:
 A IQG possui dois caminhos:
