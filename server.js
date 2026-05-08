@@ -2,7 +2,7 @@ import express from "express";
 import fetch from "node-fetch";
 import FormData from "form-data";
 import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
+impvort { MongoClient } from "mongodb";
 
 dotenv.config();
 
@@ -11498,6 +11498,96 @@ Primeiro, pode me enviar seu nome completo?`,
   };
 }
 
+function isSafeInitialHomologadoOverviewReply({
+  respostaFinal = "",
+  leadText = "",
+  currentLead = {}
+} = {}) {
+  /*
+    ETAPA 14.7A — visão geral inicial do Homologado.
+
+    Explicação simples:
+    Quando o lead pergunta diretamente sobre o Programa Parceiro Homologado,
+    a SDR pode dar uma visão geral curta do programa.
+
+    Isso pode mencionar:
+    - parceria comercial;
+    - produtos físicos;
+    - suporte;
+    - treinamento;
+    - lote em comodato;
+    - pronta-entrega;
+    - demonstração.
+
+    Isso NÃO é pulo de fase, desde que a resposta não fale taxa,
+    não fale pré-análise e não peça dados.
+  */
+
+  const normalize = value =>
+    String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const resposta = normalize(respostaFinal);
+  const leadMsg = normalize(leadText);
+
+  const etapaAtual = getCurrentFunnelStage(currentLead);
+
+  const leadPediuHomologado =
+    leadMsg.includes("parceiro homologado") ||
+    leadMsg.includes("programa homologado") ||
+    leadMsg.includes("programa parceiro homologado") ||
+    leadMsg.includes("homologado") ||
+    leadMsg.includes("homologar");
+
+  const respostaFalaHomologado =
+    resposta.includes("parceiro homologado") ||
+    resposta.includes("programa parceiro homologado") ||
+    resposta.includes("parceria comercial") ||
+    resposta.includes("produtos diretamente da industria") ||
+    resposta.includes("produtos direto da industria") ||
+    resposta.includes("produtos fisicos") ||
+    resposta.includes("suporte") ||
+    resposta.includes("treinamento") ||
+    resposta.includes("lote inicial") ||
+    resposta.includes("comodato") ||
+    resposta.includes("pronta-entrega") ||
+    resposta.includes("demonstracao");
+
+  const respostaTemAfiliadoReal =
+    resposta.includes("programa de afiliados") ||
+    resposta.includes("link de afiliado") ||
+    resposta.includes("link exclusivo") ||
+    resposta.includes("minhaiqg.com.br") ||
+    resposta.includes("comissao por link") ||
+    resposta.includes("comissão por link") ||
+    resposta.includes("divulgacao online") ||
+    resposta.includes("divulgação online");
+
+  const respostaFalaPreAnalise =
+    resposta.includes("pre-analise") ||
+    resposta.includes("pre analise") ||
+    resposta.includes("preanalise") ||
+    resposta.includes("pré-análise") ||
+    resposta.includes("pré análise");
+
+  const falaTaxaOuInvestimento = replyMentionsInvestment(respostaFinal);
+  const pedeDados = replyAsksPersonalData(respostaFinal);
+
+  return Boolean(
+    etapaAtual <= 1 &&
+    leadPediuHomologado &&
+    respostaFalaHomologado &&
+    !respostaTemAfiliadoReal &&
+    !respostaFalaPreAnalise &&
+    !falaTaxaOuInvestimento &&
+    !pedeDados
+  );
+}
+
 function enforceFunnelDiscipline({
   respostaFinal = "",
   currentLead = {},
@@ -11524,9 +11614,46 @@ function enforceFunnelDiscipline({
     falaDeInvestimento &&
     etapaAtual === 5;
 
-  const pediuDadosCedo =
+   const pediuDadosCedo =
     pedeDadosPessoais &&
     !podeColetarDados;
+
+  const visaoGeralInicialHomologadoSegura =
+    isSafeInitialHomologadoOverviewReply({
+      respostaFinal,
+      leadText,
+      currentLead
+    });
+
+  /*
+    ETAPA 14.7A:
+    Se o lead pediu para entender o Programa Parceiro Homologado,
+    uma visão geral inicial com benefícios/suporte/comodato não deve ser
+    tratada como pulo de fase.
+
+    Continuamos bloqueando taxa cedo, pré-análise e dados pessoais.
+  */
+  if (
+    tentouPularFase &&
+    visaoGeralInicialHomologadoSegura &&
+    !falouTaxaCedo &&
+    !falouTaxaSemControle &&
+    !pediuDadosCedo
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      reason: {
+        etapaAtual,
+        etapaDetectadaNaResposta,
+        tentouPularFase,
+        falouTaxaCedo,
+        falouTaxaSemControle,
+        pediuDadosCedo,
+        preservadoPorqueVisaoGeralHomologado: true
+      }
+    };
+  }
 
   if (
     tentouPularFase ||
@@ -11534,6 +11661,7 @@ function enforceFunnelDiscipline({
     falouTaxaSemControle ||
     pediuDadosCedo
   ) {
+     
     // 🧠 REGRA 25B-2:
     // Se o lead fez pergunta, objeção ou correção,
     // não trocar automaticamente a resposta da SDR por um bloco rígido de fase.
@@ -12559,30 +12687,69 @@ function iqgIsInitialRouteComparisonReply(text = "", currentLead = {}) {
   );
 }
 
-function iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
-  respostaFinal = "",
-  currentLead = {}
-} = {}) {
-    const currentEtapas = {
-    ...(currentLead?.etapas || {})
-  };
+function shouldIgnoreResponsibilitiesPendingFromCurrentReply(text = "") {
+  /*
+    ETAPA 14.7A — não marcar responsabilidades cedo demais.
 
-  const detectedExplainedNow = iqgDetectFunnelStepsExplainedInText(respostaFinal);
+    Explicação simples:
+    A SDR pode mencionar que existem responsabilidades ou perguntar
+    se o lead quer entender responsabilidades.
 
-  const isInitialRouteComparison = iqgIsInitialRouteComparisonReply(
-    respostaFinal,
-    currentLead
-  );
+    Isso NÃO significa que as responsabilidades já foram explicadas.
+
+    Só consideramos responsabilidades explicadas quando a resposta realmente
+    fala de deveres do parceiro, atuação comercial e cuidados necessários.
+  */
+
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  const mencionouResponsabilidades =
+    t.includes("responsabilidade") ||
+    t.includes("responsabilidades") ||
+    t.includes("guarda") ||
+    t.includes("conservacao") ||
+    t.includes("conservação");
+
+  if (!mencionouResponsabilidades) {
+    return false;
+  }
+
+  const apenasChamouParaExplicar =
+    t.includes("quer que eu te explique") && t.includes("respons") ||
+    t.includes("quer que eu explique") && t.includes("respons") ||
+    t.includes("posso te explicar") && t.includes("respons") ||
+    t.includes("vou te explicar") && t.includes("respons") ||
+    t.includes("importante entender as responsabilidades") ||
+    t.includes("entender as responsabilidades");
+
+  const sinaisFortesDeResponsabilidade = [
+    t.includes("resultado depende") || t.includes("depende da sua atuacao") || t.includes("depende da sua atuação"),
+    t.includes("comunicar vendas") || t.includes("informar vendas") || t.includes("registrar vendas"),
+    t.includes("conservar os produtos") || t.includes("conservacao dos produtos") || t.includes("conservação dos produtos"),
+    t.includes("guardar os produtos") || t.includes("guarda dos produtos"),
+    t.includes("seguir o preco sugerido") || t.includes("seguir o preço sugerido"),
+    t.includes("atuar nas vendas") || t.includes("atuacao comercial") || t.includes("atuação comercial"),
+    t.includes("prospectar") || t.includes("buscar clientes") || t.includes("vender para clientes")
+  ].filter(Boolean).length;
 
   /*
-    Se foi apenas comparação inicial entre Homologado e Afiliado,
-    não considerar benefícios/estoque/responsabilidades/investimento
-    como etapas apresentadas do Homologado.
-
-    Neste caso, no máximo consideramos "programa", porque a SDR
-    apresentou a existência dos caminhos comerciais.
+    Se só chamou para explicar, não marca.
+    Se teve menos de 2 sinais fortes, também não marca.
   */
-  const explainedNow = isInitialRouteComparison
+  return Boolean(
+    apenasChamouParaExplicar ||
+    sinaisFortesDeResponsabilidade < 2
+  );
+}
+
+  const baseExplainedNow = isInitialRouteComparison
     ? {
         ...detectedExplainedNow,
         beneficios: false,
@@ -12593,9 +12760,22 @@ function iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
       }
     : detectedExplainedNow;
 
+  /*
+    ETAPA 14.7A:
+    Não marcar responsabilidades como apresentadas apenas porque a SDR
+    citou a palavra ou perguntou se o lead quer entender responsabilidades.
+  */
+  const explainedNow = shouldIgnoreResponsibilitiesPendingFromCurrentReply(respostaFinal)
+    ? {
+        ...baseExplainedNow,
+        responsabilidades: false
+      }
+    : baseExplainedNow;
+
   const etapasUpdate = {
     ...currentEtapas
   };
+
   const pendingFlags = {
     ...(currentLead?.etapasAguardandoEntendimento || {})
   };
