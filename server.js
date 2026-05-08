@@ -18733,7 +18733,7 @@ if (semanticQualificationPatch.shouldSave) {
   });
 }
 
-const turnPolicy = buildTurnPolicy({
+var turnPolicy = buildTurnPolicy({
   lead: currentLead || {},
   text,
   semanticIntent,
