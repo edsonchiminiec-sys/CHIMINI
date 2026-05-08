@@ -4112,54 +4112,51 @@ async function runConsultantAfterClassifier({
   supervisorAnalysis = {},
   classification = {}
 } = {}) {
+  /*
+    ETAPA 16.2 — Consultor pós-SDR em modo passivo.
+
+    Explicação simples:
+    Esta função existia para rodar um Consultor depois da resposta da SDR.
+
+    O problema:
+    Esse Consultor salvava "consultoria" no Mongo e podia influenciar
+    a próxima resposta, mesmo sendo uma análise feita DEPOIS da SDR falar.
+
+    Decisão arquitetural:
+    O pós-SDR não pilota mais conversa.
+    Ele não salva estratégia.
+    Ele não muda rota.
+    Ele não muda funil.
+    Ele não decide próxima resposta.
+
+    Mantemos esta função apenas como proteção:
+    se algum ponto antigo do código ainda chamar runConsultantAfterClassifier,
+    ela não fará nada perigoso.
+  */
+
   try {
     if (!user) return;
 
-    let consultantAdvice = await runConsultantAssistant({
-  lead,
-  history,
-  lastUserText,
-  lastSdrText,
-  supervisorAnalysis,
-  classification
-});
-
-const originalConsultantAdvice = consultantAdvice;
-
-consultantAdvice = enforceConsultantHardLimits({
-  consultantAdvice,
-  lead,
-  lastUserText,
-  classification
-});
-
-if (
-  originalConsultantAdvice?.estrategiaRecomendada !== consultantAdvice?.estrategiaRecomendada ||
-  originalConsultantAdvice?.ofertaMaisAdequada !== consultantAdvice?.ofertaMaisAdequada ||
-  originalConsultantAdvice?.momentoIdealHumano !== consultantAdvice?.momentoIdealHumano
-) {
-  console.log("🛡️ Consultor corrigido por trava dura:", {
-    user,
-    ultimaMensagemLead: lastUserText,
-    estrategiaOriginal: originalConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
-    estrategiaCorrigida: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
-    ofertaOriginal: originalConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
-    ofertaCorrigida: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
-        motivo: consultantAdvice?.motivoTravaConsultor || "ajuste_consultor_por_trava_dura"
-  });
-}
-
-await saveConsultantAdvice(user, consultantAdvice);
-
-    console.log("✅ Consultor Assistente analisou estratégia:", {
+    console.log("ℹ️ runConsultantAfterClassifier chamado, mas está desativado como piloto:", {
       user,
-      estrategiaRecomendada: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
-      ofertaMaisAdequada: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
-      momentoIdealHumano: consultantAdvice?.momentoIdealHumano || "nao_analisado",
-      prioridadeComercial: consultantAdvice?.prioridadeComercial || "nao_analisado"
+      motivo: "ETAPA 16.2 — Consultor pós-SDR não salva mais consultoria operacional.",
+      ultimaMensagemLead: lastUserText || "",
+      ultimaRespostaSdrPreview: String(lastSdrText || "").slice(0, 180),
+      temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
+      intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado"
     });
+
+    auditLog("Consultor pos-SDR desativado como piloto", {
+      user: maskPhone(user),
+      motivo: "Pós-SDR não deve mandar no funil, rota ou próxima resposta.",
+      lead: buildLeadAuditSnapshot(lead || {}),
+      classificacaoPosSdr: classification || {},
+      supervisorPosSdr: supervisorAnalysis || {}
+    });
+
+    return;
   } catch (error) {
-    console.error("⚠️ Consultor Assistente falhou, mas atendimento continua:", error.message);
+    console.error("⚠️ Consultor pós-SDR passivo falhou, mas atendimento continua:", error.message);
   }
 }
 
@@ -4635,24 +4632,7 @@ if (
 await saveLeadClassification(user, classification);
 
     runConsultantAfterClassifier({
-      user,
-      lead,
-      history,
-      lastUserText,
-      lastSdrText,
-      supervisorAnalysis,
-      classification
-    });
-
-    console.log("✅ Classificador analisou lead:", {
-      user,
-      temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
-      perfil: classification?.perfilComportamentalPrincipal || "nao_analisado",
-      intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado",
-      objecaoPrincipal: classification?.objecaoPrincipal || "sem_objecao_detectada",
-      confianca: classification?.confiancaClassificacao || "nao_analisado",
-      consultorAcionado: true
-    });
+       
   } catch (error) {
     console.error("⚠️ Classificador falhou, mas atendimento continua:", error.message);
   }
