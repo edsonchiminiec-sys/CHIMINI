@@ -2520,6 +2520,82 @@ Oriente apenas:
 - evitar repetição.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — PREFERÊNCIA COMERCIAL NÃO É COLETA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Nunca use "retomar_coleta" quando o objetivo for apenas entender a preferência comercial do lead.
+
+Existe uma diferença muito importante:
+
+1. Coleta de dados:
+É quando o lead já está na fase de pré-cadastro/coleta e a SDR está pedindo ou confirmando:
+- nome completo;
+- CPF;
+- telefone;
+- cidade;
+- estado;
+- correção de dados;
+- confirmação de dados.
+
+Nesses casos, "retomar_coleta" pode fazer sentido.
+
+2. Descoberta de preferência comercial:
+É quando o lead ainda está entendendo se quer:
+- Programa Parceiro Homologado;
+- Programa de Afiliados;
+- os dois;
+- renda extra;
+- produto físico;
+- divulgação online;
+- venda com clientes próprios;
+- venda por link.
+
+Nesses casos, NUNCA use "retomar_coleta".
+
+Se o lead disser algo como:
+- "quero renda extra";
+- "estou procurando uma renda extra";
+- "quero ganhar dinheiro";
+- "quero uma oportunidade";
+- "quero vender";
+- "tenho clientes";
+- "consigo vender";
+- "quero trabalhar com vocês";
+
+e ainda não houver coleta ativa de dados, a interpretação correta é:
+
+leadEntendeuUltimaExplicacao = false
+leadQuerAvancar = false
+leadCriticouRepeticao = false
+naoRepetirUltimoTema = false
+proximaAcaoSemantica = "manter_fase"
+
+A orientação para o Pré-SDR deve ser:
+"O lead demonstrou interesse comercial genérico. Não tratar como coleta de dados. Não pedir CPF, nome completo, telefone, cidade ou estado. Orientar a SDR a explicar de forma curta os caminhos comerciais ou perguntar se o lead prefere atuar com produto físico/pronta-entrega ou divulgação online."
+
+Exemplo errado:
+Lead: "bom dia, estou procurando uma renda extra"
+proximaAcaoSemantica errada: "retomar_coleta"
+
+Exemplo correto:
+Lead: "bom dia, estou procurando uma renda extra"
+proximaAcaoSemantica correta: "manter_fase"
+orientacaoParaPreSdr correta: "Explicar de forma curta os caminhos comerciais e entender a preferência do lead, sem pedir dados."
+
+Exemplo errado:
+Lead: "tenho clientes e acho que consigo vender"
+proximaAcaoSemantica errada: "retomar_coleta"
+
+Exemplo correto:
+Lead: "tenho clientes e acho que consigo vender"
+proximaAcaoSemantica correta: "manter_fase" ou "nao_repetir_e_avancar", conforme o histórico
+orientacaoParaPreSdr correta: "Isso aponta para potencial comercial, especialmente Homologado se o contexto for produto físico/clientes. Não tratar como coleta de dados."
+
+Regra importante:
+"Coletar preferência comercial" não é "coleta de dados".
+A palavra "coleta" no sistema deve ser reservada para dados cadastrais ou confirmação/correção de dados.
+
+━━━━━━━━━━━━━━━━━━━━━━━
 REGRA CENTRAL — ENCERRAMENTO DO HOMOLOGADO E SAÍDA PARA AFILIADO
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2624,7 +2700,10 @@ Valores permitidos para proximaAcaoSemantica:
 
 REGRA CRÍTICA SOBRE "retomar_coleta":
 
-Use "retomar_coleta" SOMENTE se o lead já estiver claramente em coleta, confirmação ou correção de dados.
+Não use "retomar_coleta" para entender preferência comercial.
+Não use "retomar_coleta" para renda extra.
+Não use "retomar_coleta" para escolher entre Homologado e Afiliado.
+Não use "retomar_coleta" para perguntar se o lead prefere produto físico ou divulgação online.
 
 Isso só pode acontecer quando o estado do lead indicar pelo menos um destes sinais:
 - aguardandoConfirmacaoCampo = true;
@@ -5653,6 +5732,124 @@ function isSafeHomologadoComodatoReply({
   );
 }
 
+function isClearlyHomologadoOnlyReply({
+  lead = {},
+  leadText = "",
+  respostaFinal = "",
+  commercialRouteDecision = null
+} = {}) {
+  /*
+    ETAPA 14.5A — calibração da anti-mistura.
+
+    Explicação simples:
+    A anti-mistura estava chamando o GPT para revisar respostas boas
+    e o GPT estava acusando mistura onde não existia mistura real.
+
+    Aqui fazemos uma aprovação local simples:
+    se a resposta fala apenas do caminho Homologado, sem elementos reais
+    de Afiliado, não precisa chamar o GPT anti-mistura.
+  */
+
+  const resposta = String(respostaFinal || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const leadMsg = String(leadText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const rota =
+    commercialRouteDecision?.rota ||
+    lead?.rotaComercial ||
+    lead?.origemConversao ||
+    "homologado";
+
+  const estaEmHomologado =
+    rota === "homologado" ||
+    commercialRouteDecision?.deveManterHomologado === true ||
+    lead?.interesseAfiliado !== true;
+
+  const leadPediuAfiliadoOuComparacao =
+    leadMsg.includes("afiliado") ||
+    leadMsg.includes("afiliados") ||
+    leadMsg.includes("link") ||
+    leadMsg.includes("comissao") ||
+    leadMsg.includes("comissão") ||
+    leadMsg.includes("divulgar online") ||
+    leadMsg.includes("sem estoque") ||
+    leadMsg.includes("qual a diferenca") ||
+    leadMsg.includes("qual a diferença") ||
+    leadMsg.includes("os dois") ||
+    leadMsg.includes("duas opcoes") ||
+    leadMsg.includes("duas opções");
+
+  const respostaTemHomologadoOuPrograma =
+    resposta.includes("parceria comercial") ||
+    resposta.includes("parceiro homologado") ||
+    resposta.includes("programa") ||
+    resposta.includes("vender produtos") ||
+    resposta.includes("produtos fisicos") ||
+    resposta.includes("produtos físicos") ||
+    resposta.includes("direto da industria") ||
+    resposta.includes("direto da indústria") ||
+    resposta.includes("suporte") ||
+    resposta.includes("treinamento") ||
+    resposta.includes("comodato") ||
+    resposta.includes("lote inicial") ||
+    resposta.includes("pronta-entrega") ||
+    resposta.includes("demonstracao") ||
+    resposta.includes("demonstração");
+
+  const respostaTemAfiliadoReal =
+    resposta.includes("minhaiqg.com.br") ||
+    resposta.includes("link de afiliado") ||
+    resposta.includes("link exclusivo") ||
+    resposta.includes("cadastro de afiliado") ||
+    resposta.includes("programa de afiliados") ||
+    resposta.includes("comissao por link") ||
+    resposta.includes("comissão por link") ||
+    resposta.includes("comissao online") ||
+    resposta.includes("comissão online") ||
+    resposta.includes("divulgar por link") ||
+    resposta.includes("venda pelo seu link") ||
+    resposta.includes("gerar seus links") ||
+    resposta.includes("sem estoque fisico") ||
+    resposta.includes("sem estoque físico");
+
+  const respostaPedeDados =
+    replyAsksPersonalData(respostaFinal) ||
+    /\b(cpf|nome completo|telefone|cidade|estado|uf)\b/i.test(respostaFinal || "");
+
+  const respostaMencionaPreAnalise =
+    /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal || "");
+
+  const respostaMisturaTaxaComAfiliado =
+    respostaTemAfiliadoReal &&
+    (
+      resposta.includes("1990") ||
+      resposta.includes("1.990") ||
+      resposta.includes("taxa") ||
+      resposta.includes("adesao") ||
+      resposta.includes("adesão") ||
+      resposta.includes("pre-analise") ||
+      resposta.includes("pré-analise") ||
+      resposta.includes("pre analise") ||
+      resposta.includes("pré análise")
+    );
+
+  return Boolean(
+    estaEmHomologado &&
+    respostaTemHomologadoOuPrograma &&
+    !respostaTemAfiliadoReal &&
+    !respostaPedeDados &&
+    !respostaMencionaPreAnalise &&
+    !respostaMisturaTaxaComAfiliado &&
+    !leadPediuAfiliadoOuComparacao
+  );
+}
+
 async function runFinalRouteMixGuard({
   lead = {},
   leadText = "",
@@ -5666,8 +5863,27 @@ async function runFinalRouteMixGuard({
     motivo: "Fallback: trava anti-mistura não executada ou falhou."
   };
 
-  if (!respostaFinal || !String(respostaFinal).trim()) {
+   if (!respostaFinal || !String(respostaFinal).trim()) {
     return fallback;
+  }
+
+  // ETAPA 14.5A — aprovação local antes de chamar GPT anti-mistura.
+  // Se a resposta é claramente Homologado e não tem elementos reais de Afiliado,
+  // não chamamos o GPT revisor, porque ele vinha gerando falso positivo.
+  if (
+    isClearlyHomologadoOnlyReply({
+      lead,
+      leadText,
+      respostaFinal,
+      commercialRouteDecision
+    })
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      motivo:
+        "Resposta aprovada localmente: fala somente do Homologado e não contém elementos reais de Afiliado."
+    };
   }
 
   // ETAPA 6 PRODUÇÃO — não chamar GPT anti-mistura quando a resposta
@@ -12180,20 +12396,113 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
   };
 }
 
+function iqgIsInitialRouteComparisonReply(text = "", currentLead = {}) {
+  /*
+    ETAPA 14.5B — comparação inicial não conclui etapas do Homologado.
+
+    Explicação simples:
+    Quando a SDR apresenta os dois caminhos:
+    - Parceiro Homologado;
+    - Afiliados;
+
+    isso serve para ajudar o lead a escolher a rota.
+
+    Mas ainda NÃO significa que benefícios e estoque do Homologado
+    foram explicados de verdade.
+
+    Sem esta proteção, uma frase curta como:
+    "Homologado tem suporte e lote em comodato"
+    acaba marcando benefícios e estoque cedo demais.
+  */
+
+  const t = iqgNormalizeFunnelText(text);
+
+  const leadJaEscolheuRota =
+    currentLead?.rotaComercial === "homologado" ||
+    currentLead?.rotaComercial === "afiliado" ||
+    currentLead?.rotaComercial === "ambos" ||
+    currentLead?.interesseReal === true ||
+    currentLead?.interesseAfiliado === true ||
+    currentLead?.sinalAfiliadoExplicito === true ||
+    currentLead?.sinalComparacaoProgramas === true;
+
+  const mencionaHomologado =
+    t.includes("parceiro homologado") ||
+    t.includes("programa parceiro homologado") ||
+    t.includes("homologado");
+
+  const mencionaAfiliado =
+    t.includes("programa de afiliados") ||
+    t.includes("afiliados") ||
+    t.includes("afiliado") ||
+    t.includes("divulgacao online") ||
+    t.includes("divulgação online") ||
+    t.includes("link");
+
+  const formatoComparacao =
+    t.includes("duas rotas") ||
+    t.includes("dois caminhos") ||
+    t.includes("duas opcoes") ||
+    t.includes("duas opções") ||
+    t.includes("qual dessas opcoes") ||
+    t.includes("qual dessas opções") ||
+    t.includes("mais alinhada") ||
+    t.includes("produto fisico ou divulgacao online") ||
+    t.includes("produto físico ou divulgação online");
+
+  const perguntaEscolha =
+    t.includes("qual dessas") ||
+    t.includes("qual delas") ||
+    t.includes("qual caminho") ||
+    t.includes("parece mais alinhada") ||
+    t.includes("voce prefere") ||
+    t.includes("você prefere");
+
+  return Boolean(
+    !leadJaEscolheuRota &&
+    mencionaHomologado &&
+    mencionaAfiliado &&
+    (formatoComparacao || perguntaEscolha)
+  );
+}
+
 function iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
   respostaFinal = "",
   currentLead = {}
 } = {}) {
-  const currentEtapas = {
+    const currentEtapas = {
     ...(currentLead?.etapas || {})
   };
 
-  const explainedNow = iqgDetectFunnelStepsExplainedInText(respostaFinal);
+  const detectedExplainedNow = iqgDetectFunnelStepsExplainedInText(respostaFinal);
+
+  const isInitialRouteComparison = iqgIsInitialRouteComparisonReply(
+    respostaFinal,
+    currentLead
+  );
+
+  /*
+    Se foi apenas comparação inicial entre Homologado e Afiliado,
+    não considerar benefícios/estoque/responsabilidades/investimento
+    como etapas apresentadas do Homologado.
+
+    Neste caso, no máximo consideramos "programa", porque a SDR
+    apresentou a existência dos caminhos comerciais.
+  */
+  const explainedNow = isInitialRouteComparison
+    ? {
+        ...detectedExplainedNow,
+        beneficios: false,
+        estoque: false,
+        responsabilidades: false,
+        investimento: false,
+        compromisso: false
+      }
+    : detectedExplainedNow;
 
   const etapasUpdate = {
     ...currentEtapas
   };
-
   const pendingFlags = {
     ...(currentLead?.etapasAguardandoEntendimento || {})
   };
