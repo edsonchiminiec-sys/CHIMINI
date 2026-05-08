@@ -12749,6 +12749,31 @@ function shouldIgnoreResponsibilitiesPendingFromCurrentReply(text = "") {
   );
 }
 
+function iqgBuildPendingFunnelFlagsFromCurrentSdrReply({
+  respostaFinal = "",
+  currentLead = {}
+} = {}) {
+  const currentEtapas = {
+    ...(currentLead?.etapas || {})
+  };
+
+  const detectedExplainedNow =
+    iqgDetectFunnelStepsExplainedInText(respostaFinal);
+
+  const isInitialRouteComparison = iqgIsInitialRouteComparisonReply(
+    respostaFinal,
+    currentLead
+  );
+
+  /*
+    ETAPA 14.5B:
+    Se foi apenas comparação inicial entre Homologado e Afiliado,
+    não considerar benefícios/estoque/responsabilidades/investimento
+    como etapas apresentadas do Homologado.
+
+    Neste caso, no máximo consideramos "programa", porque a SDR
+    apresentou a existência dos caminhos comerciais.
+  */
   const baseExplainedNow = isInitialRouteComparison
     ? {
         ...detectedExplainedNow,
@@ -12765,7 +12790,9 @@ function shouldIgnoreResponsibilitiesPendingFromCurrentReply(text = "") {
     Não marcar responsabilidades como apresentadas apenas porque a SDR
     citou a palavra ou perguntou se o lead quer entender responsabilidades.
   */
-  const explainedNow = shouldIgnoreResponsibilitiesPendingFromCurrentReply(respostaFinal)
+  const explainedNow = shouldIgnoreResponsibilitiesPendingFromCurrentReply(
+    respostaFinal
+  )
     ? {
         ...baseExplainedNow,
         responsabilidades: false
@@ -12797,7 +12824,10 @@ function shouldIgnoreResponsibilitiesPendingFromCurrentReply(text = "") {
     pendingSteps.push("estoque");
   }
 
-  if (explainedNow.responsabilidades && currentEtapas.responsabilidades !== true) {
+  if (
+    explainedNow.responsabilidades &&
+    currentEtapas.responsabilidades !== true
+  ) {
     pendingFlags.responsabilidades = true;
     pendingSteps.push("responsabilidades");
   }
@@ -12822,7 +12852,6 @@ function shouldIgnoreResponsibilitiesPendingFromCurrentReply(text = "") {
     explainedNow
   };
 }
-
 function buildConversationMemoryForAgents({
   lead = {},
   history = [],
