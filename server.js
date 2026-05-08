@@ -4622,14 +4622,44 @@ if (
   });
 }
 
-await saveLeadClassification(user, classification);
+     await saveLeadClassification(user, classification);
 
-    runConsultantAfterClassifier({
-       
+/*
+  ETAPA 16.2 — Consultor pós-SDR não pilota mais o funil.
+
+  Explicação simples:
+  Antes, depois da SDR responder, o Classificador chamava outro Consultor.
+  Esse Consultor salvava "consultoria" no Mongo e podia contaminar
+  a próxima mensagem, puxando Homologado ou Afiliado antes da hora.
+
+  Agora:
+  - Supervisor pós-SDR continua auditando.
+  - Classificador pós-SDR continua classificando para dashboard/análise.
+  - Consultor pós-SDR NÃO é mais chamado como piloto.
+  - A próxima resposta será guiada pelo Pré-SDR atual e, depois, pelo Orquestrador de Turno.
+*/
+console.log("ℹ️ Consultor pós-SDR não acionado como piloto:", {
+  user,
+  motivo: "ETAPA 16.2 — pós-SDR não deve salvar estratégia que mande na próxima resposta.",
+  temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
+  intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado"
+});
+
+console.log("✅ Classificador analisou lead:", {
+  user,
+  temperaturaComercial: classification?.temperaturaComercial || "nao_analisado",
+  perfil: classification?.perfilComportamentalPrincipal || "nao_analisado",
+  intencaoPrincipal: classification?.intencaoPrincipal || "nao_analisado",
+  objecaoPrincipal: classification?.objecaoPrincipal || "sem_objecao_detectada",
+  confianca: classification?.confiancaClassificacao || "nao_analisado",
+  consultorAcionado: false,
+  consultorPosSdrModo: "desativado_como_piloto"
+});
   } catch (error) {
     console.error("⚠️ Classificador falhou, mas atendimento continua:", error.message);
   }
 }
+
 const SUPERVISOR_SYSTEM_PROMPT = `
 Você é o GPT Supervisor Comercial da IQG.
 
