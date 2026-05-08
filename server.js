@@ -9622,6 +9622,90 @@ function enforceConsultantHardLimits({
     };
   }
 
+  /*
+    ETAPA 14.6A — Consultor não deve salvar Homologado cedo demais.
+
+    Explicação simples:
+    Quando o lead ainda está apenas em descoberta comercial,
+    como "quero renda extra", o Consultor pode orientar a SDR a explicar
+    os caminhos, mas NÃO deve salvar Homologado como oferta mais adequada.
+
+    Isso evita contaminar a próxima mensagem caso o lead escolha divulgação online.
+  */
+  const textoLeadNormalizado = String(lastUserText || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const leadAindaNaoEscolheuRota =
+    lead?.interesseReal !== true &&
+    lead?.interesseAfiliado !== true &&
+    lead?.sinalAfiliadoExplicito !== true &&
+    lead?.sinalComparacaoProgramas !== true &&
+    lead?.dadosConfirmadosPeloLead !== true &&
+    lead?.crmEnviado !== true &&
+    !lead?.origemConversao;
+
+  const classificacaoSemEscolhaDeRota =
+    [
+      "sem_intencao_clara",
+      "tirar_duvida",
+      "nao_analisado",
+      ""
+    ].includes(classification?.intencaoPrincipal || "") &&
+    classification?.perfilComportamentalPrincipal !== "afiliado_digital";
+
+  const mensagemAtualNaoEscolheuRota =
+    !/\b(homologado|homologar|parceiro homologado|afiliado|afiliados|link|comissao|comissão|divulgacao online|divulgação online|produto fisico|produto físico|produtos fisicos|produtos físicos|estoque|comodato|kit|pronta entrega|pronta-entrega|opcao 2|opção 2)\b/i.test(textoLeadNormalizado);
+
+  const mensagemGenericaDeRendaOuOportunidade =
+    /\b(renda extra|ganhar dinheiro|oportunidade|vender|trabalhar com voces|trabalhar com vocês|representar|renda a mais)\b/i.test(textoLeadNormalizado);
+
+  const consultorPuxouHomologadoCedoDemais =
+    safeAdvice.ofertaMaisAdequada === "homologado" &&
+    leadAindaNaoEscolheuRota &&
+    classificacaoSemEscolhaDeRota &&
+    mensagemAtualNaoEscolheuRota &&
+    mensagemGenericaDeRendaOuOportunidade;
+
+  if (consultorPuxouHomologadoCedoDemais) {
+    return {
+      ...safeAdvice,
+      estrategiaRecomendada:
+        safeAdvice.estrategiaRecomendada === "oferecer_afiliado"
+          ? "manter_nutricao"
+          : safeAdvice.estrategiaRecomendada || "manter_nutricao",
+
+      ofertaMaisAdequada: "nenhuma_no_momento",
+      momentoIdealHumano: "nao_necessario_agora",
+      prioridadeComercial:
+        safeAdvice.prioridadeComercial === "alta" ||
+        safeAdvice.prioridadeComercial === "urgente"
+          ? "media"
+          : safeAdvice.prioridadeComercial || "media",
+
+      proximaMelhorAcao:
+        "Manter descoberta comercial. A SDR deve entender se o lead prefere atuar com produto físico/pronta-entrega ou divulgação online, sem salvar Homologado como escolha ainda.",
+
+      abordagemSugerida:
+        "Tom consultivo e leve. Explicar os caminhos de forma curta, sem pressionar e sem pedir dados.",
+
+      argumentoPrincipal:
+        "A IQG possui caminhos comerciais diferentes para quem busca renda extra; o ideal é entender qual combina melhor com o perfil do lead.",
+
+      cuidadoPrincipal:
+        "Não tratar renda extra como Homologado escolhido. Não tratar renda extra como Afiliado automático. Não falar taxa e não pedir dados.",
+
+      resumoConsultivo:
+        "O lead demonstrou interesse comercial genérico, mas ainda não escolheu rota. A consultoria deve manter ofertaMaisAdequada como nenhuma_no_momento até o lead indicar Homologado, Afiliado ou ambos.",
+
+      motivoTravaConsultor:
+        "rota_nao_escolhida_bloqueou_homologado_automatico"
+    };
+  }
+   
   return safeAdvice;
 }
 
