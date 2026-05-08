@@ -4135,7 +4135,9 @@ async function runConsultantAfterClassifier({
   */
 
   try {
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     console.log("ℹ️ runConsultantAfterClassifier chamado, mas está desativado como piloto:", {
       user,
