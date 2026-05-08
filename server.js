@@ -4115,23 +4115,14 @@ async function runConsultantAfterClassifier({
   /*
     ETAPA 16.2 — Consultor pós-SDR em modo passivo.
 
-    Explicação simples:
-    Esta função existia para rodar um Consultor depois da resposta da SDR.
-
-    O problema:
-    Esse Consultor salvava "consultoria" no Mongo e podia influenciar
-    a próxima resposta, mesmo sendo uma análise feita DEPOIS da SDR falar.
-
-    Decisão arquitetural:
     O pós-SDR não pilota mais conversa.
     Ele não salva estratégia.
     Ele não muda rota.
     Ele não muda funil.
     Ele não decide próxima resposta.
 
-    Mantemos esta função apenas como proteção:
-    se algum ponto antigo do código ainda chamar runConsultantAfterClassifier,
-    ela não fará nada perigoso.
+    Esta função fica apenas como proteção caso algum ponto antigo
+    do código ainda tente chamá-la.
   */
 
   try {
