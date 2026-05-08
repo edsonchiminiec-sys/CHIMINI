@@ -3710,6 +3710,393 @@ function hasActiveSemanticObjection(semanticIntent = {}) {
   );
 }
 
+function normalizeTurnPolicyText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isLeadInActiveCollectionForTurnPolicy(lead = {}) {
+  const status = lead?.status || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
+  const faseFunil = lead?.faseFunil || "";
+
+  return Boolean(
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    lead?.campoEsperado ||
+    lead?.campoPendente ||
+    ["coleta_dados", "confirmacao_dados"].includes(faseFunil) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(status) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(faseQualificacao)
+  );
+}
+
+function buildTurnPolicy({
+  lead = {},
+  text = "",
+  semanticIntent = {},
+  commercialRouteDecision = {}
+} = {}) {
+  /*
+    ETAPA 16.3A — Política do Turno mínima.
+
+    Explicação simples:
+    Esta função NÃO é um novo GPT.
+    Ela NÃO escreve resposta.
+    Ela NÃO substitui o Pré-SDR.
+
+    Ela só define limites objetivos da rodada atual:
+    - pode falar Afiliado?
+    - pode mandar link?
+    - pode falar taxa?
+    - pode pedir dados?
+    - pode salvar Homologado como oferta escolhida?
+    - pode marcar benefícios/estoque?
+
+    A estratégia comercial continua sendo do Pré-SDR.
+  */
+
+  const t = normalizeTurnPolicyText(text);
+
+  const coletaAtiva = isLeadInActiveCollectionForTurnPolicy(lead || {});
+
+  const preCadastroFinalizado =
+    leadHasFinishedPreCadastro(lead || {}) === true ||
+    lead?.crmEnviado === true ||
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.faseFunil === "crm" ||
+    lead?.statusOperacional === "enviado_crm";
+
+  const pediuHomologado =
+    semanticIntent?.wantsHomologado === true ||
+    /\b(parceiro homologado|programa homologado|programa parceiro homologado|quero homologado|homologado faz mais sentido|me homologar|só homologado|so homologado|apenas homologado|produtos fisicos|produtos físicos|comodato|kit inicial|pronta entrega|pronta-entrega)\b/i.test(text || "");
+
+  const pediuAfiliado =
+    semanticIntent?.wantsAffiliate === true ||
+    /\b(programa de afiliados|afiliado|afiliados|link de afiliado|comissao por link|comissão por link|divulgacao online|divulgação online|vender online|sem estoque fisico|sem estoque físico)\b/i.test(text || "");
+
+  const pediuComparacaoOuOpcoes =
+    semanticIntent?.wantsBoth === true ||
+    /\b(os dois|ambos|comparar|comparacao|comparação|qual a diferenca|qual a diferença|duas opcoes|duas opções|opcoes da iqg|opções da iqg|caminhos comerciais|entender melhor as opcoes|entender melhor as opções)\b/i.test(text || "");
+
+  const descobertaNeutra =
+    !pediuHomologado &&
+    !pediuAfiliado &&
+    (
+      /\b(renda extra|renda a mais|ganhar dinheiro|oportunidade|quero vender|trabalhar com voces|trabalhar com vocês|opcoes da iqg|opções da iqg|caminhos comerciais|entender melhor as opcoes|entender melhor as opções)\b/i.test(text || "") ||
+      (
+        semanticIntent?.asksQuestion === true &&
+        Array.isArray(semanticIntent?.questionTopics) &&
+        semanticIntent.questionTopics.some(topic => {
+          const topicText = normalizeTurnPolicyText(topic);
+          return topicText.includes("opcoes") || topicText.includes("opções");
+        })
+      )
+    );
+
+  const perguntouTaxaPagamentoContrato =
+    semanticIntent?.priceObjection === true ||
+    semanticIntent?.paymentIntent === true ||
+    /\b(taxa|valor|preco|preço|investimento|pagar|pagamento|pix|cartao|cartão|boleto|parcelamento|parcelar|desconto|contrato|assinatura)\b/i.test(text || "");
+
+  const pediuMaterial =
+    Boolean(semanticIntent?.requestedFile) ||
+    /\b(catalogo|catálogo|folder|pdf|material|kit|manual|curso|contrato)\b/i.test(text || "");
+
+  const abandonoHomologado =
+    semanticIntent?.delayOrAbandonment === true &&
+    !preCadastroFinalizado &&
+    !pediuAfiliado &&
+    !pediuHomologado &&
+    /\b(não quero|nao quero|não tenho interesse|nao tenho interesse|deixa quieto|deixamos quieto|deixa pra la|deixa pra lá|não vou seguir|nao vou seguir|não quero seguir|nao quero seguir|desisti|vou desistir|pode encerrar|encerra|tchau)\b/i.test(text || "");
+
+  const base = {
+    modo: "esclarecimento",
+    ofertaPermitida: "nenhuma_no_momento",
+
+    podeFalarAfiliado: false,
+    podeMandarLinkAfiliado: false,
+    podeCompararProgramas: false,
+    podeFalarTaxa: false,
+    podePedirDados: false,
+    podeMarcarBeneficiosEstoque: true,
+
+    estrategiaObrigatoria: "",
+    proximaMelhorAcao: "",
+    cuidadoPrincipal: "",
+    motivo: "Política padrão de esclarecimento."
+  };
+
+  if (coletaAtiva) {
+    return {
+      ...base,
+      modo: "coleta",
+      ofertaPermitida: "nenhuma_no_momento",
+      podeMarcarBeneficiosEstoque: false,
+      podePedirDados: true,
+      estrategiaObrigatoria: "manter_nutricao",
+      proximaMelhorAcao:
+        "Responder curto e retomar somente o dado pendente da coleta ou confirmação.",
+      cuidadoPrincipal:
+        "Não voltar para explicação comercial, não falar Afiliado e não falar taxa durante coleta.",
+      motivo: "Lead está em coleta, confirmação ou correção de dados."
+    };
+  }
+
+  if (semanticIntent?.greetingOnly === true) {
+    return {
+      ...base,
+      modo: "saudacao",
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "manter_nutricao",
+      proximaMelhorAcao:
+        "Cumprimentar e perguntar como pode ajudar, sem escolher rota.",
+      cuidadoPrincipal:
+        "Não falar taxa, não pedir dados, não enviar PDF e não escolher Homologado ou Afiliado.",
+      motivo: "Lead apenas cumprimentou."
+    };
+  }
+
+  if (abandonoHomologado) {
+    return {
+      ...base,
+      modo: "abandono_homologado",
+      ofertaPermitida: "afiliado",
+      podeFalarAfiliado: true,
+      podeMandarLinkAfiliado: true,
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "oferecer_afiliado",
+      proximaMelhorAcao:
+        "Respeitar a desistência do Homologado e oferecer Afiliado como alternativa curta, sem insistir.",
+      cuidadoPrincipal:
+        "Não insistir no Homologado, não pedir CPF e não repetir benefícios.",
+      motivo: "Lead desistiu do Homologado antes de finalizar o pré-cadastro."
+    };
+  }
+
+  if (pediuAfiliado && !pediuHomologado) {
+    return {
+      ...base,
+      modo: "afiliado_escolhido",
+      ofertaPermitida: "afiliado",
+      podeFalarAfiliado: true,
+      podeMandarLinkAfiliado: true,
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "oferecer_afiliado",
+      proximaMelhorAcao:
+        "Explicar Afiliado de forma curta e indicar o caminho de cadastro.",
+      cuidadoPrincipal:
+        "Não misturar com taxa, comodato, pré-análise ou coleta do Homologado.",
+      motivo: "Lead pediu ou demonstrou intenção clara por Afiliado."
+    };
+  }
+
+  if (perguntouTaxaPagamentoContrato) {
+    return {
+      ...base,
+      modo: "taxa_pagamento_contrato",
+      ofertaPermitida: "homologado",
+      podeFalarTaxa: true,
+      estrategiaObrigatoria: "tratar_objecao_taxa",
+      proximaMelhorAcao:
+        "Responder a dúvida de taxa, pagamento ou contrato dentro do Homologado, sem pedir dados.",
+      cuidadoPrincipal:
+        "Não oferecer Afiliado como fuga da taxa. Não oferecer boleto. Não pedir pagamento. Não prometer aprovação.",
+      motivo: "Lead trouxe dúvida ou objeção sobre taxa, pagamento, boleto ou contrato."
+    };
+  }
+
+  if (descobertaNeutra || (pediuComparacaoOuOpcoes && !pediuHomologado && !pediuAfiliado)) {
+    return {
+      ...base,
+      modo: "descoberta_neutra",
+      ofertaPermitida: "nenhuma_no_momento",
+      podeFalarAfiliado: true,
+      podeMandarLinkAfiliado: false,
+      podeCompararProgramas: true,
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "manter_nutricao",
+      proximaMelhorAcao:
+        "Explicar de forma curta que a IQG tem caminhos comerciais diferentes e perguntar se o lead prefere produto físico/pronta-entrega ou divulgação online.",
+      cuidadoPrincipal:
+        "Não tratar renda extra como Homologado escolhido. Não tratar renda extra como Afiliado automático. Não falar taxa, não pedir dados e não mandar link.",
+      motivo: "Lead está descobrindo opções comerciais da IQG sem rota escolhida."
+    };
+  }
+
+  if (pediuHomologado && !pediuAfiliado) {
+    return {
+      ...base,
+      modo: "homologado_escolhido",
+      ofertaPermitida: "homologado",
+      podeFalarAfiliado: false,
+      podeMandarLinkAfiliado: false,
+      podeCompararProgramas: false,
+      estrategiaObrigatoria: "reforcar_valor",
+      proximaMelhorAcao:
+        "Responder focando somente no Programa Parceiro Homologado e conduzir para a próxima etapa pendente.",
+      cuidadoPrincipal:
+        "Não comparar com Afiliado, não mandar link de Afiliado, não falar taxa cedo e não pedir dados.",
+      motivo: "Lead escolheu ou reforçou preferência pelo Homologado."
+    };
+  }
+
+  if (pediuMaterial) {
+    return {
+      ...base,
+      modo: "pedido_material",
+      ofertaPermitida:
+        lead?.rotaComercial === "afiliado" ? "afiliado" : "homologado",
+      estrategiaObrigatoria: "manter_nutricao",
+      proximaMelhorAcao:
+        "Responder ao pedido de material e enviar o arquivo correto se estiver disponível.",
+      cuidadoPrincipal:
+        "Não tratar pedido de catálogo, kit ou folder como nome do lead. Não pedir CPF.",
+      motivo: "Lead pediu material, catálogo, folder, kit, manual ou contrato."
+    };
+  }
+
+  return base;
+}
+
+function applyTurnPolicyToPreSdrAdvice({
+  advice = {},
+  turnPolicy = {}
+} = {}) {
+  /*
+    ETAPA 16.3A — aplicação da Política do Turno no Pré-SDR.
+
+    Explicação simples:
+    O Pré-SDR continua pensando comercialmente.
+    Esta função só corrige quando ele tenta ultrapassar o limite do turno.
+  */
+
+  const safeAdvice = {
+    ...buildDefaultConsultantAdvice(),
+    ...(advice || {})
+  };
+
+  if (!turnPolicy?.modo) {
+    return safeAdvice;
+  }
+
+  let result = {
+    ...safeAdvice,
+    politicaTurnoAplicada: true,
+    modoPoliticaTurno: turnPolicy.modo,
+    resumoConsultivo: [
+      safeAdvice.resumoConsultivo || "",
+      `Política do turno: ${turnPolicy.modo}. ${turnPolicy.motivo || ""}`
+    ].filter(Boolean).join("\n")
+  };
+
+  if (turnPolicy.estrategiaObrigatoria) {
+    result.estrategiaRecomendada = turnPolicy.estrategiaObrigatoria;
+  }
+
+  if (turnPolicy.proximaMelhorAcao) {
+    result.proximaMelhorAcao = turnPolicy.proximaMelhorAcao;
+  }
+
+  if (turnPolicy.cuidadoPrincipal) {
+    result.cuidadoPrincipal = [
+      turnPolicy.cuidadoPrincipal,
+      safeAdvice.cuidadoPrincipal || ""
+    ].filter(Boolean).join("\n");
+  }
+
+  if (turnPolicy.ofertaPermitida) {
+    result.ofertaMaisAdequada = turnPolicy.ofertaPermitida;
+  }
+
+  const textoProximaAcao = normalizeTurnPolicyText(result.proximaMelhorAcao);
+  const textoCuidado = normalizeTurnPolicyText(result.cuidadoPrincipal);
+
+  const tentouAvancarParaColeta =
+    result.estrategiaRecomendada === "avancar_pre_analise" ||
+    textoProximaAcao.includes("coleta") ||
+    textoProximaAcao.includes("pre-analise") ||
+    textoProximaAcao.includes("pre analise") ||
+    textoProximaAcao.includes("pré-analise") ||
+    textoProximaAcao.includes("pré análise");
+
+  if (turnPolicy.podePedirDados !== true && tentouAvancarParaColeta) {
+    result = {
+      ...result,
+      estrategiaRecomendada: turnPolicy.estrategiaObrigatoria || "manter_nutricao",
+      proximaMelhorAcao:
+        turnPolicy.proximaMelhorAcao ||
+        "Responder a mensagem atual do lead sem iniciar coleta de dados.",
+      cuidadoPrincipal: [
+        "Política do turno bloqueou avanço para coleta ou pré-análise nesta resposta.",
+        result.cuidadoPrincipal || ""
+      ].filter(Boolean).join("\n")
+    };
+  }
+
+  if (
+    turnPolicy.podeFalarTaxa !== true &&
+    (
+      result.estrategiaRecomendada === "tratar_objecao_taxa" ||
+      textoProximaAcao.includes("taxa") ||
+      textoProximaAcao.includes("pagamento") ||
+      textoCuidado.includes("pagamento")
+    )
+  ) {
+    result = {
+      ...result,
+      estrategiaRecomendada: turnPolicy.estrategiaObrigatoria || "manter_nutricao",
+      proximaMelhorAcao:
+        turnPolicy.proximaMelhorAcao ||
+        "Responder sem falar de taxa ou pagamento nesta etapa.",
+      cuidadoPrincipal: [
+        "Política do turno bloqueou taxa/pagamento nesta resposta.",
+        result.cuidadoPrincipal || ""
+      ].filter(Boolean).join("\n")
+    };
+  }
+
+  if (
+    turnPolicy.podeMandarLinkAfiliado !== true &&
+    result.ofertaMaisAdequada === "afiliado" &&
+    turnPolicy.ofertaPermitida !== "afiliado"
+  ) {
+    result = {
+      ...result,
+      ofertaMaisAdequada: turnPolicy.ofertaPermitida || "nenhuma_no_momento",
+      estrategiaRecomendada: turnPolicy.estrategiaObrigatoria || "manter_nutricao",
+      cuidadoPrincipal: [
+        "Política do turno bloqueou oferta/link de Afiliado nesta resposta.",
+        result.cuidadoPrincipal || ""
+      ].filter(Boolean).join("\n")
+    };
+  }
+
+  return result;
+}
+
 function buildSemanticQualificationPatch({
   lead = {},
   semanticIntent = null,
@@ -18345,6 +18732,46 @@ if (semanticQualificationPatch.shouldSave) {
     currentLead: buildLeadAuditSnapshot(currentLead || {})
   });
 }
+
+const turnPolicy = buildTurnPolicy({
+  lead: currentLead || {},
+  text,
+  semanticIntent,
+  commercialRouteDecision
+});
+
+console.log("🧭 Política do Turno definida:", {
+  user: from,
+  modo: turnPolicy?.modo || "nao_definido",
+  ofertaPermitida: turnPolicy?.ofertaPermitida || "nenhuma_no_momento",
+  podeFalarAfiliado: turnPolicy?.podeFalarAfiliado === true,
+  podeMandarLinkAfiliado: turnPolicy?.podeMandarLinkAfiliado === true,
+  podeFalarTaxa: turnPolicy?.podeFalarTaxa === true,
+  podePedirDados: turnPolicy?.podePedirDados === true,
+  podeMarcarBeneficiosEstoque: turnPolicy?.podeMarcarBeneficiosEstoque === true,
+  motivo: turnPolicy?.motivo || ""
+});
+
+auditLog("Politica do Turno", {
+  user: maskPhone(from),
+  ultimaMensagemLead: text,
+  turnPolicy,
+  semanticIntent,
+  commercialRouteDecision
+});
+
+if (Array.isArray(backendStrategicGuidance)) {
+  backendStrategicGuidance.push({
+    tipo: "politica_turno_minima",
+    prioridade: "critica",
+    orientacaoParaPreSdr: [
+      `Política do turno: ${turnPolicy?.modo || "nao_definido"}.`,
+      turnPolicy?.proximaMelhorAcao || "",
+      turnPolicy?.cuidadoPrincipal || ""
+    ].filter(Boolean).join("\n"),
+    detalhes: turnPolicy
+  });
+}
    
 preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
@@ -18388,6 +18815,44 @@ if (
   });
 }
 
+/*
+  ETAPA 16.3A — Política do Turno aplicada ao Consultor Pré-SDR.
+
+  Explicação simples:
+  A trava dura corrigiu riscos comerciais.
+  Agora a Política do Turno define os limites desta rodada:
+  se pode falar Afiliado, taxa, pedir dados ou salvar oferta.
+*/
+const preSdrAdviceBeforeTurnPolicy = {
+  ...(preSdrConsultantAdvice || {})
+};
+
+preSdrConsultantAdvice = applyTurnPolicyToPreSdrAdvice({
+  advice: preSdrConsultantAdvice,
+  turnPolicy
+});
+
+if (
+  preSdrAdviceBeforeTurnPolicy?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
+  preSdrAdviceBeforeTurnPolicy?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
+  preSdrAdviceBeforeTurnPolicy?.cuidadoPrincipal !== preSdrConsultantAdvice?.cuidadoPrincipal ||
+  preSdrAdviceBeforeTurnPolicy?.ofertaMaisAdequada !== preSdrConsultantAdvice?.ofertaMaisAdequada
+) {
+  console.log("🧭 Consultor PRÉ-SDR ajustado pela Política do Turno:", {
+    user: from,
+    modoPoliticaTurno: turnPolicy?.modo || "nao_definido",
+    ofertaPermitida: turnPolicy?.ofertaPermitida || "nenhuma_no_momento",
+    estrategiaAntes: preSdrAdviceBeforeTurnPolicy?.estrategiaRecomendada || "nao_analisado",
+    estrategiaDepois: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    ofertaAntes: preSdrAdviceBeforeTurnPolicy?.ofertaMaisAdequada || "nao_analisado",
+    ofertaDepois: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    podeFalarAfiliado: turnPolicy?.podeFalarAfiliado === true,
+    podeMandarLinkAfiliado: turnPolicy?.podeMandarLinkAfiliado === true,
+    podeFalarTaxa: turnPolicy?.podeFalarTaxa === true,
+    podePedirDados: turnPolicy?.podePedirDados === true
+  });
+}
+   
 await saveConsultantAdvice(from, preSdrConsultantAdvice);
 
  console.log("🧠 Consultor PRÉ-SDR orientou a resposta:", {
@@ -18439,13 +18904,46 @@ await saveConsultantAdvice(from, preSdrConsultantAdvice);
     };
   }
 
-  preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
-    advice: preSdrConsultantAdvice,
-    lead: currentLead || {},
-    lastUserText: text
-  });
+ preSdrConsultantAdvice = enforcePreSdrConsultantHardLimits({
+  advice: preSdrConsultantAdvice,
+  lead: currentLead || {},
+  lastUserText: text
+});
 
-  await saveConsultantAdvice(from, preSdrConsultantAdvice);
+/*
+  ETAPA 16.3A — Política do Turno também aplicada ao fallback.
+
+  Explicação simples:
+  Mesmo se o GPT Consultor Pré-SDR falhar,
+  a Política do Turno continua mandando nos limites da rodada.
+*/
+const fallbackAdviceBeforeTurnPolicy = {
+  ...(preSdrConsultantAdvice || {})
+};
+
+preSdrConsultantAdvice = applyTurnPolicyToPreSdrAdvice({
+  advice: preSdrConsultantAdvice,
+  turnPolicy
+});
+
+if (
+  fallbackAdviceBeforeTurnPolicy?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
+  fallbackAdviceBeforeTurnPolicy?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
+  fallbackAdviceBeforeTurnPolicy?.cuidadoPrincipal !== preSdrConsultantAdvice?.cuidadoPrincipal ||
+  fallbackAdviceBeforeTurnPolicy?.ofertaMaisAdequada !== preSdrConsultantAdvice?.ofertaMaisAdequada
+) {
+  console.log("🧭 Fallback Pré-SDR ajustado pela Política do Turno:", {
+    user: from,
+    modoPoliticaTurno: turnPolicy?.modo || "nao_definido",
+    ofertaPermitida: turnPolicy?.ofertaPermitida || "nenhuma_no_momento",
+    estrategiaAntes: fallbackAdviceBeforeTurnPolicy?.estrategiaRecomendada || "nao_analisado",
+    estrategiaDepois: preSdrConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    ofertaAntes: fallbackAdviceBeforeTurnPolicy?.ofertaMaisAdequada || "nao_analisado",
+    ofertaDepois: preSdrConsultantAdvice?.ofertaMaisAdequada || "nao_analisado"
+  });
+}
+
+await saveConsultantAdvice(from, preSdrConsultantAdvice);
 
   console.log("🧠 Consultor PRÉ-SDR fallback aplicado:", {
     user: from,
@@ -18457,6 +18955,41 @@ await saveConsultantAdvice(from, preSdrConsultantAdvice);
 const preSdrConsultantContext = `ORIENTAÇÃO HIERÁRQUICA OBRIGATÓRIA DO CONSULTOR PRÉ-SDR — USO INTERNO DA SDR
 
 Esta orientação veio ANTES da resposta da SDR.
+
+POLÍTICA DO TURNO — LIMITES OBRIGATÓRIOS:
+
+Modo:
+${turnPolicy?.modo || "nao_definido"}
+
+Oferta permitida neste turno:
+${turnPolicy?.ofertaPermitida || "nenhuma_no_momento"}
+
+Pode falar Afiliado?
+${turnPolicy?.podeFalarAfiliado === true ? "sim" : "não"}
+
+Pode mandar link de Afiliado?
+${turnPolicy?.podeMandarLinkAfiliado === true ? "sim" : "não"}
+
+Pode comparar programas?
+${turnPolicy?.podeCompararProgramas === true ? "sim" : "não"}
+
+Pode falar taxa/pagamento?
+${turnPolicy?.podeFalarTaxa === true ? "sim" : "não"}
+
+Pode pedir dados?
+${turnPolicy?.podePedirDados === true ? "sim" : "não"}
+
+Pode marcar benefícios/estoque como explicados?
+${turnPolicy?.podeMarcarBeneficiosEstoque === true ? "sim" : "não"}
+
+Próxima melhor ação da Política do Turno:
+${turnPolicy?.proximaMelhorAcao || "-"}
+
+Cuidado principal da Política do Turno:
+${turnPolicy?.cuidadoPrincipal || "-"}
+
+Regra obrigatória:
+Se houver conflito entre a Política do Turno e qualquer outra orientação, siga a Política do Turno.
 
 REGRA DE HIERARQUIA:
 A SDR não deve decidir sozinha a condução comercial.
