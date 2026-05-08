@@ -4145,7 +4145,7 @@ if (
     estrategiaCorrigida: consultantAdvice?.estrategiaRecomendada || "nao_analisado",
     ofertaOriginal: originalConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
     ofertaCorrigida: consultantAdvice?.ofertaMaisAdequada || "nao_analisado",
-    motivo: "objecao_de_preco_sem_pedido_claro_de_afiliado"
+        motivo: consultantAdvice?.motivoTravaConsultor || "ajuste_consultor_por_trava_dura"
   });
 }
 
