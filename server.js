@@ -948,10 +948,16 @@ function getLeadLifecycleFields(data = {}) {
     }
   }
 
-    // 🔀 ROTA COMERCIAL — REGRA CENTRAL DE PERSISTÊNCIA
-  // Aqui protegemos o Mongo e o dashboard.
-  // Se a rota já veio definida como afiliado ou ambos, ela deve ser respeitada.
-  // Isso evita que o ciclo de vida recalcule tudo como "homologado" por padrão.
+      // 🔀 ROTA COMERCIAL — REGRA CENTRAL DE PERSISTÊNCIA
+  // Explicação simples:
+  // A rota mais recente e explícita deve mandar mais que sinais antigos.
+  //
+  // Exemplo real:
+  // Se antes apareceu Afiliado, mas depois o lead disse "quero Homologado",
+  // rotaComercial = "homologado" precisa ser respeitada.
+  //
+  // Isso não é trava nova.
+  // É só organização da prioridade da rota para o Mongo não contaminar os GPTs.
   const rotaInformada = data.rotaComercial || "";
   const origemConversao = data.origemConversao || "";
 
@@ -968,18 +974,31 @@ function getLeadLifecycleFields(data = {}) {
     "comparacao_homologado_afiliado"
   ].includes(origemConversao);
 
-  if (rotaInformada === "ambos" || origemAmbos) {
+  /*
+    Prioridade correta:
+
+    1. Se rotaComercial veio explicitamente como "homologado", respeitar Homologado.
+       Isso evita que interesseAfiliado antigo puxe o lead de volta para Afiliado.
+
+    2. Se rotaComercial veio explicitamente como "afiliado", respeitar Afiliado.
+
+    3. Se rotaComercial veio explicitamente como "ambos", respeitar Ambos.
+
+    4. Só usar origemConversao/interesseAfiliado se não houver rota explícita atual.
+  */
+  if (rotaInformada === "homologado") {
+    result.rotaComercial = "homologado";
+  } else if (rotaInformada === "afiliado") {
+    result.rotaComercial = "afiliado";
+  } else if (rotaInformada === "ambos" || origemAmbos) {
     result.rotaComercial = "ambos";
   } else if (
-    rotaInformada === "afiliado" ||
     status === "afiliado" ||
     fase === "afiliado" ||
     data.interesseAfiliado === true ||
     origemAfiliado
   ) {
     result.rotaComercial = "afiliado";
-  } else if (rotaInformada === "homologado") {
-    result.rotaComercial = "homologado";
   } else if (status || fase || origemConversao) {
     result.rotaComercial = "homologado";
   }
@@ -3084,6 +3103,188 @@ leadCriticouRepeticao não é campo deste JSON, mas a razão deve indicar corre�
 Regra importante:
 A última preferência clara do lead vale mais do que sinal antigo salvo no funil.
 
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — RECLAMAÇÃO DE REPETIÇÃO NÃO É COMPARAÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Quando o lead reclamar que a SDR está repetindo, se perdendo ou ignorando o histórico, isso NÃO deve ser classificado como pedido de comparação entre programas.
+
+Considere reclamação de repetição, perda de contexto ou irritação leve quando o lead disser algo como:
+- "você está repetitiva";
+- "você está se repetindo";
+- "já falou isso";
+- "já respondi";
+- "já falei";
+- "revisa o histórico";
+- "revisita o histórico";
+- "você precisa revisitar o histórico";
+- "você está se perdendo";
+- "você não está entendendo";
+- "você não leu a conversa";
+- "parece que esqueceu";
+- "de novo isso?";
+- "já falei que quero Homologado";
+- "já falei que é apenas Homologado";
+- "deve estar se perdendo".
+
+Nesses casos, NÃO classifique automaticamente como:
+- wantsBoth = true;
+- wantsAffiliate = true;
+- pedido de comparação;
+- interesse em Afiliado;
+- pedido de link;
+- pedido de novo resumo dos dois programas.
+
+A classificação correta deve considerar:
+- a reclamação é sobre a qualidade da condução;
+- o lead está sinalizando que a SDR não respeitou o histórico;
+- a preferência mais recente do lead deve prevalecer;
+- se ele já escolheu Homologado, manter Homologado;
+- se ele já escolheu Afiliado, manter Afiliado;
+- se ele não escolheu nada, tratar como frustração/contexto ruim, não como escolha de rota.
+
+Se o lead reclamar de repetição e também mencionar Homologado, como:
+- "já falei que apenas Homologados";
+- "eu falei 2";
+- "quero Homologado";
+- "não é Afiliado";
+
+então a classificação correta é:
+wantsHomologado = true
+wantsAffiliate = false
+wantsBoth = false
+positiveRealInterest pode ser true se ele ainda demonstra continuidade
+blockingObjection pode ser true se a irritação for forte
+reason deve mencionar que o lead corrigiu a rota e reclamou da repetição.
+
+Se o lead reclamar de repetição sem escolher programa, a classificação correta é:
+wantsHomologado = false, salvo contexto recente claro de Homologado
+wantsAffiliate = false, salvo contexto recente claro de Afiliado
+wantsBoth = false
+blockingObjection pode ser true se houver frustração forte
+reason deve mencionar perda de contexto/repetição.
+
+Exemplo errado:
+Lead: "Vc está repetitiva... kkkk"
+Classificação errada:
+wantsBoth = true
+wantsAffiliate = true
+
+Exemplo correto:
+Lead: "Vc está repetitiva... kkkk"
+Classificação correta:
+wantsBoth = false
+wantsAffiliate = false
+blockingObjection pode ser true se o contexto indicar incômodo
+reason: "Lead criticou repetição da SDR; não pediu comparação nem Afiliado."
+
+Exemplo errado:
+Lead: "Já falei que apenas homologados"
+Classificação errada:
+wantsBoth = true
+
+Exemplo correto:
+Lead: "Já falei que apenas homologados"
+Classificação correta:
+wantsHomologado = true
+wantsAffiliate = false
+wantsBoth = false
+reason: "Lead reforçou preferência por Homologado e criticou a repetição/erro de rota."
+
+Regra importante:
+Crítica de repetição é sinal de problema na condução, não sinal de interesse em Afiliado.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — RECLAMAÇÃO DE REPETIÇÃO NÃO É COMPARAÇÃO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Quando o lead reclamar que a SDR está repetindo, se perdendo ou ignorando o histórico, isso NÃO deve ser classificado como pedido de comparação entre programas.
+
+Considere reclamação de repetição, perda de contexto ou irritação leve quando o lead disser algo como:
+- "você está repetitiva";
+- "você está se repetindo";
+- "já falou isso";
+- "já respondi";
+- "já falei";
+- "revisa o histórico";
+- "revisita o histórico";
+- "você precisa revisitar o histórico";
+- "você está se perdendo";
+- "você não está entendendo";
+- "você não leu a conversa";
+- "parece que esqueceu";
+- "de novo isso?";
+- "já falei que quero Homologado";
+- "já falei que é apenas Homologado";
+- "deve estar se perdendo".
+
+Nesses casos, NÃO classifique automaticamente como:
+- wantsBoth = true;
+- wantsAffiliate = true;
+- pedido de comparação;
+- interesse em Afiliado;
+- pedido de link;
+- pedido de novo resumo dos dois programas.
+
+A classificação correta deve considerar:
+- a reclamação é sobre a qualidade da condução;
+- o lead está sinalizando que a SDR não respeitou o histórico;
+- a preferência mais recente do lead deve prevalecer;
+- se ele já escolheu Homologado, manter Homologado;
+- se ele já escolheu Afiliado, manter Afiliado;
+- se ele não escolheu nada, tratar como frustração/contexto ruim, não como escolha de rota.
+
+Se o lead reclamar de repetição e também mencionar Homologado, como:
+- "já falei que apenas Homologados";
+- "eu falei 2";
+- "quero Homologado";
+- "não é Afiliado";
+
+então a classificação correta é:
+wantsHomologado = true
+wantsAffiliate = false
+wantsBoth = false
+positiveRealInterest pode ser true se ele ainda demonstra continuidade
+blockingObjection pode ser true se a irritação for forte
+reason deve mencionar que o lead corrigiu a rota e reclamou da repetição.
+
+Se o lead reclamar de repetição sem escolher programa, a classificação correta é:
+wantsHomologado = false, salvo contexto recente claro de Homologado
+wantsAffiliate = false, salvo contexto recente claro de Afiliado
+wantsBoth = false
+blockingObjection pode ser true se houver frustração forte
+reason deve mencionar perda de contexto/repetição.
+
+Exemplo errado:
+Lead: "Vc está repetitiva... kkkk"
+Classificação errada:
+wantsBoth = true
+wantsAffiliate = true
+
+Exemplo correto:
+Lead: "Vc está repetitiva... kkkk"
+Classificação correta:
+wantsBoth = false
+wantsAffiliate = false
+blockingObjection pode ser true se o contexto indicar incômodo
+reason: "Lead criticou repetição da SDR; não pediu comparação nem Afiliado."
+
+Exemplo errado:
+Lead: "Já falei que apenas homologados"
+Classificação errada:
+wantsBoth = true
+
+Exemplo correto:
+Lead: "Já falei que apenas homologados"
+Classificação correta:
+wantsHomologado = true
+wantsAffiliate = false
+wantsBoth = false
+reason: "Lead reforçou preferência por Homologado e criticou a repetição/erro de rota."
+
+Regra importante:
+Crítica de repetição é sinal de problema na condução, não sinal de interesse em Afiliado.
+
 CONTEXTO COMERCIAL:
 A IQG possui dois caminhos:
 1. Parceiro Homologado IQG:
@@ -3258,12 +3459,20 @@ function decideCommercialRouteFromSemanticIntent({
     semanticIntent?.wantsBoth === true ||
     (querAfiliado && querHomologado);
 
-  const temObjecaoBloqueante = semanticIntent?.blockingObjection === true;
+      const temObjecaoBloqueante = semanticIntent?.blockingObjection === true;
   const temObjecaoPreco = semanticIntent?.priceObjection === true;
   const temObjecaoEstoque = semanticIntent?.stockObjection === true;
+  const abandonoOuDesistencia = semanticIntent?.delayOrAbandonment === true;
 
   const pediuHumano = semanticIntent?.humanRequest === true;
 
+  const leadFinalizouPreCadastro =
+    currentLead?.crmEnviado === true ||
+    currentLead?.dadosConfirmadosPeloLead === true ||
+    currentLead?.faseFunil === "crm" ||
+    currentLead?.statusOperacional === "enviado_crm" ||
+    currentLead?.status === "enviado_crm" ||
+    currentLead?.faseQualificacao === "enviado_crm";
   // Caso 1:
   // Lead quer claramente comparar ou entender os dois caminhos.
   // Não joga direto para Afiliado.
@@ -3331,7 +3540,7 @@ function decideCommercialRouteFromSemanticIntent({
     };
   }
 
-  // Caso 6:
+   // Caso 6:
   // Pedido de humano não é Afiliado nem Homologado.
   if (pediuHumano) {
     return {
@@ -3344,9 +3553,34 @@ function decideCommercialRouteFromSemanticIntent({
     };
   }
 
+  // Caso 7:
+  // Lead desistiu ou abandonou o Homologado antes de finalizar pré-cadastro.
+  //
+  // Regra comercial IQG:
+  // Se não finalizou Homologado, a saída correta é oferecer Afiliado.
+  //
+  // Importante:
+  // Isso NÃO significa inventar que o lead quer Afiliado.
+  // Significa apenas conduzir a alternativa comercial correta.
+  if (
+    abandonoOuDesistencia &&
+    !leadFinalizouPreCadastro &&
+    !querAfiliado &&
+    !querHomologado &&
+    !querAmbos
+  ) {
+    return {
+      rota: "afiliado",
+      deveResponderAgora: true,
+      deveCompararProgramas: false,
+      deveManterHomologado: false,
+      origemConversao: "abandono_homologado_saida_afiliado",
+      motivo: "Lead abandonou ou esfriou no Homologado antes de finalizar o pré-cadastro. Pela regra comercial, deve receber Afiliado como alternativa."
+    };
+  }
+
   return fallback;
 }
-
 function normalizeSemanticConfidence(value = "") {
   return String(value || "")
     .toLowerCase()
