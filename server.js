@@ -766,13 +766,22 @@ function isStaleBackendDecisionForCurrentLead({
     mas agora o lead já está em coleta, confirmação, CRM ou Afiliado.
   */
   const decisaoComercialPreColeta =
-    [
-      "sinal_pergunta_taxa",
-      "objecao_taxa",
-      "interesse_forte_bloqueado",
-      "corrigir_conducao_sdr",
-      "continuidade_semantica"
-    ].includes(tipo);
+  [
+    "sinal_pergunta_taxa",
+    "objecao_taxa",
+    "interesse_forte_bloqueado",
+    "corrigir_conducao_sdr",
+    "continuidade_semantica",
+    "oferecer_afiliado_como_alternativa"
+  ].includes(tipo);
+
+const leadVoltouParaHomologado =
+  lead?.rotaComercial === "homologado" &&
+  /\b(homologado|parceiro homologado|quero seguir|quero ser parceiro|como faremos|como faço|pre cadastro|pré cadastro|cadastro)\b/i.test(textoAtual);
+
+if (tipo === "oferecer_afiliado_como_alternativa" && leadVoltouParaHomologado) {
+  return true;
+}
 
   const leadJaPassouDaParteComercial =
     [
@@ -9748,9 +9757,10 @@ function enforceClassifierHardLimits({
 
   // 2) Classificador não pode liberar pré-análise se o backend ainda não permite coleta.
   if (
-    safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
-    !canStartDataCollection(lead || {})
-  ) {
+  safeClassification.intencaoPrincipal === "avancar_pre_analise" &&
+  !canStartDataCollection(lead || {}) &&
+  !hasTaxAcceptedDecisionToCollect(lead || {})
+) {
     return {
       ...safeClassification,
       temperaturaComercial:
@@ -16692,9 +16702,9 @@ async function sendAutomaticFollowupIfStillValid({
 
   const latestHistory = await loadConversation(from);
 
-const messageToSend = followup.getMessage
-  ? followup.getMessage(latestLead, latestHistory)
-  : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  const messageToSend = followup.getMessage
+    ? followup.getMessage(latestLead, latestHistory)
+    : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
 
   if (!messageToSend || !String(messageToSend).trim()) {
     console.log("🔕 Follow-up cancelado: mensagem vazia.", {
@@ -16742,77 +16752,40 @@ function scheduleLeadFollowups(from) {
   state.followupScheduledAtMs = Date.now();
 
   const followups = [
+    /*
+      PRODUÇÃO IQG:
+      - Follow-up de 6 minutos removido.
+      - Follow-up de 6 horas removido.
+      - Retomada começa em 30 minutos.
+      - Todos os follow-ups recebem histórico real.
+    */
     {
-     
       step: 1,
       delay: 30 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 1)
+      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 1, history)
     },
     {
       step: 2,
-      delay: 6 * 60 * 60 * 1000,
-     const followups = [
-  /*
-    PRODUÇÃO IQG:
-    O follow-up de 6 minutos já foi removido.
-    Aqui removemos também o follow-up de 6 horas.
-    A retomada agora começa em 30 minutos e continua em janelas mais longas.
-  */
-  {
-    step: 1,
-    delay: 30 * 60 * 1000,
-    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 1, history)
-  },
-  {
-    step: 2,
-    delay: 12 * 60 * 60 * 1000,
-    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 2, history),
-    businessOnly: true
-  },
-  {
-    step: 3,
-    delay: 18 * 60 * 60 * 1000,
-    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 3, history),
-    businessOnly: true
-  },
-  {
-    step: 4,
-    delay: 24 * 60 * 60 * 1000,
-    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 4, history),
-    businessOnly: true
-  },
-  {
-    step: 5,
-    delay: 30 * 60 * 60 * 1000,
-    getMessage: (lead, history) => getFinalFollowupMessage(lead, history),
-    businessOnly: true,
-    closeAfter: true
-  }
-];,
+      delay: 12 * 60 * 60 * 1000,
+      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 2, history),
       businessOnly: true
     },
     {
       step: 3,
-      delay: 12 * 60 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 3),
+      delay: 18 * 60 * 60 * 1000,
+      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 3, history),
       businessOnly: true
     },
     {
       step: 4,
-      delay: 18 * 60 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 4),
+      delay: 24 * 60 * 60 * 1000,
+      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 4, history),
       businessOnly: true
     },
     {
       step: 5,
-      delay: 24 * 60 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 5),
-      businessOnly: true
-    },
-    {
-      step: 6,
       delay: 30 * 60 * 60 * 1000,
-      getMessage: (lead) => getFinalFollowupMessage(lead),
+      getMessage: (lead, history) => getFinalFollowupMessage(lead, history),
       businessOnly: true,
       closeAfter: true
     }
