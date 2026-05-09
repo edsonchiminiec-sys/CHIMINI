@@ -11722,12 +11722,25 @@ function buildTaxPhaseDecisionPatch({
       shouldSave: true,
       patch: {
         etapas: {
-          ...currentEtapas,
-          investimento: true,
-          taxaPerguntada: true,
-          compromissoPerguntado: true,
-          compromisso: true
-        },
+  ...currentEtapas,
+
+  /*
+    REGRA DE PRODUÇÃO IQG:
+    Se a taxa já foi apresentada e o lead aceitou seguir,
+    o sistema NÃO deve voltar para responsabilidades, estoque ou benefícios.
+
+    Mesmo que alguma etapa tenha ficado false por falha anterior,
+    o aceite pós-taxa consolida as etapas comerciais anteriores.
+  */
+  programa: true,
+  beneficios: true,
+  estoque: true,
+  responsabilidades: true,
+  investimento: true,
+  taxaPerguntada: true,
+  compromissoPerguntado: true,
+  compromisso: true
+},
 
         taxaAlinhada: true,
         taxaModoConversao: false,
@@ -11799,6 +11812,18 @@ function buildTaxPhaseDecisionPatch({
   };
 }
 
+function hasTaxAcceptedDecisionToCollect(lead = {}) {
+  const decision = lead?.ultimaDecisaoBackend || {};
+
+  return Boolean(
+    decision?.tipo === "taxa_aceita_liberar_precadastro" ||
+    decision?.acao === "liberar_pre_cadastro" ||
+    lead?.taxaAceitaEm ||
+    lead?.taxaAceitaAposObjecao === true ||
+    lead?.taxaObjectionResolved === true
+  );
+}
+
 function canStartDataCollection(lead = {}) {
   const etapas = lead?.etapas || {};
 
@@ -11812,22 +11837,6 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
-  /*
-    Se existe pergunta comercial aberta, não coleta ainda.
-    Exemplo:
-    - "tem catálogo?"
-    - "por que tem taxa?"
-    - "tem contrato?"
-    Primeiro responde. Depois, se o lead disser "ok, pode seguir",
-    a coleta pode liberar.
-  */
-  if (lead?.pendenciaPerguntaComercialAberta === true) {
-    return false;
-  }
-
-  /*
-    Se está confirmando/corrigindo dados, não reinicia coleta.
-  */
   if (
     lead?.aguardandoConfirmacaoCampo === true ||
     lead?.aguardandoConfirmacao === true ||
@@ -11840,9 +11849,6 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
-  /*
-    Se já está coletando, pode continuar a coleta.
-  */
   if (
     lead?.faseQualificacao === "coletando_dados" ||
     lead?.faseQualificacao === "dados_parciais" ||
@@ -11851,14 +11857,32 @@ function canStartDataCollection(lead = {}) {
     return true;
   }
 
-  /*
-    Etapas obrigatórias continuam obrigatórias.
-    Aqui NÃO estamos removendo regra comercial.
+  const taxaAceitaParaColeta = hasTaxAcceptedDecisionToCollect(lead);
 
-    A diferença é:
-    - antes o sistema dependia demais de flags rígidas;
-    - agora as flags podem ser consolidadas semanticamente pelo motor da taxa.
+  /*
+    REGRA DE PRODUÇÃO:
+    Se a taxa foi aceita, não deixamos etapa comercial anterior travar a coleta.
+    Isso corrige o caso real:
+    - taxa aceita
+    - compromisso true
+    - interesseReal true
+    - mas responsabilidades false por inconsistência antiga
   */
+  if (
+    taxaAceitaParaColeta &&
+    lead?.taxaAlinhada === true &&
+    lead?.interesseReal === true &&
+    etapas.compromisso === true &&
+    lead?.sinalObjecaoTaxa !== true &&
+    lead?.bloqueioComercialAtivo !== true
+  ) {
+    return true;
+  }
+
+  if (lead?.pendenciaPerguntaComercialAberta === true) {
+    return false;
+  }
+
   const etapasObrigatoriasConduzidas =
     etapas.programa === true &&
     etapas.beneficios === true &&
@@ -11875,20 +11899,11 @@ function canStartDataCollection(lead = {}) {
   const interesseRealConfirmado =
     lead?.interesseReal === true;
 
-  /*
-    Correção central:
-    objeção antiga de taxa NÃO pode bloquear para sempre.
-
-    Se o lead objetou antes, mas depois aceitou:
-    - taxaAceitaEm existe;
-    - taxaAceitaAposObjecao = true;
-    - taxaObjectionResolved = true;
-    - sinalObjecaoTaxa foi limpo.
-  */
   const objecaoTaxaResolvida =
     lead?.taxaObjectionResolved === true ||
     lead?.taxaAceitaAposObjecao === true ||
     Boolean(lead?.taxaAceitaEm) ||
+    hasTaxAcceptedDecisionToCollect(lead) ||
     (
       lead?.taxaAlinhada === true &&
       lead?.interesseReal === true &&
@@ -11918,6 +11933,7 @@ function canStartDataCollection(lead = {}) {
     semObjecaoAtiva
   );
 }
+
 function canAskForRealInterest(lead = {}) {
   const e = lead.etapas || {};
 
@@ -16466,7 +16482,27 @@ function isLeadInProtectedFollowupState(lead = {}) {
   return isHumanOrFinal || isDataFlow;
 }
 
-function getSafeStageFollowupMessage(lead = {}, step = 1) {
+function historyOrLeadIndicatesTaxExplained(lead = {}, historyText = "") {
+  const etapas = lead?.etapas || {};
+
+  return Boolean(
+    etapas.investimento === true ||
+    lead?.taxaAlinhada === true ||
+    /\b(taxa de ades[aã]o|taxa|investimento|r\$ ?1\.990|1990|1\.990|10x de r\$ ?199|10x de 199)\b/i.test(historyText || "")
+  );
+}
+
+function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, historyText = "") {
+  const etapas = lead?.etapas || {};
+
+  return Boolean(
+    etapas.responsabilidades === true ||
+    etapas.compromisso === true ||
+    /\b(respons[aá]vel|responsabilidades|guarda|conserva[cç][aã]o|vendas ativamente|relacionamento ativo|comunica[cç][aã]o correta|depende da sua atua[cç][aã]o)\b/i.test(historyText || "")
+  );
+}
+
+function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
   const prefixo = nome ? `${nome}, ` : "";
 
@@ -16475,6 +16511,14 @@ function getSafeStageFollowupMessage(lead = {}, step = 1) {
   const faseQualificacao = lead.faseQualificacao || "";
   const status = lead.status || "";
   const fase = faseFunil || faseQualificacao || status;
+  const etapas = lead?.etapas || {};
+
+  const historyText = Array.isArray(history)
+    ? history
+        .slice(-25)
+        .map(m => `${m.role || ""}: ${m.content || ""}`)
+        .join("\n")
+    : "";
 
   const isAfiliado =
     rotaComercial === "afiliado" ||
@@ -16501,66 +16545,67 @@ function getSafeStageFollowupMessage(lead = {}, step = 1) {
     return `${prefixo}se quiser, posso te ajudar a escolher o caminho mais adequado: Afiliado, Homologado ou os dois.`;
   }
 
+  const taxaFoiExplicada = historyOrLeadIndicatesTaxExplained(lead, historyText);
+  const responsabilidadesForamExplicadas = historyOrLeadIndicatesResponsibilitiesExplained(lead, historyText);
+
   /*
-    IMPORTANTE:
-    Aqui NÃO estamos positivando lead por palavra.
-    Estamos apenas escolhendo o texto do follow-up conforme a fase atual salva no lead.
-    A decisão de avanço continua sendo do backend/GPTs nas próximas etapas.
+    Regra 1:
+    Se já pode iniciar coleta, o follow-up não volta para taxa,
+    estoque, benefícios ou responsabilidades.
   */
+  if (canStartDataCollection(lead)) {
+    return `${prefixo}podemos seguir com seu pré-cadastro como Parceiro Homologado IQG. Para começar, me envie seu nome completo.`;
+  }
 
-  if (fase === "investimento" || faseQualificacao === "qualificando") {
-    if (step <= 1) {
-      return `${prefixo}fez sentido a explicação sobre o investimento e a taxa de adesão? 😊`;
+  /*
+    Regra 2:
+    Nunca falar de taxa se a taxa ainda não foi realmente explicada.
+    Isso corrige o follow-up contaminado.
+  */
+  if (!taxaFoiExplicada) {
+    if (faseFunil === "estoque" || etapas.estoque === true) {
+      return `${prefixo}ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?`;
     }
 
-    return `${prefixo}ficou alguma dúvida sobre o investimento, parcelamento ou sobre o pagamento acontecer somente após análise interna e contrato?`;
-  }
-
-  if (fase === "compromisso") {
-    if (step <= 1) {
-      return `${prefixo}ficou claro que o resultado depende da atuação do parceiro nas vendas? 😊`;
+    if (etapas.beneficios === true) {
+      return `${prefixo}ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?`;
     }
 
-    return `${prefixo}se essa parte do compromisso de atuação estiver clara, podemos seguir para o próximo passo.`;
-  }
-
-  if (fase === "responsabilidades") {
-    if (step <= 1) {
-      return `${prefixo}ficou clara essa parte das responsabilidades do parceiro com o estoque e as vendas? 😊`;
+    if (etapas.programa === true) {
+      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?`;
     }
 
-    return `${prefixo}se responsabilidades e atuação estiverem claras, posso te explicar o próximo ponto do programa.`;
+    return `${prefixo}vi que você demonstrou interesse no Programa Parceiro Homologado IQG. Quer que eu te explique de forma simples como funciona?`;
   }
 
-  if (fase === "estoque") {
-    if (step <= 1) {
-      return `${prefixo}ficou claro como funciona o estoque em comodato? 😊`;
-    }
-
-    return `${prefixo}o ponto principal é que o estoque é cedido em comodato e continua sendo da IQG até a venda. Ficou alguma dúvida sobre isso?`;
+  /*
+    Regra 3:
+    Se a taxa foi explicada, mas ainda não foi aceita,
+    retomar de forma consultiva, sem repetir o texto inteiro.
+  */
+  if (taxaFoiExplicada && lead?.taxaAlinhada !== true) {
+    return `${prefixo}pensando no que conversamos sobre o investimento, faz sentido eu te ajudar a avaliar se o modelo de Parceiro Homologado se encaixa para você agora?`;
   }
 
-  if (fase === "beneficios" || faseQualificacao === "morno") {
-    if (step <= 1) {
-      return `${prefixo}ficou alguma dúvida sobre os benefícios ou sobre o suporte que a IQG oferece ao parceiro? 😊`;
-    }
-
-    return `${prefixo}quer que eu te explique agora como funciona o estoque inicial em comodato?`;
+  /*
+    Regra 4:
+    Se taxa e responsabilidades já foram explicadas,
+    chamar para pré-análise, sem repetir tudo.
+  */
+  if (taxaFoiExplicada && responsabilidadesForamExplicadas && lead?.interesseReal !== true) {
+    return `${prefixo}pelo que conversamos, você já entendeu a estrutura do projeto. Quer seguir para a pré-análise do Parceiro Homologado?`;
   }
 
-  if (fase === "esclarecimento" || fase === "inicio" || faseQualificacao === "novo" || status === "novo") {
-    if (step <= 1) {
-      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG? 😊`;
-    }
-
-    return `${prefixo}quer que eu te explique de forma simples como funciona na prática para começar como Parceiro Homologado?`;
+  /*
+    Regra 5:
+    Se ainda faltar responsabilidade de verdade, perguntar curto.
+    Mas sem textão.
+  */
+  if (!responsabilidadesForamExplicadas) {
+    return `${prefixo}ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?`;
   }
 
-  if (step <= 1) {
-    return `${prefixo}ficou alguma dúvida sobre o Programa Parceiro Homologado IQG? 😊`;
-  }
-
-  return `${prefixo}posso te ajudar com mais algum ponto sobre o programa?`;
+  return `${prefixo}quer seguir com o próximo passo para avaliarmos seu pré-cadastro como Parceiro Homologado IQG?`;
 }
 
 async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {}) {
@@ -16645,9 +16690,11 @@ async function sendAutomaticFollowupIfStillValid({
     return false;
   }
 
-  const messageToSend = followup.getMessage
-    ? followup.getMessage(latestLead)
-    : getSafeStageFollowupMessage(latestLead, followup.step || 1);
+  const latestHistory = await loadConversation(from);
+
+const messageToSend = followup.getMessage
+  ? followup.getMessage(latestLead, latestHistory)
+  : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
 
   if (!messageToSend || !String(messageToSend).trim()) {
     console.log("🔕 Follow-up cancelado: mensagem vazia.", {
@@ -16696,41 +16743,74 @@ function scheduleLeadFollowups(from) {
 
   const followups = [
     {
+     
       step: 1,
-      delay: 6 * 60 * 1000,
+      delay: 30 * 60 * 1000,
       getMessage: (lead) => getSafeStageFollowupMessage(lead, 1)
     },
     {
       step: 2,
-      delay: 30 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 2)
+      delay: 6 * 60 * 60 * 1000,
+     const followups = [
+  /*
+    PRODUÇÃO IQG:
+    O follow-up de 6 minutos já foi removido.
+    Aqui removemos também o follow-up de 6 horas.
+    A retomada agora começa em 30 minutos e continua em janelas mais longas.
+  */
+  {
+    step: 1,
+    delay: 30 * 60 * 1000,
+    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 1, history)
+  },
+  {
+    step: 2,
+    delay: 12 * 60 * 60 * 1000,
+    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 2, history),
+    businessOnly: true
+  },
+  {
+    step: 3,
+    delay: 18 * 60 * 60 * 1000,
+    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 3, history),
+    businessOnly: true
+  },
+  {
+    step: 4,
+    delay: 24 * 60 * 60 * 1000,
+    getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 4, history),
+    businessOnly: true
+  },
+  {
+    step: 5,
+    delay: 30 * 60 * 60 * 1000,
+    getMessage: (lead, history) => getFinalFollowupMessage(lead, history),
+    businessOnly: true,
+    closeAfter: true
+  }
+];,
+      businessOnly: true
     },
     {
       step: 3,
-      delay: 6 * 60 * 60 * 1000,
+      delay: 12 * 60 * 60 * 1000,
       getMessage: (lead) => getSafeStageFollowupMessage(lead, 3),
       businessOnly: true
     },
     {
       step: 4,
-      delay: 12 * 60 * 60 * 1000,
+      delay: 18 * 60 * 60 * 1000,
       getMessage: (lead) => getSafeStageFollowupMessage(lead, 4),
       businessOnly: true
     },
     {
       step: 5,
-      delay: 18 * 60 * 60 * 1000,
+      delay: 24 * 60 * 60 * 1000,
       getMessage: (lead) => getSafeStageFollowupMessage(lead, 5),
       businessOnly: true
     },
     {
       step: 6,
-      delay: 24 * 60 * 60 * 1000,
-      getMessage: (lead) => getSafeStageFollowupMessage(lead, 6),
-      businessOnly: true
-    },
-    {
-      step: 7,
       delay: 30 * 60 * 60 * 1000,
       getMessage: (lead) => getFinalFollowupMessage(lead),
       businessOnly: true,
@@ -19267,6 +19347,46 @@ var turnPolicy = buildTurnPolicy({
   commercialRouteDecision
 });
 
+if (hasTaxAcceptedDecisionToCollect(currentLead || {}) && canStartDataCollection(currentLead || {})) {
+  turnPolicy = {
+    ...(turnPolicy || {}),
+    modo: "coleta_dados_liberada",
+    ofertaPermitida: "homologado",
+    podeFalarAfiliado: false,
+    podeMandarLinkAfiliado: false,
+    podeCompararProgramas: false,
+    podeFalarTaxa: false,
+    podePedirDados: true,
+    podeMarcarBeneficiosEstoque: false,
+    estrategiaObrigatoria: "iniciar_coleta",
+    proximaMelhorAcao: "Iniciar pré-cadastro/coleta agora, pedindo somente o nome completo.",
+    cuidadoPrincipal: "Não repetir taxa, benefícios, estoque ou responsabilidades. Não pedir confirmação intermediária. Pedir apenas o nome completo.",
+    motivo: "Lead aceitou seguir após taxa explicada. Coleta liberada pelo backend."
+  };
+
+  backendStrategicGuidance.push({
+    tipo: "coleta_liberada_pos_taxa",
+    prioridade: "critica",
+    orientacaoParaPreSdr:
+      [
+        "A coleta está liberada pelo backend.",
+        "A SDR deve parar de vender.",
+        "Não repetir taxa.",
+        "Não repetir responsabilidades.",
+        "Não fazer pergunta intermediária como 'você está pronto?'.",
+        "Próxima resposta obrigatória: pedir somente o nome completo."
+      ].join("\n")
+  });
+
+  console.log("✅ Política do turno sobrescrita para coleta pós-taxa:", {
+    user: from,
+    podeIniciarColeta: canStartDataCollection(currentLead || {}),
+    ultimaDecisaoBackend: currentLead?.ultimaDecisaoBackend?.tipo || "",
+    faseFunil: currentLead?.faseFunil || "",
+    etapas: currentLead?.etapas || {}
+  });
+}
+   
 console.log("🧭 Política do Turno definida:", {
   user: from,
   modo: turnPolicy?.modo || "nao_definido",
@@ -20094,11 +20214,15 @@ if (
     ultimaMensagemLead: text
   });
 }
+
+     const coletaLiberadaPorTaxaAceita =
+  hasTaxAcceptedDecisionToCollect(currentLead || {}) &&
+  canStartDataCollection(currentLead || {}) === true;
      
 const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
-if (mencionouPreAnalise && !podeIniciarColeta) {
+if (mencionouPreAnalise && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
   sdrReviewFindings.push({
     tipo: "pre_analise_prematura",
     prioridade: "critica",
@@ -20129,7 +20253,7 @@ if (mencionouPreAnalise && !podeIniciarColeta) {
 // A SDR pode ter tentado iniciar coleta antes da hora.
 // O backend NÃO substitui mais a resposta por texto fixo.
 // Ele pede revisão da própria SDR antes do envio.
-if (startedDataCollection && !podeIniciarColeta) {
+if (startedDataCollection && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
   const jaEnviouFolder = Boolean(currentLead?.sentFiles?.folder);
 
   const ultimaRespostaBot = [...history]
