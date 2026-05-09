@@ -14859,16 +14859,25 @@ function isLikelyPureDataAnswer(text = "", currentLead = {}) {
     Isso NÃO é nome.
     É conversa comercial.
   */
-  const looksLikeCommercialConversation =
-    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|pdf|material|manual|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto|pix|cartao|cartão|adesao|adesão)\b/i.test(cleanText) ||
+ const looksLikeCommercialConversation =
+    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|pdf|material|manual|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto|pix|cartao|cartão|adesao|adesão|cnpj|empresa|mei|ponto fisico|ponto físico|loja|loja fisica|loja física|endereco comercial|endereço comercial|nao tenho empresa|não tenho empresa|nao tenho cnpj|não tenho cnpj)\b/i.test(cleanText) ||
     cleanText.length > 80;
-
+   
+   
   if (
     currentLead?.campoEsperado === "nome" &&
     looksLikeCommercialConversation
   ) {
     return false;
   }
+
+   // Segurança extra: frases de negação/explicação nunca podem virar nome.
+if (
+  currentLead?.campoEsperado === "nome" &&
+  /\b(eu nao tenho|eu não tenho|nao tenho|não tenho|preciso entender|nao entendi|não entendi|duvida|dúvida|cnpj|empresa|ponto fisico|ponto físico|loja)\b/i.test(cleanText)
+) {
+  return false;
+}
    
   if (isPositiveConfirmation(cleanText) || isNegativeConfirmation(cleanText)) {
     return true;
@@ -17640,6 +17649,21 @@ if (noMeansNoDoubt) {
 // O backend registra sinais, mas não responde comercialmente pelo lead.
 let backendStrategicGuidance = [];
 let dataFlowQuestionAlreadyGuided = false;
+
+     // 🧭 REGRA COMERCIAL PRIORITÁRIA — CNPJ / empresa / ponto físico
+if (leadPerguntouSobreCnpjEmpresaOuPontoFisico(text)) {
+  backendStrategicGuidance.push({
+    tipo: "regra_comercial_cnpj_ponto_fisico",
+    prioridade: "critica",
+    motivo: "Lead perguntou ou demonstrou dúvida sobre CNPJ, empresa, loja ou ponto físico.",
+    orientacaoParaPreSdr: buildOrientacaoCnpjPontoFisicoHomologado()
+  });
+
+  console.log("🏢 Regra CNPJ/Ponto físico enviada ao Pré-SDR:", {
+    user: from,
+    ultimaMensagemLead: text
+  });
+}
      
 // 🧠 ROTEADOR SEMÂNTICO DA COLETA / CONFIRMAÇÃO
 // Objetivo:
@@ -17703,28 +17727,42 @@ if (dataFlowSemanticStateCheck) {
       ].join("\n")
   });
 
-  await saveLeadProfile(from, {
-    fluxoPausadoPorPergunta: true,
-    ultimaPerguntaDuranteColeta: text,
-    tipoMensagemDuranteColeta: dataFlowRouter?.tipoMensagem || "indefinido",
-    campoRetomadaColeta,
-    ultimaMensagem: text,
-    ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "pergunta_durante_coleta",
-      motivo: dataFlowRouter?.motivo || "lead_fez_pergunta_durante_coleta",
-      acao: "orientar_pre_sdr_sem_responder_direto",
-      mensagemLead: text,
-      detalhes: {
-        faseAtual: currentLead?.faseQualificacao || "",
-        faseFunil: currentLead?.faseFunil || "",
-        campoEsperado: currentLead?.campoEsperado || "",
-        campoPendente: currentLead?.campoPendente || "",
-        tipoMensagem: dataFlowRouter?.tipoMensagem || "indefinido",
-        deveResponderAntesDeColetar: dataFlowRouter?.deveResponderAntesDeColetar === true,
-        deveRetomarColetaDepois: true
+ const leadMostrouConfusaoForteNaColeta =
+  /\b(nao vou passar nenhum dado|não vou passar nenhum dado|nao vou passar dados|não vou passar dados|nao entendi|não entendi|ue|ué|preciso entender melhor|minha duvida era|minha dúvida era|preciso ou nao|preciso ou não|preciso ter cnpj|preciso ter um cnpj|nao tenho empresa|não tenho empresa|nao tenho cnpj|não tenho cnpj)\b/i.test(text || "");
+
+await saveLeadProfile(from, {
+  fluxoPausadoPorPergunta: true,
+  ultimaPerguntaDuranteColeta: text,
+  campoRetomadaColeta,
+  ultimaMensagem: text,
+
+  ...(leadMostrouConfusaoForteNaColeta
+    ? {
+        necessitaAtencaoHumanaDashboard: true,
+        motivoAtencaoHumanaDashboard:
+          "Lead demonstrou confusão forte durante coleta e recusou/adiou envio de dados até entender melhor.",
+        prioridadeAtencaoHumanaDashboard: "alta",
+        atencaoHumanaDashboardEm: new Date()
       }
-    })
-  });
+    : {}),
+
+  ultimaDecisaoBackend: buildBackendDecision({
+    tipo: "pergunta_durante_coleta",
+    motivo: dataFlowRouter?.motivo || "Lead fez pergunta, objeção ou pedido durante coleta/confirmação de dados.",
+    acao: "orientar_pre_sdr_sem_responder_direto",
+    mensagemLead: text,
+    detalhes: {
+      faseAtual: currentLead?.faseQualificacao || "",
+      faseFunil: currentLead?.faseFunil || "",
+      campoEsperado: currentLead?.campoEsperado || "",
+      campoPendente: currentLead?.campoPendente || "",
+      tipoMensagem: dataFlowRouter?.tipoMensagem || "indefinido",
+      deveResponderAntesDeColetar: true,
+      deveRetomarColetaDepois: true,
+      leadMostrouConfusaoForteNaColeta
+    }
+  })
+});
 
   currentLead = await loadLeadProfile(from);
 
@@ -18252,23 +18290,38 @@ if (
       ].join("\n")
   });
 
-  await saveLeadProfile(from, {
-    fluxoPausadoPorPergunta: true,
-    ultimaPerguntaDuranteColeta: text,
-    campoRetomadaColeta,
-    ultimaMensagem: text,
-    ultimaDecisaoBackend: buildBackendDecision({
-      tipo: "pergunta_durante_coleta",
-      motivo: "lead_fez_pergunta_durante_coleta",
-      acao: "orientar_pre_sdr_sem_responder_direto",
-      mensagemLead: text,
-      detalhes: {
-        campoEsperado: currentLead?.campoEsperado || "",
-        campoPendente: currentLead?.campoPendente || "",
-        deveRetomarColetaDepois: true
+ const leadMostrouConfusaoForteNaColetaFallback =
+  /\b(nao vou passar nenhum dado|não vou passar nenhum dado|nao vou passar dados|não vou passar dados|nao entendi|não entendi|ue|ué|preciso entender melhor|minha duvida era|minha dúvida era|preciso ou nao|preciso ou não|preciso ter cnpj|preciso ter um cnpj|nao tenho empresa|não tenho empresa|nao tenho cnpj|não tenho cnpj)\b/i.test(text || "");
+
+await saveLeadProfile(from, {
+  fluxoPausadoPorPergunta: true,
+  ultimaPerguntaDuranteColeta: text,
+  campoRetomadaColeta,
+  ultimaMensagem: text,
+
+  ...(leadMostrouConfusaoForteNaColetaFallback
+    ? {
+        necessitaAtencaoHumanaDashboard: true,
+        motivoAtencaoHumanaDashboard:
+          "Lead demonstrou confusão forte durante coleta e recusou/adiou envio de dados até entender melhor.",
+        prioridadeAtencaoHumanaDashboard: "alta",
+        atencaoHumanaDashboardEm: new Date()
       }
-    })
-  });
+    : {}),
+
+  ultimaDecisaoBackend: buildBackendDecision({
+    tipo: "pergunta_real_durante_coleta",
+    motivo: "lead_fez_pergunta_real_durante_coleta",
+    acao: "orientar_pre_sdr_sem_responder_direto",
+    mensagemLead: text,
+    detalhes: {
+      campoEsperado: currentLead?.campoEsperado || "",
+      campoPendente: currentLead?.campoPendente || "",
+      deveRetomarColetaDepois: true,
+      leadMostrouConfusaoForteNaColeta: leadMostrouConfusaoForteNaColetaFallback
+    }
+  })
+});
 
   currentLead = await loadLeadProfile(from);
 
@@ -19493,13 +19546,53 @@ Vou deixar isso registrado no sistema da IQG para verificação interna. Essa et
 
   return;
 }
+
+// 🛡️ COLETA — proteção leve contra pergunta comercial virar dado.
+// Não é uma trava nova do funil.
+// É só impedir que o mesmo turno seja tratado como "dado cadastral"
+// quando o roteador já identificou pergunta/objeção comercial.
+const deveBloquearExtracaoDeDadosNesteTurno =
+  dataFlowQuestionAlreadyGuided === true ||
+  (
+    isDataFlowState(currentLead || {}) &&
+    !isLikelyPureDataAnswer(text, currentLead || {})
+  );
+
+if (deveBloquearExtracaoDeDadosNesteTurno) {
+  console.log("🛡️ Extração cadastral bloqueada neste turno por pergunta comercial/mensagem mista:", {
+    user: from,
+    ultimaMensagemLead: text,
+    faseAtual: currentLead?.faseQualificacao || "-",
+    campoEsperado: currentLead?.campoEsperado || "-",
+    dataFlowQuestionAlreadyGuided
+  });
+
+  // Se por algum erro anterior o nome ficou com frase claramente inválida,
+  // limpamos só o nome. Não mexe em CPF, telefone, cidade, estado ou CRM.
+  if (
+    currentLead?.campoEsperado === "nome" &&
+    currentLead?.nome &&
+    !isLikelyPureDataAnswer(currentLead.nome, { campoEsperado: "nome" })
+  ) {
+    await saveLeadProfile(from, {
+      nome: "",
+      campoEsperado: "nome",
+      faseQualificacao: currentLead?.faseQualificacao || "dados_parciais",
+      status: currentLead?.status || "dados_parciais",
+      ultimaLimpezaNomeInvalidoEm: new Date(),
+      ultimaLimpezaNomeInvalidoMotivo: "nome_parecia_frase_comercial_ou_duvida"
+    });
+  }
+}
      
 if (
+  !deveBloquearExtracaoDeDadosNesteTurno &&
   hasAllRequiredLeadFields(extractedData) &&
   !currentLead?.dadosConfirmadosPeloLead &&
   !currentLead?.aguardandoConfirmacaoCampo &&
   !currentLead?.aguardandoConfirmacao
 ) {
+   
   await saveLeadProfile(from, {
     ...extractedData,
     cpf: formatCPF(extractedData.cpf),
@@ -19539,7 +19632,55 @@ if (
   currentLead?.faseQualificacao === "dados_parciais" ||
   currentLead?.faseQualificacao === "aguardando_dados";
 
+     // ✅ Confirmação específica do nome antes de salvar definitivo.
+// Isso evita que frases como "eu não tenho empresa" virem nome.
+const shouldConfirmNameBeforeSaving =
+  !deveBloquearExtracaoDeDadosNesteTurno &&
+  shouldAskMissingFields &&
+  currentLead?.campoEsperado === "nome" &&
+  extractedData?.nome &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !currentLead?.aguardandoConfirmacao &&
+  isLikelyPureDataAnswer(extractedData.nome, { campoEsperado: "nome" });
+
+if (shouldConfirmNameBeforeSaving) {
+  const nomePendente = String(extractedData.nome || "").trim();
+
+  await saveLeadProfile(from, {
+    campoPendente: "nome",
+    valorPendente: nomePendente,
+    campoEsperado: "nome",
+    aguardandoConfirmacaoCampo: true,
+    aguardandoConfirmacao: false,
+    dadosConfirmadosPeloLead: false,
+    faseQualificacao: "aguardando_confirmacao_campo",
+    status: "aguardando_confirmacao_campo",
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "confirmacao_campo",
+      motivo: "nome_detectado_precisa_confirmacao_antes_de_salvar",
+      acao: "confirmar_nome",
+      mensagemLead: text,
+      detalhes: {
+        campoPendente: "nome",
+        valorPendente: nomePendente
+      }
+    })
+  });
+
+  const msg = `Entendi seu nome como: ${nomePendente}\n\nEstá correto?`;
+
+  await sendWhatsAppMessage(from, msg);
+  await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
+
+  if (messageId) {
+    markMessageAsProcessed(messageId);
+  }
+
+  return;
+}
+
 if (
+  !deveBloquearExtracaoDeDadosNesteTurno &&
   shouldAskMissingFields &&
   missingFields.length > 0 &&
   Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key)) &&
@@ -23193,6 +23334,33 @@ const kpiCardsHtml = [
     lead.statusOperacional === "em_atendimento" ||
     lead.status === "em_atendimento" ||
     lead.faseQualificacao === "em_atendimento";
+
+       const supervisorRiscoPerda =
+  lead?.supervisor?.riscoPerda ||
+  lead?.supervisorResumo?.riscoPerda ||
+  "";
+
+const supervisorPrioridadeHumana =
+  lead?.supervisor?.prioridadeHumana ||
+  lead?.supervisorResumo?.prioridadeHumana ||
+  "";
+
+const supervisorNecessitaHumano =
+  lead?.supervisor?.necessitaHumano === true ||
+  lead?.supervisorResumo?.necessitaHumano === true;
+
+const precisaAtencaoHumana =
+  humanoAtivo ||
+  lead.necessitaAtencaoHumanaDashboard === true ||
+  supervisorNecessitaHumano ||
+  ["alto", "critico", "crítico"].includes(String(supervisorRiscoPerda || "").toLowerCase()) ||
+  ["alta", "critica", "crítica"].includes(String(supervisorPrioridadeHumana || "").toLowerCase());
+
+const humanoHtml = humanoAtivo
+  ? `<span class="badge em_atendimento">em atendimento</span>`
+  : precisaAtencaoHumana
+    ? `<span class="badge danger" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`
+    : `<span class="badge ativo">não</span>`;
 
   return `
     <tr>
