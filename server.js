@@ -22694,8 +22694,7 @@ const kpiCardsHtml = [
         <style>
 /* =========================================================
    DASHBOARD IQG — VISUAL MODERNO COM KPIS
-   Cola este bloco no FINAL do <style> do /dashboard,
-   imediatamente antes de </style>
+   Bloco principal de estilos do dashboard.
 ========================================================= */
 
 :root {
