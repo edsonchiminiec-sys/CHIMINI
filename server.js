@@ -9,6 +9,151 @@ dotenv.config();
 const app = express();
 
 app.use(express.json());
+
+/* =========================
+   PWA DASHBOARD IQG
+   Permite instalar o dashboard como app/atalho no celular.
+========================= */
+
+const DASHBOARD_APP_NAME = "CRM IQG";
+const DASHBOARD_APP_SHORT_NAME = "CRM IQG";
+
+function getDashboardPasswordFromRequest(req) {
+  return String(
+    req.query?.senha ||
+    process.env.DASHBOARD_PASSWORD ||
+    "iqg123"
+  ).trim();
+}
+
+app.get("/iqg-icon.svg", (req, res) => {
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="52%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0f172a" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="116" fill="#f8fafc"/>
+  <circle cx="256" cy="256" r="196" fill="url(#bg)" filter="url(#shadow)"/>
+  <text x="256" y="250" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="104" font-weight="900" fill="#ffffff" letter-spacing="-6">
+    IQG
+  </text>
+  <text x="256" y="310" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#dbeafe" letter-spacing="3">
+    CRM
+  </text>
+</svg>`);
+});
+
+app.get("/manifest.webmanifest", (req, res) => {
+  const senha = encodeURIComponent(getDashboardPasswordFromRequest(req));
+
+  const manifest = {
+    name: DASHBOARD_APP_NAME,
+    short_name: DASHBOARD_APP_SHORT_NAME,
+    description: "Dashboard CRM IQG para acompanhamento de leads, funil, KPIs e Multi C-Level GPT.",
+    start_url: `/dashboard?senha=${senha}`,
+    scope: "/",
+    display: "standalone",
+    orientation: "portrait-primary",
+    background_color: "#f6f8fb",
+    theme_color: "#0f172a",
+    icons: [
+      {
+        src: "/iqg-icon.svg",
+        sizes: "512x512",
+        type: "image/svg+xml",
+        purpose: "any maskable"
+      }
+    ],
+    shortcuts: [
+      {
+        name: "Abrir Dashboard",
+        short_name: "Dashboard",
+        description: "Abrir o CRM IQG",
+        url: `/dashboard?senha=${senha}`,
+        icons: [
+          {
+            src: "/iqg-icon.svg",
+            sizes: "512x512",
+            type: "image/svg+xml"
+          }
+        ]
+      }
+    ]
+  };
+
+  res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(JSON.stringify(manifest, null, 2));
+});
+
+app.get("/sw.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+
+  res.send(`
+const CACHE_NAME = "iqg-dashboard-pwa-v1";
+const STATIC_ASSETS = [
+  "/iqg-icon.svg"
+];
+
+self.addEventListener("install", event => {
+  self.skipWaiting();
+
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(STATIC_ASSETS))
+      .catch(() => null)
+  );
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key !== CACHE_NAME)
+          .map(key => caches.delete(key))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", event => {
+  const requestUrl = new URL(event.request.url);
+
+  // Não cachear dashboard, leads, rotas POST, APIs ou dados sensíveis.
+  if (
+    event.request.method !== "GET" ||
+    requestUrl.pathname.startsWith("/dashboard") ||
+    requestUrl.pathname.startsWith("/lead/") ||
+    requestUrl.pathname.startsWith("/conversation/") ||
+    requestUrl.pathname.startsWith("/webhook")
+  ) {
+    return;
+  }
+
+  if (requestUrl.pathname === "/iqg-icon.svg") {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        return cached || fetch(event.request);
+      })
+    );
+  }
+});
+`);
+});
+
 const client = new MongoClient(process.env.MONGODB_URI);
 let db;
 
@@ -23389,8 +23534,18 @@ const humanoHtml = humanoAtivo
       <html lang="pt-BR">
       <head>
         <meta charset="UTF-8" />
-        <title>CRM IQG</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+       <title>CRM IQG</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<link rel="manifest" href="/manifest.webmanifest?senha=${encodeURIComponent(String(req.query.senha || ""))}">
+<link rel="icon" href="/iqg-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/iqg-icon.svg">
+
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CRM IQG">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
         <style>
 /* =========================================================
@@ -24276,6 +24431,13 @@ tr:hover td {
 </style>
 
 <script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(error => {
+        console.log("PWA Service Worker não registrado:", error);
+      });
+    });
+  }
   window.cLevelWorking = false;
 
   const dashboardSenha = ${JSON.stringify(String(req.query.senha || ""))};
