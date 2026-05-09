@@ -6041,6 +6041,7 @@ function containsInternalContextLeak(text = "") {
     "supervisor",
     "classificador",
     "consultor assistente",
+    "consultor interno",
     "contexto estrategico",
     "contexto interno",
     "analise dos agentes",
@@ -6054,10 +6055,148 @@ function containsInternalContextLeak(text = "") {
     "necessita humano",
     "qualidade da conducao",
     "classificacao do lead",
-    "diagnostico interno"
+    "diagnostico interno",
+    "backend",
+    "trava",
+    "auditoria",
+    "revisao obrigatoria",
+    "guardfindings",
+    "problemas detectados",
+    "resposta final",
+    "primeira resposta",
+    "reescrever",
+    "json",
+    "system prompt"
   ];
 
-  return forbiddenTerms.some(term => normalized.includes(term));
+  const metaReviewPatterns = [
+    /\bessa resposta\b/i,
+    /\besta resposta\b/i,
+    /\bessa mensagem\b/i,
+    /\besta mensagem\b/i,
+    /\bessa abordagem\b/i,
+    /\besta abordagem\b/i,
+    /\bmantem o foco\b/i,
+    /\bmantém o foco\b/i,
+    /\bconduz o lead\b/i,
+    /\blead para a proxima etapa\b/i,
+    /\blead para a próxima etapa\b/i,
+    /\bsem pular fases\b/i,
+    /\bsem pular etapas\b/i,
+    /\brespeitando o funil\b/i,
+    /\bfase atual do funil\b/i,
+    /\bproxima etapa sem\b/i,
+    /\bpróxima etapa sem\b/i,
+    /\bprograma parceiro homologado e conduz\b/i,
+    /\ba resposta acima\b/i,
+    /\bo texto acima\b/i,
+    /\bmensagem acima\b/i
+  ];
+
+  const hasForbiddenTerm = forbiddenTerms.some(term => normalized.includes(term));
+
+  const hasMetaReviewPattern = metaReviewPatterns.some(pattern => pattern.test(text || ""));
+
+  /*
+    Separador típico de resposta + justificativa interna:
+    mensagem comercial
+    ---
+    explicação sobre por que a resposta está correta
+  */
+  const hasSuspiciousSeparator =
+    /\n\s*---+\s*\n/i.test(text || "") &&
+    /\b(resposta|mensagem|abordagem|lead|funil|fase|etapa|foco|conduz|conduzir)\b/i.test(text || "");
+
+  return Boolean(hasForbiddenTerm || hasMetaReviewPattern || hasSuspiciousSeparator);
+}
+
+function stripInternalReviewLeakFromReply(text = "") {
+  let clean = String(text || "").trim();
+
+  if (!clean) return clean;
+
+  /*
+    Caso real:
+    resposta comercial
+    ---
+    Essa resposta mantém o foco...
+  */
+  clean = clean.replace(
+    /\n\s*---+\s*\n[\s\S]*?(essa resposta|esta resposta|essa mensagem|esta mensagem|essa abordagem|esta abordagem|mant[eé]m o foco|conduz o lead|sem pular fases|sem pular etapas|respeitando o funil)[\s\S]*$/i,
+    ""
+  ).trim();
+
+  /*
+    Se a IA colocou só a justificativa no final, sem separador.
+  */
+  clean = clean.replace(
+    /\n+[\s\S]*?(essa resposta|esta resposta|essa mensagem|esta mensagem|essa abordagem|esta abordagem)\s+[\s\S]*?(mant[eé]m|conduz|respeita|evita|garante)\s+[\s\S]*$/i,
+    ""
+  ).trim();
+
+  /*
+    Remove linhas soltas de meta-comentário.
+  */
+  const lines = clean.split("\n");
+
+  const safeLines = lines.filter(line => {
+    const l = String(line || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
+
+    if (!l) return true;
+
+    const metaLine =
+      l.startsWith("essa resposta") ||
+      l.startsWith("esta resposta") ||
+      l.startsWith("essa mensagem") ||
+      l.startsWith("esta mensagem") ||
+      l.startsWith("essa abordagem") ||
+      l.startsWith("esta abordagem") ||
+      l.includes("mantem o foco") ||
+      l.includes("conduz o lead") ||
+      l.includes("sem pular fases") ||
+      l.includes("sem pular etapas") ||
+      l.includes("respeitando o funil") ||
+      l.includes("fase atual do funil");
+
+    return !metaLine;
+  });
+
+  return safeLines.join("\n").trim();
+}
+
+function enforceNoInternalLeakBeforeSend(text = "") {
+  let clean = stripInternalReviewLeakFromReply(text);
+
+  if (!containsInternalContextLeak(clean)) {
+    return clean;
+  }
+
+  /*
+    Última barreira:
+    Se ainda parece vazamento, não deixa a mensagem vazar.
+    Resposta segura, genérica e comercial.
+  */
+  return "Perfeito 😊 Vou seguir de forma simples e objetiva.\n\nQuer que eu continue te explicando o próximo ponto do Programa Parceiro Homologado?";
+}
+
+function debugLeakGuardTest() {
+  const sample = `Agora, vamos seguir para os próximos pontos que precisamos alinhar antes da pré-análise. Quer que eu te explique os benefícios do programa?
+
+---
+
+Essa resposta mantém o foco no Programa Parceiro Homologado e conduz o lead para a próxima etapa sem pular fases.`;
+
+  const cleaned = enforceNoInternalLeakBeforeSend(sample);
+
+  console.log("🧪 Teste barreira anti-vazamento:", {
+    contemVazamentoAntes: containsInternalContextLeak(sample),
+    contemVazamentoDepois: containsInternalContextLeak(cleaned),
+    resultado: cleaned
+  });
 }
 
 function enforceConsultantDirectionOnFinalReply({
@@ -6679,6 +6818,13 @@ Sua tarefa agora é REESCREVER a resposta final ao lead, corrigindo os problemas
 Regras:
 - Não mencione backend, trava, revisão, auditoria, supervisor, classificador, consultor interno ou agentes.
 - Não diga que está corrigindo resposta.
+- Responda SOMENTE com a mensagem final que será enviada ao lead.
+- Não coloque explicação depois da mensagem.
+- Não coloque justificativa sobre por que a resposta está correta.
+- Não use separador "---".
+- Não escreva frases como "Essa resposta mantém...", "Esta mensagem conduz..." ou "A abordagem evita...".
+- Não explique estratégia, funil, fase, foco, condução ou motivo da resposta.
+- Tudo que você escrever será enviado diretamente no WhatsApp do lead.
 - Responda naturalmente ao lead.
 - Responda primeiro a última mensagem real do lead.
 - Siga a orientação do Consultor Pré-SDR.
@@ -20848,7 +20994,29 @@ const syncedFinalReply = syncActionsFromFinalReply({
      
 respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 
-console.log("📎 Actions sincronizados com a resposta final:", {
+/*
+  🛡️ BARREIRA FINAL ANTI-VAZAMENTO
+  Esta proteção roda depois de:
+  - resposta inicial da SDR;
+  - revisões;
+  - ações de arquivo;
+  - sanitização de WhatsApp.
+
+  Portanto, é a última chance antes de enviar ao lead.
+*/
+const respostaAntesDaBarreiraFinalLeak = respostaFinal;
+
+respostaFinal = enforceNoInternalLeakBeforeSend(respostaFinal);
+
+if (respostaFinal !== respostaAntesDaBarreiraFinalLeak) {
+  console.warn("🛡️ Barreira final removeu possível vazamento interno antes do WhatsApp:", {
+    user: from,
+    antes: respostaAntesDaBarreiraFinalLeak,
+    depois: respostaFinal
+  });
+}
+
+console.log("📎 Actions sincronizados com a resposta final:",
   user: from,
   actions
 });
