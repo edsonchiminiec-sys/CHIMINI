@@ -11409,6 +11409,396 @@ async function finalizeHandledResponse({
   markMessageIdsAsProcessed(idsToMark);
 }
 
+/* =========================
+   MOTOR SEMÂNTICO DA TAXA — IQG
+   Corrige bloqueio de coleta após aceite da taxa
+========================= */
+
+function normalizeTaxDecisionText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?!.áéíóúàâêôãõç-]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildRecentTaxDecisionContext(history = [], lastSdrText = "") {
+  const historyText = Array.isArray(history)
+    ? history
+        .slice(-18)
+        .map(message => `${message.role || ""}: ${message.content || ""}`)
+        .join("\n")
+    : "";
+
+  return normalizeTaxDecisionText(`${historyText}\nassistant: ${lastSdrText || ""}`);
+}
+
+function hasTaxBeenExplainedForDecision({ lead = {}, contextText = "" } = {}) {
+  const etapas = lead?.etapas || {};
+
+  return Boolean(
+    etapas.investimento === true ||
+    lead?.taxaAlinhada === true ||
+    lead?.taxaModoConversao === true ||
+    /\b(1990|1\.990|r\$ ?1\.990|taxa|investimento|adesao|adesão|implantacao|implantação|10x|199)\b/i.test(contextText)
+  );
+}
+
+function hasMandatoryValueAnchoringForDecision({ lead = {}, contextText = "" } = {}) {
+  const etapas = lead?.etapas || {};
+
+  const etapasMarcadas =
+    etapas.programa === true &&
+    etapas.beneficios === true &&
+    etapas.estoque === true &&
+    etapas.responsabilidades === true &&
+    etapas.investimento === true;
+
+  if (etapasMarcadas) {
+    return true;
+  }
+
+  const falouPrograma =
+    /\b(programa|parceiro homologado|homologado|parceria|iqg)\b/i.test(contextText);
+
+  const falouBeneficios =
+    /\b(beneficio|benefício|comissao|comissão|margem|suporte|treinamento|orientacao|orientação)\b/i.test(contextText);
+
+  const falouEstoque =
+    /\b(estoque|comodato|lote inicial|produtos em comodato|pronta entrega|pronta-entrega)\b/i.test(contextText);
+
+  const falouResponsabilidade =
+    /\b(responsabilidade|contrato|nome limpo|atuacao|atuação|resultado depende|depende da sua atuacao|depende da sua atuação|vendas)\b/i.test(contextText);
+
+  const falouInvestimento =
+    /\b(1990|1\.990|r\$ ?1\.990|taxa|investimento|adesao|adesão|implantacao|implantação|10x|199)\b/i.test(contextText);
+
+  return Boolean(
+    falouPrograma &&
+    falouBeneficios &&
+    falouEstoque &&
+    falouResponsabilidade &&
+    falouInvestimento
+  );
+}
+
+function taxDecisionMessageIsShortPositive(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /^(sim|ok|okay|blz|beleza|show|top|certo|ta bom|tá bom|tranquilo|fechado|pode|pode sim|pode ser|vamos|vamo|bora|manda|manda ai|manda aí|segue|seguir|pode seguir|pode continuar|continua|quero|aceito)$/i.test(t);
+}
+
+function taxDecisionMessageIsStrongAcceptance(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /\b(pode seguir|pode continuar|vamos seguir|bora|me cadastra|quero cadastrar|quero me cadastrar|quero participar|quero ser parceiro|quero ser homologado|vou seguir|vou fazer|aceito|aceito a taxa|aceito o investimento|vou pagar|pode fazer minha analise|pode fazer minha análise|qual proximo passo|qual próximo passo|quais dados precisa|que dados precisa|manda o cadastro|seguir com cadastro|seguir com pre analise|seguir com pré análise|pode iniciar|pode mandar|tenho interesse|quero entrar|quero fazer parte)\b/i.test(t);
+}
+
+function taxDecisionMessageIsQuestionAboutTax(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return Boolean(
+    t.includes("?") &&
+    /\b(taxa|valor|preco|preço|investimento|pagar|pagamento|cartao|cartão|pix|parcelar|parcela|contrato|garantia)\b/i.test(t)
+  );
+}
+
+function taxDecisionMessageIsPriceObjection(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /\b(caro|achei caro|muito caro|nao tenho dinheiro|não tenho dinheiro|sem dinheiro|nao tenho agora|não tenho agora|nao consigo pagar|não consigo pagar|sem condicoes|sem condições|desconto|parcelar|parcela|baixar valor|valor alto|taxa alta|pesado pra mim|pesado para mim|vou pensar|pensar melhor|falar com minha esposa|falar com meu marido|falar com socio|falar com sócio)\b/i.test(t);
+}
+
+function taxDecisionMessageIsTrustObjection(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /\b(golpe|confiar|confiança|confianca|garantia|garantem|contrato|prova|prova social|depoimento|seguro|segurança|seguranca|e se eu nao vender|e se eu não vender|retorno garantido|garante retorno)\b/i.test(t);
+}
+
+function taxDecisionMessageRequestsAlternative(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /\b(sem taxa|opcao sem taxa|opção sem taxa|alternativa|outro modelo|afiliado|afiliados|link|só indicar|so indicar|somente indicar|quero indicar|vender por link|divulgar online|sem estoque|sem produto fisico|sem produto físico)\b/i.test(t);
+}
+
+function taxDecisionMessageIsMainProjectRefusal(text = "") {
+  const t = normalizeTaxDecisionText(text);
+
+  return /\b(nao quero pagar|não quero pagar|nao vou pagar|não vou pagar|nao quero taxa|não quero taxa|nao quero seguir|não quero seguir|nao vou seguir|não vou seguir|nao quero continuar|não quero continuar|deixa quieto|deixa pra la|deixa pra lá|nao e pra mim|não é pra mim|desisti|vou desistir|pode encerrar|encerra|nao tenho interesse|não tenho interesse)\b/i.test(t);
+}
+
+function isLeadAlreadyInCollectionOrAfter(lead = {}) {
+  const fase = lead?.faseQualificacao || "";
+  const faseFunil = lead?.faseFunil || "";
+  const status = lead?.status || "";
+
+  return Boolean(
+    ["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "corrigir_dado", "corrigir_dado_final", "aguardando_valor_correcao_final", "dados_confirmados", "enviado_crm"].includes(fase) ||
+    ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(faseFunil) ||
+    ["coletando_dados", "dados_parciais", "aguardando_dados", "dados_confirmados", "enviado_crm"].includes(status)
+  );
+}
+
+function classifyTaxPhaseDecision({
+  lead = {},
+  history = [],
+  semanticIntent = {},
+  semanticContinuity = {},
+  lastUserText = "",
+  lastSdrText = ""
+} = {}) {
+  const text = normalizeTaxDecisionText(lastUserText);
+  const contextText = buildRecentTaxDecisionContext(history, lastSdrText);
+
+  const taxExplained = hasTaxBeenExplainedForDecision({
+    lead,
+    contextText
+  });
+
+  const valueAnchored = hasMandatoryValueAnchoringForDecision({
+    lead,
+    contextText
+  });
+
+  const taxaObjectionCount = Number(lead?.taxaObjectionCount || 0);
+
+  const inAffiliateRoute =
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado" ||
+    lead?.interesseAfiliado === true;
+
+  if (!text || inAffiliateRoute || isLeadAlreadyInCollectionOrAfter(lead)) {
+    return {
+      categoria: "FORA_DA_FASE_TAXA",
+      acao: "NENHUMA_ACAO",
+      shouldSave: false,
+      motivo: "Lead não está em fase útil para decisão de taxa."
+    };
+  }
+
+  if (!taxExplained) {
+    return {
+      categoria: "INDEFINIDO",
+      acao: "MANTER_FASE",
+      shouldSave: false,
+      motivo: "Taxa ainda não foi explicada no histórico/estado. Não liberar coleta."
+    };
+  }
+
+  const asksTaxQuestion = taxDecisionMessageIsQuestionAboutTax(text);
+  const priceObjection = taxDecisionMessageIsPriceObjection(text) || semanticIntent?.priceObjection === true;
+  const trustObjection = taxDecisionMessageIsTrustObjection(text) || semanticIntent?.riskObjection === true;
+  const asksAlternative = taxDecisionMessageRequestsAlternative(text) || semanticIntent?.wantsAffiliate === true;
+  const mainProjectRefusal = taxDecisionMessageIsMainProjectRefusal(text);
+  const strongAcceptance =
+    taxDecisionMessageIsStrongAcceptance(text) ||
+    semanticIntent?.positiveCommitment === true ||
+    semanticIntent?.paymentIntent === true;
+
+  const weakButContextualAcceptance =
+    taxDecisionMessageIsShortPositive(text) &&
+    taxExplained &&
+    valueAnchored &&
+    (
+      semanticContinuity?.leadQuerAvancar === true ||
+      semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
+      /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
+    );
+
+  /*
+    Ordem importante:
+    - Pergunta real sobre taxa deve ser respondida.
+    - Pedido explícito de alternativa pode ir para Afiliados.
+    - Recusa na taxa exige até 3 tentativas antes de desistir do Homologado.
+    - Aceite depois da objeção precisa limpar a objeção antiga.
+  */
+
+  if (asksTaxQuestion && !strongAcceptance) {
+    return {
+      categoria: "DUVIDA_SOBRE_TAXA",
+      acao: "RESPONDER_DUVIDA",
+      shouldSave: false,
+      motivo: "Lead fez pergunta específica sobre taxa/investimento."
+    };
+  }
+
+  if (asksAlternative) {
+    return {
+      categoria: "PEDIDO_ALTERNATIVA",
+      acao: "OFERECER_AFILIADO",
+      shouldSave: true,
+      motivo: "Lead pediu alternativa sem taxa, link, indicação ou modelo de Afiliados."
+    };
+  }
+
+  if (mainProjectRefusal && taxaObjectionCount >= 3) {
+    return {
+      categoria: "RECUSA_PROJETO_PRINCIPAL",
+      acao: "OFERECER_AFILIADO",
+      shouldSave: true,
+      motivo: "Lead recusou o Homologado após pelo menos 3 tentativas/objeções de taxa."
+    };
+  }
+
+  if (mainProjectRefusal && taxaObjectionCount < 3) {
+    return {
+      categoria: "RECUSA_PROJETO_PRINCIPAL",
+      acao: "TRATAR_OBJETICA_TAXA",
+      shouldSave: false,
+      motivo: "Lead recusou, mas ainda não houve 3 tentativas consultivas na taxa. Não desistir ainda."
+    };
+  }
+
+  if (priceObjection) {
+    return {
+      categoria: "OBJECÃO_PRECO",
+      acao: taxaObjectionCount >= 3 ? "OFERECER_AFILIADO" : "TRATAR_OBJETICA_TAXA",
+      shouldSave: taxaObjectionCount >= 3,
+      motivo: taxaObjectionCount >= 3
+        ? "Lead permaneceu travado em preço após tentativas suficientes. Preparar Afiliados."
+        : "Lead apresentou objeção de preço. Tratar valor antes de oferecer Afiliados."
+    };
+  }
+
+  if (trustObjection) {
+    return {
+      categoria: "OBJECÃO_CONFIANCA",
+      acao: "TRATAR_OBJETICA_CONFIANCA",
+      shouldSave: false,
+      motivo: "Lead apresentou objeção de confiança, garantia, contrato ou segurança."
+    };
+  }
+
+  if (strongAcceptance && valueAnchored) {
+    return {
+      categoria: "ACEITE_CLARO",
+      acao: "LIBERAR_PRE_CADASTRO",
+      shouldSave: true,
+      motivo: "Lead aceitou seguir após taxa explicada e valor ancorado."
+    };
+  }
+
+  if (weakButContextualAcceptance) {
+    return {
+      categoria: "ACEITE_FRACO_MAS_SUFFICIENTE",
+      acao: "LIBERAR_PRE_CADASTRO",
+      shouldSave: true,
+      motivo: "Lead deu aceite curto, mas suficiente dentro do contexto de taxa já explicada."
+    };
+  }
+
+  return {
+    categoria: "INDEFINIDO",
+    acao: "MANTER_FASE",
+    shouldSave: false,
+    motivo: "Mensagem não trouxe aceite, dúvida, objeção ou recusa suficiente."
+  };
+}
+
+function buildTaxPhaseDecisionPatch({
+  decision = {},
+  lead = {},
+  lastUserText = ""
+} = {}) {
+  const categoria = decision?.categoria || "";
+  const acao = decision?.acao || "";
+  const currentEtapas = {
+    programa: false,
+    beneficios: false,
+    estoque: false,
+    responsabilidades: false,
+    investimento: false,
+    taxaPerguntada: false,
+    compromissoPerguntado: false,
+    compromisso: false,
+    ...(lead?.etapas || {})
+  };
+
+  if (acao === "LIBERAR_PRE_CADASTRO") {
+    return {
+      shouldSave: true,
+      patch: {
+        etapas: {
+          ...currentEtapas,
+          investimento: true,
+          taxaPerguntada: true,
+          compromissoPerguntado: true,
+          compromisso: true
+        },
+
+        taxaAlinhada: true,
+        taxaModoConversao: false,
+        sinalObjecaoTaxa: false,
+        sinalObjecaoEstoque: false,
+        sinalObjecaoRisco: false,
+        bloqueioComercialAtivo: false,
+
+        pendenciaPerguntaComercialAberta: false,
+        pendenciaPerguntaComercialAbertaResolvidaEm: new Date(),
+        motivoPendenciaPerguntaComercialAberta: "",
+
+        interesseReal: true,
+        status: "qualificando",
+        faseQualificacao: "qualificando",
+        rotaComercial: "homologado",
+        origemConversao: "homologado",
+
+        taxaAceitaEm: new Date(),
+        taxaAceitaAposObjecao: Number(lead?.taxaObjectionCount || 0) > 0,
+        taxaObjectionResolved: true,
+        ultimaObjecaoTaxaResolvidaEm: new Date(),
+        taxaAceiteClassificacao: categoria,
+        ultimaMensagem: lastUserText,
+
+        ultimaDecisaoBackend: buildBackendDecision({
+          tipo: "taxa_aceita_liberar_precadastro",
+          motivo: decision?.motivo || "lead_aceitou_taxa_contextualmente",
+          acao: "liberar_pre_cadastro",
+          mensagemLead: lastUserText,
+          detalhes: {
+            categoria,
+            taxaObjectionCount: Number(lead?.taxaObjectionCount || 0),
+            limparObjecaoAntiga: true,
+            compromissoValidadoPorContexto: true,
+            interesseRealConfirmadoPorContexto: true
+          }
+        })
+      }
+    };
+  }
+
+  if (acao === "OFERECER_AFILIADO") {
+    return {
+      shouldSave: true,
+      patch: {
+        deveOferecerAfiliadoComoAlternativa: true,
+        afiliadoOferecidoComoAlternativa: false,
+        motivoOfertaAfiliado: decision?.motivo || "lead_nao_concluiu_homologado",
+        ultimaMensagem: lastUserText,
+        ultimaDecisaoBackend: buildBackendDecision({
+          tipo: "oferecer_afiliado_como_alternativa",
+          motivo: decision?.motivo || "lead_nao_concluiu_homologado",
+          acao: "orientar_sdr_oferecer_afiliado",
+          mensagemLead: lastUserText,
+          detalhes: {
+            categoria,
+            taxaObjectionCount: Number(lead?.taxaObjectionCount || 0),
+            regra: "Se não concluiu Homologado/coleta, apresentar Afiliados como alternativa."
+          }
+        })
+      }
+    };
+  }
+
+  return {
+    shouldSave: false,
+    patch: {}
+  };
+}
+
 function canStartDataCollection(lead = {}) {
   const etapas = lead?.etapas || {};
 
@@ -11422,20 +11812,22 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
-   /*
-    ETAPA 13.1 PRODUÇÃO — pergunta comercial aberta impede coleta.
-
-    Explicação simples:
-    Se o lead ainda fez uma pergunta sobre produto, catálogo, estoque,
-    reposição, taxa, contrato ou qualquer dúvida comercial,
-    primeiro a SDR precisa responder.
-
-    Só depois, se o lead demonstrar continuidade, a coleta pode seguir.
+  /*
+    Se existe pergunta comercial aberta, não coleta ainda.
+    Exemplo:
+    - "tem catálogo?"
+    - "por que tem taxa?"
+    - "tem contrato?"
+    Primeiro responde. Depois, se o lead disser "ok, pode seguir",
+    a coleta pode liberar.
   */
   if (lead?.pendenciaPerguntaComercialAberta === true) {
     return false;
   }
-   
+
+  /*
+    Se está confirmando/corrigindo dados, não reinicia coleta.
+  */
   if (
     lead?.aguardandoConfirmacaoCampo === true ||
     lead?.aguardandoConfirmacao === true ||
@@ -11448,6 +11840,9 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
+  /*
+    Se já está coletando, pode continuar a coleta.
+  */
   if (
     lead?.faseQualificacao === "coletando_dados" ||
     lead?.faseQualificacao === "dados_parciais" ||
@@ -11457,25 +11852,12 @@ function canStartDataCollection(lead = {}) {
   }
 
   /*
-    ETAPA 2 PRODUÇÃO — portão seguro da coleta.
+    Etapas obrigatórias continuam obrigatórias.
+    Aqui NÃO estamos removendo regra comercial.
 
-    Explicação simples:
-    A coleta só pode começar quando o lead realmente passou pelo caminho
-    comercial obrigatório e o backend consolidou os sinais principais.
-
-    Não basta a SDR ter mencionado um tema.
-    Não basta o lead dizer uma palavra solta.
-
-    Precisa estar consolidado no estado do lead:
-    - programa explicado;
-    - benefícios explicados;
-    - estoque explicado;
-    - responsabilidades explicadas;
-    - investimento explicado;
-    - taxa alinhada;
-    - compromisso validado;
-    - interesse real confirmado;
-    - sem objeção ativa.
+    A diferença é:
+    - antes o sistema dependia demais de flags rígidas;
+    - agora as flags podem ser consolidadas semanticamente pelo motor da taxa.
   */
   const etapasObrigatoriasConduzidas =
     etapas.programa === true &&
@@ -11493,12 +11875,40 @@ function canStartDataCollection(lead = {}) {
   const interesseRealConfirmado =
     lead?.interesseReal === true;
 
+  /*
+    Correção central:
+    objeção antiga de taxa NÃO pode bloquear para sempre.
+
+    Se o lead objetou antes, mas depois aceitou:
+    - taxaAceitaEm existe;
+    - taxaAceitaAposObjecao = true;
+    - taxaObjectionResolved = true;
+    - sinalObjecaoTaxa foi limpo.
+  */
+  const objecaoTaxaResolvida =
+    lead?.taxaObjectionResolved === true ||
+    lead?.taxaAceitaAposObjecao === true ||
+    Boolean(lead?.taxaAceitaEm) ||
+    (
+      lead?.taxaAlinhada === true &&
+      lead?.interesseReal === true &&
+      etapas.compromisso === true
+    );
+
+  const semObjecaoTaxaAtiva =
+    lead?.sinalObjecaoTaxa !== true ||
+    objecaoTaxaResolvida === true;
+
+  const contagemObjecaoNaoBloqueia =
+    Number(lead?.taxaObjectionCount || 0) <= 1 ||
+    objecaoTaxaResolvida === true;
+
   const semObjecaoAtiva =
-    lead?.sinalObjecaoTaxa !== true &&
+    semObjecaoTaxaAtiva &&
     lead?.sinalObjecaoEstoque !== true &&
     lead?.sinalObjecaoRisco !== true &&
     lead?.bloqueioComercialAtivo !== true &&
-    Number(lead?.taxaObjectionCount || 0) <= 1;
+    contagemObjecaoNaoBloqueia;
 
   return Boolean(
     etapasObrigatoriasConduzidas &&
@@ -11508,7 +11918,6 @@ function canStartDataCollection(lead = {}) {
     semObjecaoAtiva
   );
 }
-
 function canAskForRealInterest(lead = {}) {
   const e = lead.etapas || {};
 
@@ -11536,13 +11945,50 @@ Como os pontos principais já estão alinhados, podemos seguir com a pré-análi
 Primeiro, pode me enviar seu nome completo?`;
   }
 
+  const etapas = lead?.etapas || {};
+
+  const faltaInvestimento =
+    etapas.investimento !== true ||
+    lead?.taxaAlinhada !== true;
+
+  const faltaCompromisso =
+    etapas.compromisso !== true;
+
+  const faltaInteresseReal =
+    lead?.interesseReal !== true;
+
+  /*
+    Se o lead já pediu cadastro ou demonstrou vontade de avançar,
+    não devolvemos um textão repetindo tudo.
+    Validamos só a menor pendência real.
+  */
+  if (faltaInvestimento) {
+    return `${namePart}perfeito, eu te ajudo com isso 😊
+
+Antes do pré-cadastro, preciso só alinhar a parte do investimento para você seguir consciente.
+
+${getNextFunnelStepMessage(lead)}`;
+  }
+
+  if (faltaCompromisso) {
+    return `${namePart}perfeito 😊
+
+Antes de abrir a pré-análise, só preciso confirmar um ponto importante: você entende que o resultado como Parceiro Homologado depende da sua atuação nas vendas, prospecção e relacionamento com os clientes?
+
+Se estiver de acordo, eu sigo para o pré-cadastro.`;
+  }
+
+  if (faltaInteresseReal) {
+    return `${namePart}perfeito 😊
+
+Como a taxa e as responsabilidades já foram explicadas, me confirma só uma coisa: você quer mesmo seguir para a pré-análise do Parceiro Homologado IQG?`;
+  }
+
   return `${namePart}perfeito, eu te ajudo com isso 😊
 
-Para seguir com o cadastro do Parceiro Homologado, antes eu preciso alinhar alguns pontos obrigatórios com você: ${missingSteps.join(", ")}.
+Antes do pré-cadastro ainda falta alinhar: ${missingSteps.join(", ")}.
 
-Isso é importante para você entrar consciente, sem pular etapa e sem assumir compromisso antes de entender tudo.
-
-Vou seguir pelo próximo ponto agora:
+Vou seguir pelo próximo ponto, sem repetir o que já foi tratado:
 
 ${getNextFunnelStepMessage(lead)}`;
 }
@@ -18733,6 +19179,87 @@ if (semanticQualificationPatch.shouldSave) {
   });
 }
 
+   // 🧠 DECISÃO SEMÂNTICA CENTRAL DA TAXA — libera coleta após aceite contextual
+var taxPhaseDecision = classifyTaxPhaseDecision({
+  lead: currentLead || {},
+  history,
+  semanticIntent,
+  semanticContinuity,
+  lastUserText: text,
+  lastSdrText: lastAssistantText
+});
+
+if (taxPhaseDecision?.acao && taxPhaseDecision.acao !== "NENHUMA_ACAO") {
+  backendStrategicGuidance.push({
+    tipo: "decisao_semantica_taxa",
+    prioridade: taxPhaseDecision.acao === "LIBERAR_PRE_CADASTRO" ? "critica" : "alta",
+    categoria: taxPhaseDecision.categoria,
+    acao: taxPhaseDecision.acao,
+    motivo: taxPhaseDecision.motivo,
+    orientacaoParaPreSdr:
+      [
+        taxPhaseDecision.acao === "LIBERAR_PRE_CADASTRO"
+          ? "O lead aceitou seguir após a taxa. Parar de vender, não repetir taxa e conduzir para pré-cadastro/coleta."
+          : "",
+        taxPhaseDecision.acao === "RESPONDER_DUVIDA"
+          ? "O lead fez dúvida sobre taxa. Responder somente a dúvida, sem reiniciar o funil."
+          : "",
+        taxPhaseDecision.acao === "TRATAR_OBJETICA_TAXA"
+          ? "O lead ainda está em objeção de taxa. Argumentar de forma consultiva. Não oferecer Afiliados antes de completar pelo menos 3 tentativas, salvo pedido claro de alternativa."
+          : "",
+        taxPhaseDecision.acao === "TRATAR_OBJETICA_CONFIANCA"
+          ? "O lead está inseguro. Reforçar contrato, análise interna, segurança e que pagamento só ocorre após análise/contrato. Não prometer resultado."
+          : "",
+        taxPhaseDecision.acao === "OFERECER_AFILIADO"
+          ? "O lead pediu alternativa ou não concluiu Homologado após tentativas suficientes. Apresentar Programa de Afiliados como alternativa simples, sem pressão."
+          : "",
+        "Não exigir frase exata como 'me comprometo', 'aceito' ou 'faz sentido'. Usar o contexto e a última intenção do lead."
+      ].filter(Boolean).join("\n"),
+    detalhes: {
+      taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0),
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      compromisso: currentLead?.etapas?.compromisso === true,
+      interesseReal: currentLead?.interesseReal === true,
+      sinalObjecaoTaxa: currentLead?.sinalObjecaoTaxa === true
+    }
+  });
+
+  const taxPatch = buildTaxPhaseDecisionPatch({
+    decision: taxPhaseDecision,
+    lead: currentLead || {},
+    lastUserText: text
+  });
+
+  if (taxPatch.shouldSave) {
+    await saveLeadProfile(from, {
+      ...taxPatch.patch,
+      ultimaMensagem: text
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🧠 Decisão semântica da taxa aplicada:", {
+      user: from,
+      categoria: taxPhaseDecision.categoria,
+      acao: taxPhaseDecision.acao,
+      motivo: taxPhaseDecision.motivo,
+      podeIniciarColeta: canStartDataCollection(currentLead || {}),
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      compromisso: currentLead?.etapas?.compromisso === true,
+      interesseReal: currentLead?.interesseReal === true,
+      sinalObjecaoTaxa: currentLead?.sinalObjecaoTaxa === true,
+      taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0)
+    });
+
+    auditLog("Decisao semantica taxa aplicada", {
+      user: maskPhone(from),
+      ultimaMensagemLead: text,
+      taxPhaseDecision,
+      currentLead: buildLeadAuditSnapshot(currentLead || {})
+    });
+  }
+}
+
 var turnPolicy = buildTurnPolicy({
   lead: currentLead || {},
   text,
@@ -19260,16 +19787,23 @@ const leadConfirmouCiencia =
   - se a última mensagem do lead era pergunta comercial, não inicia coleta;
   - pergunta sobre produto, kit, catálogo, reposição, taxa ou contrato vem antes de CPF.
 */
-const leadTemPerguntaComercialAbertaAntesDaColeta =
-  currentLead?.pendenciaPerguntaComercialAberta === true ||
-  (
-    semanticIntent?.asksQuestion === true &&
-    semanticIntent?.positiveRealInterest !== true &&
-    semanticIntent?.positiveCommitment !== true
-  ) ||
-  Boolean(semanticIntent?.requestedFile) ||
-  /\b(catalogo|catálogo|folder|pdf|material|kit|manual|produto|produtos|iqg|nano|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto)\b/i.test(text || "");
+const leadAceitouTaxaNaMensagemAtual =
+  typeof taxPhaseDecision !== "undefined" &&
+  ["ACEITE_CLARO", "ACEITE_FRACO_MAS_SUFFICIENTE"].includes(taxPhaseDecision?.categoria) &&
+  taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO";
 
+const leadTemPerguntaComercialAbertaAntesDaColeta =
+  leadAceitouTaxaNaMensagemAtual !== true &&
+  (
+    currentLead?.pendenciaPerguntaComercialAberta === true ||
+    (
+      semanticIntent?.asksQuestion === true &&
+      semanticIntent?.positiveRealInterest !== true &&
+      semanticIntent?.positiveCommitment !== true
+    ) ||
+    Boolean(semanticIntent?.requestedFile) ||
+    /\b(catalogo|catálogo|folder|pdf|material|kit|manual|produto|produtos|iqg|nano|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto)\b/i.test(text || "")
+  );
 const podeIniciarColeta =
   canStartDataCollection(currentLead || {}) &&
   currentLead?.interesseReal === true &&
@@ -19360,6 +19894,48 @@ auditLog("Primeira resposta gerada pela SDR antes das travas", {
 // Qualquer trava comercial deve adicionar orientação aqui,
 // e não substituir respostaFinal com texto fixo.
 let sdrReviewFindings = [];
+
+     // 🚫 BLOQUEIO DE REPETIÇÃO APÓS ACEITE DA TAXA
+if (
+  typeof taxPhaseDecision !== "undefined" &&
+  taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO" &&
+  canStartDataCollection(currentLead || {}) === true
+) {
+  const respostaNormalizadaDepoisAceite = normalizeTaxDecisionText(respostaFinal || "");
+
+  const respostaRepetiuTaxa =
+    /\b(taxa|1990|1\.990|r\$ ?1\.990|investimento|adesao|adesão|implantacao|implantação)\b/i.test(respostaNormalizadaDepoisAceite);
+
+  const respostaPediuNome =
+    respostaNormalizadaDepoisAceite.includes("nome completo") ||
+    respostaNormalizadaDepoisAceite.includes("me envie seu nome") ||
+    respostaNormalizadaDepoisAceite.includes("pode me enviar seu nome");
+
+  if (respostaRepetiuTaxa || !respostaPediuNome) {
+    sdrReviewFindings.push({
+      tipo: "taxa_aceita_nao_repetir_iniciar_coleta",
+      prioridade: "critica",
+      orientacao:
+        [
+          "O backend classificou que o lead aceitou seguir após a taxa.",
+          "Não repetir a taxa.",
+          "Não repetir benefícios, estoque, responsabilidades ou explicações antigas.",
+          "Não pedir nova confirmação.",
+          "Parar de vender e iniciar a coleta.",
+          "A próxima resposta deve ser curta e pedir somente o nome completo.",
+          "Modelo permitido: 'Perfeito 😊 Vamos seguir então. Primeiro, pode me enviar seu nome completo?'"
+        ].join("\n")
+    });
+
+    console.log("🛑 Revisão solicitada: lead aceitou taxa, mas SDR repetiu ou não iniciou coleta:", {
+      user: from,
+      categoriaTaxa: taxPhaseDecision?.categoria,
+      acaoTaxa: taxPhaseDecision?.acao,
+      podeIniciarColeta: canStartDataCollection(currentLead || {}),
+      respostaFinal
+    });
+  }
+}
      
 // 🚫 BLOQUEIO DE REGRESSÃO DE FASE — VERSÃO SEGURA
 // Não bloqueia respostas apenas porque citam palavras como "estoque", "taxa" ou "programa".
