@@ -3600,15 +3600,26 @@ function decideCommercialRouteFromSemanticIntent({
   // Caso 3:
   // Lead quer Homologado.
   if (querHomologado && !querAfiliado) {
-    return {
-      rota: "homologado",
-      deveResponderAgora: false,
-      deveCompararProgramas: false,
-      deveManterHomologado: true,
-      origemConversao: "homologado",
-      motivo: "Lead demonstrou intenção clara pelo Parceiro Homologado."
-    };
-  }
+  const estaTravadoNoHomologado =
+    temObjecaoBloqueante ||
+    temObjecaoPreco ||
+    temObjecaoEstoque ||
+    semanticIntent?.riskObjection === true ||
+    semanticIntent?.delayOrAbandonment === true;
+
+  return {
+    rota: "homologado",
+    deveResponderAgora: false,
+    deveCompararProgramas: false,
+    deveManterHomologado: true,
+    origemConversao: estaTravadoNoHomologado
+      ? "homologado_com_objecao"
+      : "homologado",
+    motivo: estaTravadoNoHomologado
+      ? "Lead está no caminho do Parceiro Homologado, mas trouxe objeção/dúvida/trava que precisa ser tratada antes de avançar."
+      : "Lead demonstrou intenção clara pelo Parceiro Homologado."
+  };
+}
 
   // Caso 4:
   // Objeção de preço sozinha não pode virar Afiliado.
@@ -4195,11 +4206,16 @@ function buildSemanticQualificationPatch({
     Boolean(semanticIntent?.requestedFile) ||
     /\b(catalogo|catálogo|folder|pdf|material|kit|manual|contrato|curso)\b/i.test(lastUserText || "");
 
-  const currentTextLooksCommercialQuestion =
+  const currentTextIsContextCorrection =
+  isDeveloperOrContextCorrectionMessage(lastUserText || "");
+
+const currentTextLooksCommercialQuestion =
+  currentTextIsContextCorrection !== true &&
+  (
     semanticSaysCurrentMessageIsQuestion ||
     leadRequestedFileNow ||
-    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|material|manual|estoque|comodato|reposicao|reposição|repor|mais produtos|taxa|valor|preco|preço|investimento|contrato|pagamento|boleto|pix|cartao|cartão)\b/i.test(lastUserText || "");
-
+    /\b(catalogo|catálogo|produto|produtos|iqg|nano|kit|folder|material|manual|estoque|comodato|reposicao|reposição|repor|mais produtos|taxa|valor|preco|preço|investimento|contrato|pagamento|boleto|pix|cartao|cartão)\b/i.test(lastUserText || "")
+  );
   const currentMessageIsOpenCommercialQuestion =
     currentTextLooksCommercialQuestion &&
     semanticIntent?.positiveRealInterest !== true &&
@@ -11423,6 +11439,80 @@ async function finalizeHandledResponse({
    MOTOR SEMÂNTICO DA TAXA — IQG
    Corrige bloqueio de coleta após aceite da taxa
 ========================= */
+
+/* =========================
+   PROTEÇÃO CONTRA CONTEXTO CONTAMINADO
+   Evita que crítica de condução vire objeção comercial
+========================= */
+
+function normalizeContextGuardText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isDeveloperOrContextCorrectionMessage(text = "") {
+  const t = normalizeContextGuardText(text);
+
+  if (!t) return false;
+
+  /*
+    Mensagens técnicas de teste/desenvolvedor.
+    Exemplo real:
+    "#mensagem ao desenvolvedor: Não falamos sobre investimento e taxa de adesão ainda! Follow-up contaminado!"
+  */
+  const developerSignal =
+    t.includes("#mensagem ao desenvolvedor") ||
+    t.includes("mensagem ao desenvolvedor") ||
+    t.includes("desenvolvedor") ||
+    t.includes("follow-up contaminado") ||
+    t.includes("followup contaminado") ||
+    t.includes("follow up contaminado") ||
+    t.includes("contaminado");
+
+  /*
+    Crítica de histórico/contexto.
+    Isso não é objeção comercial.
+  */
+  const contextCorrectionSignal =
+    /\b(nao falamos|não falamos|ainda nao falamos|ainda não falamos|voce pulou|você pulou|pulou etapa|fora de contexto|sem contexto|nao foi explicado|não foi explicado|voce nao explicou|você não explicou|voce esta se perdendo|você está se perdendo|se perdeu|revisa o historico|revisa o histórico|revisita o historico|revisita o histórico|ja falei|já falei|ja respondi|já respondi|voce esta repetitiva|você está repetitiva|voce esta repetindo|você está repetindo|ja explicou|já explicou|de novo isso)\b/i.test(t);
+
+  /*
+    Só citar "taxa" não basta.
+    A frase precisa ter sinal de correção de condução.
+  */
+  return Boolean(developerSignal || contextCorrectionSignal);
+}
+
+function buildContextCorrectionGuidance({
+  text = "",
+  motivo = "lead_corrigiu_contexto_ou_repeticao"
+} = {}) {
+  return {
+    tipo: "corrigir_conducao_contexto",
+    prioridade: "critica",
+    motivo,
+    orientacaoParaPreSdr:
+      [
+        "A última mensagem do lead é uma correção de contexto/condução, não uma objeção comercial.",
+        "Não tratar como objeção de taxa.",
+        "Não incrementar contagem de objeção.",
+        "Não repetir taxa automaticamente.",
+        "A SDR deve reconhecer brevemente a falha, pedir desculpa de forma simples e retomar do ponto correto.",
+        "Se o lead disse que ainda não falamos de determinado assunto, a SDR deve corrigir a ordem e explicar apenas o ponto correto, sem textão desnecessário.",
+        "Se o lead reclamou de repetição, a SDR deve parar de repetir e avançar de forma objetiva conforme o histórico."
+      ].join("\n"),
+    detalhes: {
+      mensagemLead: text,
+      naoRegistrarObjecaoTaxa: true,
+      naoIncrementarTaxaObjectionCount: true,
+      limparTaxaModoConversaoSeForErroDeContexto: true
+    }
+  };
+}
 
 function normalizeTaxDecisionText(value = "") {
   return String(value || "")
