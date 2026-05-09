@@ -22870,6 +22870,30 @@ body {
   font-size: 11.5px;
 }
 
+/* Ajuste solicitado: remover figurinhas dos cards superiores e aumentar fonte em ~10% */
+.metric-card .metric-icon {
+  display: none !important;
+}
+
+.metric-card .metric-top {
+  gap: 0;
+  min-height: 28px;
+}
+
+.metric-card .metric-title {
+  font-size: 14.3px;
+  line-height: 1.18;
+}
+
+.metric-card .metric-value {
+  font-size: 31px;
+  margin: 15px 0 9px;
+}
+
+.metric-card .metric-subtitle {
+  font-size: 12.7px;
+}
+
 .metric-card:hover,
 .kpi-card:hover {
   transform: translateY(-1px);
