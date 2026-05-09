@@ -23370,11 +23370,7 @@ const humanoHtml = humanoAtivo
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
       <td>${formatDate(lead.updatedAt)}</td>
-      <td>
-        <span class="badge ${humanoAtivo ? "em_atendimento" : "ativo"}">
-          ${humanoAtivo ? "sim" : "não"}
-        </span>
-      </td>
+            <td>${humanoHtml}</td>
       <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
         <span class="action-divider"></span>
@@ -24164,6 +24160,11 @@ tr:hover td {
 .badge.em_atendimento {
   background: #ffedd5;
   color: #c2410c;
+}
+
+.badge.danger {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .actions {
