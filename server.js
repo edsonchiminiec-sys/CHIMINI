@@ -253,15 +253,44 @@ async function loadConversation(user) {
   return data.messages;
 }
 
+const MAX_CONVERSATION_MESSAGES_DASHBOARD = 1000;
+
+function normalizeConversationMessageForStorage(message = {}) {
+  return {
+    role: message.role || "system",
+    content: String(message.content || ""),
+    createdAt: message.createdAt || message.timestamp || message.date || new Date(),
+    origem: message.origem || "",
+    followupStep: message.followupStep || null
+  };
+}
+
+function normalizeConversationMessagesForStorage(messages = []) {
+  const safeMessages = Array.isArray(messages)
+    ? messages
+        .filter(message => message && String(message.content || "").trim())
+        .map(normalizeConversationMessageForStorage)
+    : [];
+
+  /*
+    Mantém até 1000 mensagens por lead.
+    Isso evita perder histórico rapidamente, mas também evita um documento infinito no Mongo.
+  */
+  return safeMessages.slice(-MAX_CONVERSATION_MESSAGES_DASHBOARD);
+}
+
 async function saveConversation(user, messages) {
   await connectMongo();
+
+  const safeMessages = normalizeConversationMessagesForStorage(messages);
 
   await db.collection("conversations").updateOne(
     { user },
     {
       $set: {
         user,
-        messages,
+        messages: safeMessages,
+        totalMessages: safeMessages.length,
         updatedAt: new Date()
       },
       $setOnInsert: {
@@ -11449,18 +11478,21 @@ if (
 }
 
 async function saveHistoryStep(from, history, userText, botText, isAudio = false) {
-  history.push({
+  const updatedHistory = Array.isArray(history) ? [...history] : [];
+
+  updatedHistory.push({
     role: "user",
-    content: isAudio ? `[Áudio transcrito]: ${userText}` : userText
+    content: isAudio ? `[Áudio transcrito]: ${userText}` : userText,
+    createdAt: new Date()
   });
 
-  history.push({
+  updatedHistory.push({
     role: "assistant",
-    content: botText
+    content: botText,
+    createdAt: new Date()
   });
 
-  history = history.slice(-20);
-  await saveConversation(from, history);
+  await saveConversation(from, updatedHistory);
 }
 
 function buildBackendDecision({
@@ -16786,15 +16818,15 @@ async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {
     const history = await loadConversation(from);
 
     const updatedHistory = [
-      ...(Array.isArray(history) ? history : []),
-      {
-        role: "assistant",
-        content: cleanMessage,
-        origem: "followup_automatico",
-        followupStep: meta.step || null,
-        createdAt: new Date()
-      }
-    ].slice(-30);
+  ...(Array.isArray(history) ? history : []),
+  {
+    role: "assistant",
+    content: cleanMessage,
+    origem: "followup_automatico",
+    followupStep: meta.step || null,
+    createdAt: new Date()
+  }
+];
 
     await saveConversation(from, updatedHistory);
 
@@ -20859,7 +20891,11 @@ auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
      
-history.push({ role: "assistant", content: respostaFinal });
+history.push({
+  role: "assistant",
+  content: respostaFinal,
+  createdAt: new Date()
+});
 
 const leadAtualizadoParaAgentes = await loadLeadProfile(from);
 auditLog("currentLead DEPOIS da resposta da SDR", {
@@ -21043,7 +21079,7 @@ app.get("/conversation/:user", async (req, res) => {
 
     await connectMongo();
 
-    const user = decodeURIComponent(req.params.user);
+    const user = decodeURIComponent(req.params.user || "");
 
     const conversation = await db.collection("conversations").findOne({ user });
     const lead = await db.collection("leads").findOne({ user });
@@ -21056,13 +21092,30 @@ app.get("/conversation/:user", async (req, res) => {
       ? `?senha=${encodeURIComponent(req.query.senha)}`
       : "";
 
-    const rows = messages.map(msg => {
-      const role = msg.role === "user" ? "Lead" : "SDR";
-      const cssClass = msg.role === "user" ? "user" : "assistant";
+    const rows = messages.map((msg, index) => {
+      const role =
+        msg.role === "user"
+          ? "Lead"
+          : msg.role === "assistant"
+            ? "SDR IA"
+            : "Sistema";
+
+      const cssClass =
+        msg.role === "user"
+          ? "user"
+          : msg.role === "assistant"
+            ? "assistant"
+            : "system";
+
+      const when = msg.createdAt || msg.timestamp || msg.date || "";
 
       return `
         <div class="message ${cssClass}">
-          <div class="role">${escapeHtml(role)}</div>
+          <div class="role">
+            #${index + 1} — ${escapeHtml(role)}
+            ${msg.origem === "followup_automatico" ? " · Follow-up automático" : ""}
+          </div>
+          ${when ? `<div class="date">${escapeHtml(formatDate(when))}</div>` : ""}
           <div class="content">${escapeHtml(msg.content || "").replaceAll("\n", "<br>")}</div>
         </div>
       `;
@@ -21101,12 +21154,15 @@ app.get("/conversation/:user", async (req, res) => {
           }
 
           .container {
-            max-width: 900px;
+            max-width: 980px;
             margin: 0 auto;
             padding: 24px;
           }
 
           .topbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
             margin-bottom: 18px;
           }
 
@@ -21128,8 +21184,27 @@ app.get("/conversation/:user", async (req, res) => {
             margin-bottom: 18px;
           }
 
+          .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+          }
+
+          .summary-item {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 10px;
+          }
+
+          .summary-item small {
+            display: block;
+            color: #6b7280;
+            margin-bottom: 4px;
+          }
+
           .message {
-            max-width: 75%;
+            max-width: 78%;
             padding: 12px 14px;
             border-radius: 12px;
             margin-bottom: 12px;
@@ -21146,11 +21221,22 @@ app.get("/conversation/:user", async (req, res) => {
             margin-right: auto;
           }
 
+          .message.system {
+            background: #fef3c7;
+            margin-right: auto;
+          }
+
           .role {
             font-size: 12px;
             font-weight: bold;
             color: #374151;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
+          }
+
+          .date {
+            font-size: 11px;
+            color: #6b7280;
+            margin-bottom: 6px;
           }
 
           .content {
@@ -21161,6 +21247,16 @@ app.get("/conversation/:user", async (req, res) => {
           .empty {
             color: #6b7280;
             font-style: italic;
+          }
+
+          @media (max-width: 800px) {
+            .summary-grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .message {
+              max-width: 95%;
+            }
           }
         </style>
       </head>
@@ -21174,13 +21270,31 @@ app.get("/conversation/:user", async (req, res) => {
         <div class="container">
           <div class="topbar">
             <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
+            <a class="btn" href="/lead/${encodeURIComponent(user)}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
           </div>
 
           <div class="card">
-            <strong>Status:</strong> ${escapeHtml(lead?.status || "-")}<br>
-            <strong>CPF:</strong> ${escapeHtml(lead?.cpf || "-")}<br>
-            <strong>Telefone:</strong> ${escapeHtml(lead?.telefone || lead?.telefoneWhatsApp || user || "-")}<br>
-            <strong>Cidade/Estado:</strong> ${escapeHtml(lead?.cidade || "-")}/${escapeHtml(lead?.estado || "-")}
+            <div class="summary-grid">
+              <div class="summary-item">
+                <small>Total de mensagens salvas</small>
+                <strong>${messages.length}</strong>
+              </div>
+
+              <div class="summary-item">
+                <small>Telefone</small>
+                <strong>${escapeHtml(lead?.telefone || lead?.telefoneWhatsApp || user || "-")}</strong>
+              </div>
+
+              <div class="summary-item">
+                <small>CPF</small>
+                <strong>${escapeHtml(lead?.cpf || "-")}</strong>
+              </div>
+
+              <div class="summary-item">
+                <small>Cidade/Estado</small>
+                <strong>${escapeHtml(lead?.cidade || "-")}/${escapeHtml(lead?.estado || "-")}</strong>
+              </div>
+            </div>
           </div>
 
           <div class="card">
@@ -21196,6 +21310,272 @@ app.get("/conversation/:user", async (req, res) => {
   }
 });
 
+function getLastConversationMessageByRole(history = [], role = "") {
+  if (!Array.isArray(history)) return null;
+
+  for (let index = history.length - 1; index >= 0; index--) {
+    if (history[index]?.role === role) {
+      return history[index];
+    }
+  }
+
+  return null;
+}
+
+function getConversationTextForBriefing(history = []) {
+  const safeHistory = Array.isArray(history) ? history : [];
+
+  /*
+    Evita mandar conversa infinita para o GPT.
+    Para o humano, o resumo considera até as últimas 180 mensagens salvas.
+    O histórico bruto completo fica no botão "Mensagem".
+  */
+  return safeHistory
+    .slice(-180)
+    .map((message, index) => {
+      const role =
+        message.role === "user"
+          ? "Lead"
+          : message.role === "assistant"
+            ? "SDR IA"
+            : "Sistema";
+
+      return `${index + 1}. ${role}: ${message.content || ""}`;
+    })
+    .join("\n");
+}
+
+function buildFallbackHumanBriefing({ lead = {}, history = [] } = {}) {
+  const lastUser = getLastConversationMessageByRole(history, "user");
+  const lastAssistant = getLastConversationMessageByRole(history, "assistant");
+
+  return {
+    resumoExecutivo:
+      "Resumo automático local. Não foi possível gerar briefing completo pelo GPT neste momento.",
+    situacaoAtual:
+      `Status: ${lead?.status || "-"} | Funil: ${lead?.faseFunil || "-"} | Temperatura: ${lead?.temperaturaComercial || "-"}`,
+    rotaComercial:
+      lead?.rotaComercial || lead?.origemConversao || "-",
+    etapaAtual:
+      lead?.faseFunil || lead?.faseQualificacao || "-",
+    oQueJaFoiFalado: [],
+    objecoesIdentificadas: [],
+    duvidasPendentes: [],
+    pontosSensiveis: [],
+    dadosColetados: {
+      nome: lead?.nome || "",
+      cpf: lead?.cpf || "",
+      telefone: lead?.telefone || lead?.telefoneWhatsApp || "",
+      cidade: lead?.cidade || "",
+      estado: lead?.estado || ""
+    },
+    riscosParaHumano: [],
+    proximaMelhorAcaoHumano:
+      "Abrir a conversa completa se precisar de contexto detalhado antes de atender.",
+    tomRecomendado:
+      "Tom consultivo, objetivo e sem repetir assuntos já tratados.",
+    ultimaMensagemLead: lastUser?.content || "",
+    ultimaRespostaSdr: lastAssistant?.content || "",
+    atualizadoEm: new Date()
+  };
+}
+
+function parseHumanBriefingJson(rawText = "", fallback = {}) {
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      atualizadoEm: new Date()
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return fallback;
+      }
+
+      const jsonText = rawText.slice(start, end + 1);
+      const parsed = JSON.parse(jsonText);
+
+      return {
+        ...fallback,
+        ...parsed,
+        atualizadoEm: new Date()
+      };
+    } catch (secondError) {
+      return fallback;
+    }
+  }
+}
+
+async function generateHumanLeadBriefing({
+  lead = {},
+  history = []
+} = {}) {
+  const fallback = buildFallbackHumanBriefing({ lead, history });
+
+  try {
+    const historyText = getConversationTextForBriefing(history);
+
+    const payload = {
+      lead: {
+        nome: lead?.nome || "",
+        telefone: lead?.telefone || lead?.telefoneWhatsApp || lead?.user || "",
+        cpf: lead?.cpf || "",
+        cidade: lead?.cidade || "",
+        estado: lead?.estado || "",
+        status: lead?.status || "",
+        faseQualificacao: lead?.faseQualificacao || "",
+        statusOperacional: lead?.statusOperacional || "",
+        faseFunil: lead?.faseFunil || "",
+        temperaturaComercial: lead?.temperaturaComercial || "",
+        rotaComercial: lead?.rotaComercial || lead?.origemConversao || "",
+        interesseReal: lead?.interesseReal === true,
+        interesseAfiliado: lead?.interesseAfiliado === true,
+        taxaAlinhada: lead?.taxaAlinhada === true,
+        taxaObjectionCount: Number(lead?.taxaObjectionCount || 0),
+        dadosConfirmadosPeloLead: lead?.dadosConfirmadosPeloLead === true,
+        crmEnviado: lead?.crmEnviado === true,
+        humanoAssumiu: lead?.humanoAssumiu === true,
+        atendimentoHumanoAtivo: lead?.atendimentoHumanoAtivo === true,
+        etapas: lead?.etapas || {},
+        ultimaMensagem: lead?.ultimaMensagem || ""
+      },
+      supervisor: lead?.supervisor || {},
+      classificacao: lead?.classificacao || {},
+      consultoria: lead?.consultoria || {},
+      totalMensagensSalvas: Array.isArray(history) ? history.length : 0,
+      historicoConsiderado: historyText
+    };
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SUMMARY_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `
+Você é o Analista de Briefing Comercial Humano da IQG.
+
+Você NÃO conversa com o lead.
+Você NÃO altera status.
+Você NÃO envia CRM.
+Você NÃO decide pagamento.
+Você cria um resumo executivo para um SDR humano assumir o atendimento rapidamente.
+
+Objetivo:
+O humano deve bater o olho e entender:
+- quem é o lead;
+- o que ele quer;
+- qual caminho comercial está mais provável;
+- o que a SDR IA já explicou;
+- quais objeções apareceram;
+- quais dúvidas ficaram;
+- quais riscos existem;
+- qual o melhor próximo passo;
+- qual tom usar na abordagem.
+
+Regras:
+1. Seja objetivo, mas completo.
+2. Não invente fatos.
+3. Diferencie objeção real de simples dúvida.
+4. Diferencie Homologado, Afiliado e Ambos.
+5. Destaque taxa, estoque, comodato, contrato, garantia, desconfiança e dados coletados quando aparecerem.
+6. Informe se o lead aceitou seguir, recusou, esfriou, pediu humano ou está em coleta.
+7. Se houver erro da SDR, repetição ou confusão, cite com cuidado como "atenção na condução".
+8. Não exponha termos internos como "GPT", "prompt", "backend", "classificador" ou "historiador" no texto final.
+
+Retorne somente JSON válido neste formato:
+
+{
+  "resumoExecutivo": "",
+  "situacaoAtual": "",
+  "rotaComercial": "",
+  "etapaAtual": "",
+  "oQueJaFoiFalado": [],
+  "objecoesIdentificadas": [],
+  "duvidasPendentes": [],
+  "pontosSensiveis": [],
+  "dadosColetados": {
+    "nome": "",
+    "cpf": "",
+    "telefone": "",
+    "cidade": "",
+    "estado": ""
+  },
+  "riscosParaHumano": [],
+  "proximaMelhorAcaoHumano": "",
+  "tomRecomendado": "",
+  "ultimaMensagemLead": "",
+  "ultimaRespostaSdr": ""
+}
+`
+          },
+          {
+            role: "user",
+            content: JSON.stringify(payload)
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao gerar briefing humano:", data);
+      return fallback;
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+
+    return parseHumanBriefingJson(rawText, fallback);
+  } catch (error) {
+    console.error("Falha ao gerar briefing humano:", error.message);
+    return fallback;
+  }
+}
+
+function shouldRefreshHumanBriefing(lead = {}, conversationDoc = {}) {
+  const briefing = lead?.resumoAtendimentoHumano || null;
+
+  if (!briefing) return true;
+
+  const briefingAt = briefing?.atualizadoEm
+    ? new Date(briefing.atualizadoEm).getTime()
+    : 0;
+
+  const conversationUpdatedAt = conversationDoc?.updatedAt
+    ? new Date(conversationDoc.updatedAt).getTime()
+    : 0;
+
+  if (!briefingAt) return true;
+
+  return conversationUpdatedAt > briefingAt;
+}
+
+function renderBriefingList(items = []) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return `<p class="empty">Nenhum ponto registrado.</p>`;
+  }
+
+  return `
+    <ul>
+      ${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
 app.get("/lead/:user/dados-adicionais", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
@@ -21207,37 +21587,33 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
       ? `?senha=${encodeURIComponent(req.query.senha)}`
       : "";
 
-    const lead = await db.collection("leads").findOne({ user });
-    const history = await loadConversation(user);
+    let lead = await db.collection("leads").findOne({ user });
+    const conversationDoc = await db.collection("conversations").findOne({ user });
 
-    const rows = Array.isArray(history)
-      ? history
-          .map(message => {
-            const role = message.role === "assistant"
-              ? "SDR IA"
-              : message.role === "user"
-                ? "Lead"
-                : message.role || "Sistema";
+    const history = Array.isArray(conversationDoc?.messages)
+      ? conversationDoc.messages
+      : [];
 
-            const cssClass = message.role === "assistant"
-              ? "assistant"
-              : message.role === "user"
-                ? "user"
-                : "system";
+    if (!lead) {
+      return res.status(404).send("Lead não encontrado.");
+    }
 
-            const content = escapeHtml(message.content || "");
-            const createdAt = message.createdAt || message.timestamp || message.date || "";
+    let briefing = lead?.resumoAtendimentoHumano || null;
 
-            return `
-              <div class="message ${cssClass}">
-                <div class="role">${escapeHtml(role)}</div>
-                ${createdAt ? `<div class="date">${escapeHtml(formatDate(createdAt))}</div>` : ""}
-                <div class="content">${content}</div>
-              </div>
-            `;
-          })
-          .join("")
-      : "";
+    if (shouldRefreshHumanBriefing(lead, conversationDoc)) {
+      briefing = await generateHumanLeadBriefing({
+        lead,
+        history
+      });
+
+      await saveLeadProfile(user, {
+        resumoAtendimentoHumano: briefing
+      });
+
+      lead = await loadLeadProfile(user);
+    }
+
+    const dados = briefing?.dadosColetados || {};
 
     res.send(`
       <!DOCTYPE html>
@@ -21273,7 +21649,7 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
           }
 
           .container {
-            max-width: 1050px;
+            max-width: 1100px;
             margin: 0 auto;
             padding: 24px;
           }
@@ -21297,6 +21673,10 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
 
           .btn.whatsapp {
             background: #16a34a;
+          }
+
+          .btn.info {
+            background: #2563eb;
           }
 
           .card {
@@ -21331,45 +21711,25 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
             font-size: 15px;
           }
 
-          .message {
-            max-width: 78%;
-            padding: 12px 14px;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            line-height: 1.45;
+          .briefing-main {
+            border-left: 5px solid #2563eb;
           }
 
-          .message.user {
-            background: #dcfce7;
-            margin-left: auto;
+          h2 {
+            margin-top: 0;
           }
 
-          .message.assistant {
-            background: #e5e7eb;
-            margin-right: auto;
+          h3 {
+            margin-bottom: 8px;
           }
 
-          .message.system {
-            background: #fef3c7;
-            margin-right: auto;
+          ul {
+            margin-top: 8px;
+            padding-left: 20px;
           }
 
-          .role {
-            font-size: 12px;
-            font-weight: bold;
-            color: #374151;
-            margin-bottom: 5px;
-          }
-
-          .date {
-            font-size: 11px;
-            color: #6b7280;
+          li {
             margin-bottom: 6px;
-          }
-
-          .content {
-            font-size: 15px;
-            white-space: pre-wrap;
           }
 
           .empty {
@@ -21377,13 +21737,24 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
             font-style: italic;
           }
 
-          @media (max-width: 800px) {
+          .highlight {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            padding: 14px;
+            line-height: 1.5;
+          }
+
+          .warning {
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 10px;
+            padding: 14px;
+          }
+
+          @media (max-width: 900px) {
             .grid {
               grid-template-columns: repeat(2, minmax(0, 1fr));
-            }
-
-            .message {
-              max-width: 92%;
             }
           }
         </style>
@@ -21398,8 +21769,8 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
         <div class="container">
           <div class="topbar">
             <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
-            <a class="btn whatsapp" href="https://wa.me/${escapeHtml(lead?.telefoneWhatsApp || lead?.user || user)}" target="_blank">WhatsApp</a>
-            <a class="btn" href="/conversation/${encodeURIComponent(user)}${senhaQuery}">Mensagens</a>
+            <a class="btn info" href="/conversation/${encodeURIComponent(user)}${senhaQuery}">Ver conversa completa</a>
+            <a class="btn whatsapp" href="https://wa.me/${escapeHtml(lead?.telefoneWhatsApp || lead?.telefone || lead?.user || user)}" target="_blank">WhatsApp</a>
           </div>
 
           <div class="card">
@@ -21425,30 +21796,107 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
               </div>
 
               <div class="info">
-                <small>Nome</small>
-                <strong>${escapeHtml(lead?.nome || "-")}</strong>
-              </div>
-
-              <div class="info">
-                <small>Telefone</small>
-                <strong>${escapeHtml(lead?.telefone || lead?.telefoneWhatsApp || user || "-")}</strong>
-              </div>
-
-              <div class="info">
-                <small>CPF</small>
-                <strong>${escapeHtml(lead?.cpf || "-")}</strong>
+                <small>Total mensagens salvas</small>
+                <strong>${history.length}</strong>
               </div>
 
               <div class="info">
                 <small>Atualizado</small>
                 <strong>${formatDate(lead?.updatedAt)}</strong>
               </div>
+
+              <div class="info">
+                <small>Resumo atualizado</small>
+                <strong>${formatDate(briefing?.atualizadoEm)}</strong>
+              </div>
+
+              <div class="info">
+                <small>Humano</small>
+                <strong>${lead?.humanoAssumiu || lead?.atendimentoHumanoAtivo || lead?.botBloqueadoPorHumano ? "Sim" : "Não"}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card briefing-main">
+            <h2>Resumo Executivo para SDR Humano</h2>
+            <div class="highlight">
+              ${escapeHtml(briefing?.resumoExecutivo || "Resumo ainda não gerado.")}
             </div>
           </div>
 
           <div class="card">
-            <h2 style="margin-top:0;">Histórico da Conversa</h2>
-            ${rows || `<p class="empty">Nenhuma mensagem encontrada para este lead.</p>`}
+            <h2>Situação Atual</h2>
+            <p><strong>Etapa atual:</strong> ${escapeHtml(briefing?.etapaAtual || "-")}</p>
+            <p><strong>Rota comercial:</strong> ${escapeHtml(briefing?.rotaComercial || "-")}</p>
+            <p><strong>Situação:</strong> ${escapeHtml(briefing?.situacaoAtual || "-")}</p>
+          </div>
+
+          <div class="card">
+            <h2>O que já foi falado</h2>
+            ${renderBriefingList(briefing?.oQueJaFoiFalado || [])}
+          </div>
+
+          <div class="card">
+            <h2>Objeções identificadas</h2>
+            ${renderBriefingList(briefing?.objecoesIdentificadas || [])}
+          </div>
+
+          <div class="card">
+            <h2>Dúvidas pendentes</h2>
+            ${renderBriefingList(briefing?.duvidasPendentes || [])}
+          </div>
+
+          <div class="card warning">
+            <h2>Pontos sensíveis / cuidados</h2>
+            ${renderBriefingList(briefing?.pontosSensiveis || [])}
+          </div>
+
+          <div class="card">
+            <h2>Dados coletados</h2>
+            <div class="grid">
+              <div class="info">
+                <small>Nome</small>
+                <strong>${escapeHtml(dados?.nome || lead?.nome || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>CPF</small>
+                <strong>${escapeHtml(dados?.cpf || lead?.cpf || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Telefone</small>
+                <strong>${escapeHtml(dados?.telefone || lead?.telefone || lead?.telefoneWhatsApp || user || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Cidade/Estado</small>
+                <strong>${escapeHtml(dados?.cidade || lead?.cidade || "-")}/${escapeHtml(dados?.estado || lead?.estado || "-")}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Riscos para o humano observar</h2>
+            ${renderBriefingList(briefing?.riscosParaHumano || [])}
+          </div>
+
+          <div class="card">
+            <h2>Próxima Melhor Ação</h2>
+            <div class="highlight">
+              ${escapeHtml(briefing?.proximaMelhorAcaoHumano || "-")}
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Tom recomendado</h2>
+            <p>${escapeHtml(briefing?.tomRecomendado || "-")}</p>
+          </div>
+
+          <div class="card">
+            <h2>Últimas mensagens</h2>
+            <p><strong>Última mensagem do lead:</strong><br>${escapeHtml(briefing?.ultimaMensagemLead || "-")}</p>
+            <p><strong>Última resposta da SDR IA:</strong><br>${escapeHtml(briefing?.ultimaRespostaSdr || "-")}</p>
           </div>
         </div>
       </body>
@@ -21459,7 +21907,6 @@ app.get("/lead/:user/dados-adicionais", async (req, res) => {
     res.status(500).send("Erro ao carregar dados adicionais.");
   }
 });
-
    app.get("/dashboard", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
