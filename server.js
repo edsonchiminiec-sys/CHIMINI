@@ -14778,6 +14778,50 @@ function isDataFlowState(lead = {}) {
   );
 }
 
+/* =========================
+   REGRA COMERCIAL — CNPJ E PONTO FÍSICO
+   Parceiro Homologado IQG não exige CNPJ nem loja física para iniciar.
+========================= */
+
+function normalizeSimpleText(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function leadPerguntouSobreCnpjEmpresaOuPontoFisico(text = "") {
+  const t = normalizeSimpleText(text);
+
+  if (!t) return false;
+
+  const citouCnpjOuEmpresa =
+    /\b(cnpj|empresa|mei|mei aberto|abrir empresa|tenho que ter empresa|preciso ter empresa|nao tenho empresa|não tenho empresa)\b/i.test(t);
+
+  const citouPontoFisico =
+    /\b(ponto fisico|ponto físico|loja fisica|loja física|loja|endereco comercial|endereço comercial|sala comercial|comercio|comércio)\b/i.test(t);
+
+  return citouCnpjOuEmpresa || citouPontoFisico;
+}
+
+function buildOrientacaoCnpjPontoFisicoHomologado() {
+  return [
+    "REGRA COMERCIAL OBRIGATÓRIA SOBRE CNPJ/PONTO FÍSICO:",
+    "Para iniciar no Programa Parceiro Homologado IQG, o lead NÃO precisa ter CNPJ próprio.",
+    "Também NÃO precisa ter ponto físico, loja física, sala comercial ou empresa aberta.",
+    "Esse é um benefício do modelo: o parceiro pode começar sem estrutura formal própria.",
+    "O faturamento, emissão e custos tributários/impostos da operação ficam pela IQG, conforme o processo interno da empresa.",
+    "A SDR deve explicar isso como vantagem e redução de barreira de entrada.",
+    "Não dizer que CNPJ é obrigatório.",
+    "Não dizer que ponto físico é obrigatório.",
+    "Não usar a frase 'CNPJ é necessário para formalizar a parceria'.",
+    "Se o lead disse que não tem empresa, responder com tranquilidade que isso não impede a pré-análise.",
+    "Depois de esclarecer, só retomar a coleta se o lead parecer tranquilo. Se o lead estiver confuso, perguntar se ficou claro antes de pedir dados."
+  ].join("\n");
+}
+
 function isLikelyPureDataAnswer(text = "", currentLead = {}) {
   const cleanText = String(text || "").trim();
 
