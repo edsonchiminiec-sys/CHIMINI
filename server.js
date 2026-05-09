@@ -19239,17 +19239,19 @@ if (
   return;
 }     
     // 🔥 MONGO HISTÓRICO
-   
-    history.push({
+// Salva a mensagem atual do lead no histórico completo.
+// NÃO cortar aqui com slice(-20), senão o botão "Mensagem" continua mostrando só o final da conversa.
+// O limite seguro agora fica dentro de saveConversation(), com até 1000 mensagens.
+
+history.push({
   role: "user",
-  content: message.audio?.id ? `[Áudio transcrito]: ${text}` : text
+  content: message.audio?.id ? `[Áudio transcrito]: ${text}` : text,
+  createdAt: new Date()
 });
-history = history.slice(-20);
 
 const sdrInternalStrategicContext = buildSdrInternalStrategicContext({
   lead: currentLead
 });
-
 const sdrConversationMemory = buildConversationMemoryForAgents({
   lead: currentLead || {},
   history,
