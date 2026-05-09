@@ -20987,11 +20987,14 @@ if (
 // 📎 BLOCO 8B — SINCRONIZA ACTIONS DA RESPOSTA FINAL
 // Como a SDR pode ter revisado a resposta, os comandos de arquivo precisam
 // ser extraídos novamente da resposta final real que será enviada ao lead.
+// 📎 BLOCO 8B — SINCRONIZA ACTIONS DA RESPOSTA FINAL
+// Como a SDR pode ter revisado a resposta, os comandos de arquivo precisam
+// ser extraídos novamente da resposta final real que será enviada ao lead.
 const syncedFinalReply = syncActionsFromFinalReply({
   respostaFinal,
   actions
 });
-     
+
 respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 
 /*
@@ -21015,6 +21018,11 @@ if (respostaFinal !== respostaAntesDaBarreiraFinalLeak) {
     depois: respostaFinal
   });
 }
+
+console.log("📎 Actions sincronizados com a resposta final:", {
+  user: from,
+  actions: syncedFinalReply.actions || []
+});
 
 console.log("📎 Actions sincronizados com a resposta final:",
   user: from,
