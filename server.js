@@ -22317,7 +22317,7 @@ const countByStatus = status =>
   allLeads.filter(lead => getVisualStatus(lead) === status).length;
 
 const total = allLeads.length;
-const inicio = countByStatus("inicio");
+
 const novo = countByStatus("novo");
 const morno = countByStatus("morno");
 const qualificando = countByStatus("qualificando");
@@ -22326,6 +22326,152 @@ const quente = countByStatus("quente");
 const atendimento = countByStatus("em_atendimento");
 const fechado = countByStatus("fechado");
 const perdido = countByStatus("perdido");
+
+const now = new Date();
+
+const startOfToday = new Date(now);
+startOfToday.setHours(0, 0, 0, 0);
+
+const sevenDaysAgo = new Date(now);
+sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+const toDateMs = value => {
+  if (!value) return 0;
+
+  const date = new Date(value);
+  const ms = date.getTime();
+
+  return Number.isFinite(ms) ? ms : 0;
+};
+
+const isAfterDate = (value, date) => {
+  const ms = toDateMs(value);
+  return ms && ms >= date.getTime();
+};
+
+const pct = (part, base) => {
+  if (!base || base <= 0) return "0%";
+  return `${((Number(part || 0) / Number(base || 0)) * 100).toFixed(1).replace(".", ",")}%`;
+};
+
+const numberBr = value => {
+  return Number(value || 0).toLocaleString("pt-BR");
+};
+
+const leadCreatedAt = lead => lead.createdAt || lead.created_at || lead.dataEntrada || lead.updatedAt;
+
+const leadsHoje = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), startOfToday)).length;
+const leadsUltimos7Dias = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), sevenDaysAgo)).length;
+
+const isQualifiedLead = lead => {
+  const status = getVisualStatus(lead);
+  const faseFunil = lead?.faseFunil || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
+  const temperatura = lead?.temperaturaComercial || "";
+
+  return Boolean(
+    ["morno", "qualificando", "pre_analise", "quente", "em_atendimento", "fechado"].includes(status) ||
+    ["beneficios", "estoque", "responsabilidades", "investimento", "compromisso", "coleta_dados", "pre_analise", "crm"].includes(faseFunil) ||
+    ["morno", "qualificando", "coletando_dados", "dados_parciais", "dados_confirmados", "em_atendimento", "enviado_crm"].includes(faseQualificacao) ||
+    ["morno", "quente"].includes(temperatura) ||
+    lead?.interesseReal === true
+  );
+};
+
+const hasTaxPresented = lead => {
+  const etapas = lead?.etapas || {};
+
+  return Boolean(
+    etapas.investimento === true ||
+    etapas.taxaPerguntada === true ||
+    lead?.taxaAlinhada === true ||
+    lead?.taxaApresentada === true ||
+    lead?.taxaApresentadaEm ||
+    Number(lead?.taxaObjectionCount || 0) > 0
+  );
+};
+
+const hasTaxObjection = lead => {
+  return Boolean(
+    Number(lead?.taxaObjectionCount || 0) > 0 ||
+    lead?.sinalObjecaoTaxa === true ||
+    lead?.taxaModoConversao === true
+  );
+};
+
+const startedPreAnalysis = lead => {
+  const faseFunil = lead?.faseFunil || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
+
+  return Boolean(
+    ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(faseFunil) ||
+    ["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "dados_confirmados", "enviado_crm"].includes(faseQualificacao) ||
+    lead?.campoEsperado ||
+    lead?.dadosConfirmadosPeloLead === true ||
+    lead?.crmEnviado === true
+  );
+};
+
+const hasCompleteLeadData = lead => {
+  return Boolean(
+    lead?.dadosConfirmadosPeloLead === true ||
+    (
+      lead?.nome &&
+      lead?.cpf &&
+      (lead?.telefone || lead?.telefoneWhatsApp || lead?.user) &&
+      lead?.cidade &&
+      lead?.estado
+    )
+  );
+};
+
+const recoveredByAffiliate = lead => {
+  return Boolean(
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseFunil === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado" ||
+    lead?.interesseAfiliado === true ||
+    lead?.afiliadoOferecidoComoAlternativa === true ||
+    lead?.afiliadoInstrucoesEnviadas === true
+  );
+};
+
+const qualifiedCount = allLeads.filter(isQualifiedLead).length;
+const taxPresentedCount = allLeads.filter(hasTaxPresented).length;
+const taxObjectionCount = allLeads.filter(hasTaxObjection).length;
+
+const recoveredAfterObjectionCount = allLeads.filter(lead => {
+  return hasTaxObjection(lead) && (
+    startedPreAnalysis(lead) ||
+    hasCompleteLeadData(lead) ||
+    lead?.status === "em_atendimento" ||
+    lead?.statusOperacional === "em_atendimento" ||
+    lead?.status === "fechado" ||
+    lead?.crmEnviado === true
+  );
+}).length;
+
+const preAnalysisStartedCount = allLeads.filter(startedPreAnalysis).length;
+const completeDataCount = allLeads.filter(hasCompleteLeadData).length;
+
+const homologadoNotCompletedCount = allLeads.filter(lead => {
+  return Boolean(
+    hasTaxObjection(lead) ||
+    lead?.status === "perdido" ||
+    lead?.faseFunil === "encerrado" ||
+    lead?.deveOferecerAfiliadoComoAlternativa === true ||
+    lead?.afiliadoOferecidoComoAlternativa === true
+  );
+}).length;
+
+const affiliateRecoveredCount = allLeads.filter(recoveredByAffiliate).length;
+
+const kpiQualificados = pct(qualifiedCount, total);
+const kpiTaxaApresentada = pct(taxPresentedCount, total);
+const kpiObjecaoTaxa = pct(taxObjectionCount, taxPresentedCount);
+const kpiRecuperacaoPosObjecao = pct(recoveredAfterObjectionCount, taxObjectionCount);
+const kpiRecuperadosAfiliados = pct(affiliateRecoveredCount, homologadoNotCompletedCount);
 
     const senhaParam = req.query.senha ? `&senha=${encodeURIComponent(req.query.senha)}` : "";
     const senhaQuery = req.query.senha ? `?senha=${encodeURIComponent(req.query.senha)}` : "";
@@ -22342,6 +22488,157 @@ const perdido = countByStatus("perdido");
 
       return `/dashboard?sort=${field}&dir=${nextDir}${filtrosNovos}`;
     };
+
+     const funnelCardsHtml = [
+  {
+    title: "Total",
+    value: numberBr(total),
+    subtitle: "100% do total",
+    icon: "👥",
+    color: "blue"
+  },
+  {
+    title: "Novo",
+    value: numberBr(novo),
+    subtitle: `${pct(novo, total)} do total`,
+    icon: "➕",
+    color: "green"
+  },
+  {
+    title: "Morno",
+    value: numberBr(morno),
+    subtitle: `${pct(morno, total)} do total`,
+    icon: "🔥",
+    color: "orange"
+  },
+  {
+    title: "Qualificando",
+    value: numberBr(qualificando),
+    subtitle: `${pct(qualificando, total)} do total`,
+    icon: "💬",
+    color: "purple"
+  },
+  {
+    title: "Pré-análise",
+    value: numberBr(preAnalise),
+    subtitle: `${pct(preAnalise, total)} do total`,
+    icon: "📋",
+    color: "cyan"
+  },
+  {
+    title: "Quente",
+    value: numberBr(quente),
+    subtitle: `${pct(quente, total)} do total`,
+    icon: "🎯",
+    color: "red"
+  },
+  {
+    title: "Atendimento",
+    value: numberBr(atendimento),
+    subtitle: `${pct(atendimento, total)} do total`,
+    icon: "🎧",
+    color: "blue"
+  },
+  {
+    title: "Fechado",
+    value: numberBr(fechado),
+    subtitle: `${pct(fechado, total)} do total`,
+    icon: "✓",
+    color: "green"
+  },
+  {
+    title: "Perdido",
+    value: numberBr(perdido),
+    subtitle: `${pct(perdido, total)} do total`,
+    icon: "×",
+    color: "gray"
+  }
+].map(card => `
+  <div class="metric-card ${card.color}">
+    <div class="metric-top">
+      <span class="metric-icon">${card.icon}</span>
+      <span class="metric-title">${card.title}</span>
+    </div>
+    <div class="metric-value">${card.value}</div>
+    <div class="metric-subtitle">${card.subtitle}</div>
+  </div>
+`).join("");
+
+const kpiCardsHtml = [
+  {
+    title: "Leads Hoje",
+    value: numberBr(leadsHoje),
+    description: "Novos leads recebidos hoje no sistema.",
+    icon: "👥",
+    color: "blue"
+  },
+  {
+    title: "Leads últimos 7 dias",
+    value: numberBr(leadsUltimos7Dias),
+    description: "Total de leads recebidos nos últimos 7 dias.",
+    icon: "🗓️",
+    color: "green"
+  },
+  {
+    title: "Qualificados %",
+    value: kpiQualificados,
+    description: "Leads que avançaram além do estágio inicial e demonstraram interesse real.",
+    icon: "⭐",
+    color: "orange"
+  },
+  {
+    title: "Taxa Apresentada %",
+    value: kpiTaxaApresentada,
+    description: "Leads que chegaram até a etapa em que a taxa/investimento foi apresentada.",
+    icon: "💰",
+    color: "purple"
+  },
+  {
+    title: "Objeção Taxa %",
+    value: kpiObjecaoTaxa,
+    description: "Leads que apresentaram objeção à taxa entre os que ouviram a proposta.",
+    icon: "⚠️",
+    color: "red"
+  },
+  {
+    title: "Recuperação Pós-Objeção %",
+    value: kpiRecuperacaoPosObjecao,
+    description: "Leads que objetaram a taxa, mas avançaram depois no funil.",
+    icon: "↗️",
+    color: "green"
+  },
+  {
+    title: "Leads que iniciaram pré-análise",
+    value: numberBr(preAnalysisStartedCount),
+    description: "Quantidade de leads que chegaram à pré-análise ou início da coleta de dados.",
+    icon: "📄",
+    color: "blue"
+  },
+  {
+    title: "Leads com dados completos",
+    value: numberBr(completeDataCount),
+    description: "Quantidade de leads que concluíram os dados necessários para análise.",
+    icon: "📋",
+    color: "cyan"
+  },
+  {
+    title: "Recuperados por Afiliados %",
+    value: kpiRecuperadosAfiliados,
+    description: "Leads que não seguiram no Homologado, mas foram reaproveitados pelo Afiliados.",
+    icon: "👥",
+    color: "pink"
+  }
+].map(card => `
+  <div class="kpi-card ${card.color}">
+    <div class="kpi-header">
+      <span class="kpi-icon">${card.icon}</span>
+      <span class="kpi-info" title="${escapeHtml(card.description)}">ⓘ</span>
+    </div>
+    <div class="kpi-title">${card.title}</div>
+    <div class="kpi-value">${card.value}</div>
+    <div class="kpi-description">${card.description}</div>
+  </div>
+`).join("");
 
     const rows = leads.map(lead => {
   const phone = lead.telefoneWhatsApp || lead.telefone || lead.user || "";
@@ -22393,166 +22690,505 @@ const perdido = countByStatus("perdido");
         <title>CRM IQG</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-        <style>
-          * { box-sizing: border-box; }
+        /* =========================================================
+   DASHBOARD IQG — VISUAL MODERNO COM KPIS
+   Cola este bloco no FINAL do <style> do /dashboard,
+   imediatamente antes de </style>
+========================================================= */
 
-          body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f3f4f6;
-            color: #111827;
-          }
+:root {
+  --iqg-bg: #f6f8fb;
+  --iqg-card: #ffffff;
+  --iqg-border: #e6eaf0;
+  --iqg-text: #12213a;
+  --iqg-muted: #64748b;
+  --iqg-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --iqg-shadow-soft: 0 4px 14px rgba(15, 23, 42, 0.06);
+  --iqg-blue: #2563eb;
+  --iqg-green: #16a34a;
+  --iqg-orange: #f59e0b;
+  --iqg-purple: #8b5cf6;
+  --iqg-cyan: #0891b2;
+  --iqg-red: #dc2626;
+  --iqg-pink: #db2777;
+  --iqg-gray: #4b5563;
+}
 
-          header {
-            background: #111827;
-            color: white;
-            padding: 22px 30px;
-          }
+* {
+  box-sizing: border-box;
+}
 
-          header h1 {
-            margin: 0;
-            font-size: 26px;
-          }
+body {
+  margin: 0;
+  font-family: Inter, Arial, sans-serif;
+  background: var(--iqg-bg);
+  color: var(--iqg-text);
+}
 
-          header p {
-            margin: 6px 0 0;
-            color: #d1d5db;
-          }
+/* Página principal nova */
+.dashboard-page {
+  max-width: 1920px;
+  margin: 0 auto;
+  padding: 28px 28px 40px;
+}
 
-          .container {
-            padding: 24px;
-          }
+/* Cabeçalho igual ao modelo da imagem */
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 28px;
+}
 
-          .cards {
-            display: grid;
-            grid-template-columns: repeat(8, minmax(120px, 1fr));
-            gap: 12px;
-            margin-bottom: 22px;
-          }
+.dashboard-title h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 800;
+  color: #102033;
+  letter-spacing: -0.03em;
+}
 
-          .card {
-            background: white;
-            border-radius: 12px;
-            padding: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-          }
+.dashboard-title p {
+  margin: 10px 0 0;
+  font-size: 15px;
+  color: var(--iqg-muted);
+}
 
-          .card small {
-            color: #6b7280;
-            display: block;
-            margin-bottom: 8px;
-          }
+.dashboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--iqg-muted);
+  font-size: 14px;
+}
 
-          .card strong {
-            font-size: 24px;
-          }
+.date-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 16px;
+  background: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  box-shadow: var(--iqg-shadow-soft);
+  color: #334155;
+  min-width: 250px;
+  justify-content: center;
+}
 
-          .toolbar {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 18px;
-            background: white;
-            padding: 16px;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-          }
+.refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  white-space: nowrap;
+}
 
-          input, select, button {
-            padding: 10px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 8px;
-            font-size: 14px;
-          }
+/* Blocos das seções */
+.section-panel {
+  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--iqg-border);
+  border-radius: 10px;
+  padding: 18px 16px 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+}
 
-          button {
-            background: #111827;
-            color: white;
-            cursor: pointer;
-          }
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 18px;
+  font-size: 20px;
+  font-weight: 800;
+  color: #111827;
+}
 
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-          }
+.section-title .section-icon {
+  font-size: 22px;
+  color: var(--iqg-blue);
+}
 
-          th, td {
-            padding: 13px;
-            border-bottom: 1px solid #e5e7eb;
-            text-align: left;
-            vertical-align: top;
-            font-size: 14px;
-          }
+/* Linha superior: status do funil */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(145px, 1fr));
+  gap: 14px;
+}
 
-          th {
-            background: #111827;
-            color: white;
-            white-space: nowrap;
-          }
+/* Linha inferior: KPIs */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(145px, 1fr));
+  gap: 14px;
+}
 
-          th a {
-            color: white;
-            text-decoration: none;
-          }
+/* Cards principais */
+.metric-card,
+.kpi-card {
+  background: var(--iqg-card);
+  border: 1px solid var(--iqg-border);
+  border-radius: 10px;
+  padding: 14px 15px;
+  min-height: 126px;
+  box-shadow: var(--iqg-shadow-soft);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
 
-          tr:hover {
-            background: #f9fafb;
-          }
+.metric-card:hover,
+.kpi-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--iqg-shadow);
+}
 
-          .msg {
-            max-width: 320px;
-          }
+.metric-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
 
-          .badge {
-            padding: 6px 10px;
-            border-radius: 999px;
-            font-weight: bold;
-            font-size: 12px;
-            display: inline-block;
-            white-space: nowrap;
-          }
+.metric-icon,
+.kpi-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  flex: 0 0 auto;
+  background: #eff6ff;
+}
 
-          .novo { background: #e5e7eb; color: #374151; }
-          .morno { background: #fef3c7; color: #92400e; }
-          .qualificando { background: #dbeafe; color: #1d4ed8; }
-          .pre_analise { background: #ede9fe; color: #6d28d9; }
-          .quente { background: #dcfce7; color: #166534; }
-          .em_atendimento { background: #ffedd5; color: #c2410c; }
-          .fechado { background: #bbf7d0; color: #14532d; }
-          .perdido { background: #fee2e2; color: #991b1b; }
-          .dados_parciais { background: #fef3c7; color: #92400e; }
-.aguardando_confirmacao_dados { background: #ffedd5; color: #c2410c; }
-.dados_confirmados { background: #dcfce7; color: #166534; }
-.erro_dados { background: #fee2e2; color: #991b1b; }
-.erro_envio_crm { background: #fee2e2; color: #991b1b; }
-.aguardando_confirmacao_campo { background: #e0f2fe; color: #075985; }
-.corrigir_dado { background: #fef3c7; color: #92400e; }
-.qualificado { background: #dcfce7; color: #166534; }
+.metric-title,
+.kpi-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.25;
+}
 
-          .actions {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-          }
+.metric-value {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 900;
+  margin: 18px 0 10px;
+  letter-spacing: -0.02em;
+}
 
-          .btn {
-            display: inline-block;
-            padding: 7px 9px;
-            border-radius: 7px;
-            background: #374151;
-            color: white;
-            text-decoration: none;
-            font-size: 12px;
-          }
+.metric-subtitle {
+  color: var(--iqg-muted);
+  font-size: 12px;
+}
 
-          .btn.whatsapp { background: #16a34a; }
-.btn.info { background: #2563eb; }
-.btn.success { background: #15803d; }
-.btn.danger { background: #dc2626; }
+/* Cards de KPI com descrição */
+.kpi-card {
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kpi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.kpi-info {
+  color: #94a3b8;
+  font-size: 17px;
+  cursor: help;
+}
+
+.kpi-value {
+  font-size: 31px;
+  line-height: 1;
+  font-weight: 900;
+  margin: 16px 0 12px;
+  letter-spacing: -0.03em;
+}
+
+.kpi-description {
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.45;
+}
+
+/* Cores dos valores */
+.blue .metric-value,
+.blue .kpi-value {
+  color: var(--iqg-blue);
+}
+
+.green .metric-value,
+.green .kpi-value {
+  color: var(--iqg-green);
+}
+
+.orange .metric-value,
+.orange .kpi-value {
+  color: var(--iqg-orange);
+}
+
+.purple .metric-value,
+.purple .kpi-value {
+  color: var(--iqg-purple);
+}
+
+.cyan .metric-value,
+.cyan .kpi-value {
+  color: var(--iqg-cyan);
+}
+
+.red .metric-value,
+.red .kpi-value {
+  color: var(--iqg-red);
+}
+
+.pink .metric-value,
+.pink .kpi-value {
+  color: var(--iqg-pink);
+}
+
+.gray .metric-value,
+.gray .kpi-value {
+  color: var(--iqg-gray);
+}
+
+/* Cores dos ícones */
+.blue .metric-icon,
+.blue .kpi-icon {
+  background: #dbeafe;
+  color: var(--iqg-blue);
+}
+
+.green .metric-icon,
+.green .kpi-icon {
+  background: #dcfce7;
+  color: var(--iqg-green);
+}
+
+.orange .metric-icon,
+.orange .kpi-icon {
+  background: #ffedd5;
+  color: var(--iqg-orange);
+}
+
+.purple .metric-icon,
+.purple .kpi-icon {
+  background: #f3e8ff;
+  color: var(--iqg-purple);
+}
+
+.cyan .metric-icon,
+.cyan .kpi-icon {
+  background: #cffafe;
+  color: var(--iqg-cyan);
+}
+
+.red .metric-icon,
+.red .kpi-icon {
+  background: #fee2e2;
+  color: var(--iqg-red);
+}
+
+.pink .metric-icon,
+.pink .kpi-icon {
+  background: #fce7f3;
+  color: var(--iqg-pink);
+}
+
+.gray .metric-icon,
+.gray .kpi-icon {
+  background: #f3f4f6;
+  color: var(--iqg-gray);
+}
+
+/* Caixa explicativa abaixo dos KPIs */
+.kpi-help {
+  display: flex;
+  gap: 14px;
+  background: #eef6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-top: 14px;
+  color: #334155;
+}
+
+.kpi-help-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #3b82f6;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.kpi-help strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #1e293b;
+}
+
+.kpi-help p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.45;
+  font-size: 14px;
+}
+
+/* Toolbar/filtros */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid var(--iqg-border);
+  padding: 14px;
+  border-radius: 10px;
+  margin: 18px 0;
+  box-shadow: var(--iqg-shadow-soft);
+}
+
+.toolbar input,
+.toolbar select {
+  height: 38px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fff;
+  color: #111827;
+  font-size: 13px;
+}
+
+.toolbar input {
+  min-width: 280px;
+}
+
+.toolbar button,
+.toolbar .btn {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  text-decoration: none;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* Tabela */
+.leads-table-card {
+  background: #fff;
+  border: 1px solid var(--iqg-border);
+  border-radius: 10px;
+  box-shadow: var(--iqg-shadow-soft);
+  overflow: hidden;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+th {
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  text-align: left;
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+
+th a {
+  color: #334155;
+  text-decoration: none;
+}
+
+td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #111827;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+tr:hover td {
+  background: #f8fafc;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.badge.ativo {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.em_atendimento {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: #374151;
+  color: white;
+  text-decoration: none;
+  font-size: 12px;
+  border: 0;
+}
+
+.btn.whatsapp {
+  background: #16a34a;
+}
+
+.btn.info {
+  background: #2563eb;
+}
+
+.btn.success {
+  background: #15803d;
+}
+
+.btn.danger {
+  background: #dc2626;
+}
 
 .action-divider {
   width: 1px;
@@ -22562,51 +23198,73 @@ const perdido = countByStatus("perdido");
   margin: 0 4px;
 }
 
-          .print-info {
-            font-size: 12px;
-            color: #6b7280;
-            margin-bottom: 12px;
-          }
+.print-info {
+  font-size: 12px;
+  color: var(--iqg-muted);
+  margin-bottom: 12px;
+}
 
-          @media print {
-            .toolbar, .actions, button {
-              display: none !important;
-            }
+/* Impressão */
+@media print {
+  .toolbar,
+  .actions,
+  button,
+  .dashboard-actions {
+    display: none !important;
+  }
 
-            body {
-              background: white;
-            }
+  body {
+    background: white;
+  }
+}
 
-            header {
-              background: white;
-              color: black;
-              padding: 0 0 20px;
-            }
+/* Em telas menores, não quebrar feio: vira rolagem horizontal */
+@media (max-width: 1500px) {
+  .metrics-grid,
+  .kpi-grid {
+    overflow-x: auto;
+    display: flex;
+    padding-bottom: 6px;
+  }
 
-            table {
-              box-shadow: none;
-            }
-          }
+  .metric-card,
+  .kpi-card {
+    min-width: 170px;
+  }
 
-          @media (max-width: 900px) {
-            .cards {
-              grid-template-columns: repeat(2, 1fr);
-            }
+  .kpi-card {
+    min-width: 190px;
+  }
+}
 
-            table {
-              font-size: 12px;
-            }
+@media (max-width: 900px) {
+  .dashboard-page {
+    padding: 18px;
+  }
 
-            th, td {
-              padding: 8px;
-            }
-          }
-        </style>
+  .dashboard-header {
+    flex-direction: column;
+  }
 
+  .toolbar input {
+    min-width: 100%;
+  }
+
+  table {
+    font-size: 12px;
+  }
+
+  th,
+  td {
+    padding: 8px;
+  }
+}
+
+</style>
         <script>
           setInterval(() => {
-            window.location.reload();
-          }, 5000);
+  window.location.reload();
+}, 10000);
 
           function printCRM() {
             window.print();
@@ -22615,24 +23273,52 @@ const perdido = countByStatus("perdido");
       </head>
 
       <body>
-        <header>
-          <h1>CRM IQG — Leads</h1>
-          <p>Atualização automática a cada 5 segundos</p>
-        </header>
+  <div class="dashboard-page">
+    <div class="dashboard-header">
+      <div class="dashboard-title">
+        <h1>Dashboard</h1>
+        <p>Visão geral do funil de leads e desempenho</p>
+      </div>
 
-        <div class="container">
+      <div class="dashboard-actions">
+        <div class="date-pill">📅 ${startOfToday.toLocaleDateString("pt-BR")} - ${now.toLocaleDateString("pt-BR")}⌄</div>
+        <div class="refresh-pill">↻ Atualizado agora há pouco</div>
+      </div>
+    </div>
+    
+          <div class="section-panel">
+  <h2 class="section-title">
+    <span class="section-icon">⌁</span>
+    Funil de Leads - Status Atual
+  </h2>
 
-          <div class="cards">
-          <div class="card"><small>Início</small><strong>${inicio}</strong></div>
-            <div class="card"><small>Total</small><strong>${total}</strong></div>
-            <div class="card"><small>Novo</small><strong>${novo}</strong></div>
-            <div class="card"><small>Morno</small><strong>${morno}</strong></div>
-            <div class="card"><small>Qualificando</small><strong>${qualificando}</strong></div>
-            <div class="card"><small>Pré-análise</small><strong>${preAnalise}</strong></div>
-            <div class="card"><small>Quente</small><strong>${quente}</strong></div>
-            <div class="card"><small>Atendimento</small><strong>${atendimento}</strong></div>
-            <div class="card"><small>Fechado</small><strong>${fechado}</strong></div>
-          </div>
+  <div class="metrics-grid">
+    ${funnelCardsHtml}
+  </div>
+</div>
+
+<div class="section-panel">
+  <h2 class="section-title">
+    <span class="section-icon">▥</span>
+    Indicadores de Desempenho e Conversão
+  </h2>
+
+  <div class="kpi-grid">
+    ${kpiCardsHtml}
+  </div>
+
+  <div class="kpi-help">
+    <span class="kpi-help-icon">i</span>
+    <div>
+      <strong>Como interpretar esses indicadores?</strong>
+      <p>
+        Eles mostram a saúde do funil, a qualidade do tráfego e a eficiência da SDR IA.
+        Acompanhe os KPIs para identificar gargalos na taxa, evolução para pré-análise,
+        conclusão de dados e recuperação por Afiliados.
+      </p>
+    </div>
+  </div>
+</div>
 
           <form class="toolbar" method="GET" action="/dashboard">
   ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}">` : ""}
@@ -22676,7 +23362,9 @@ const perdido = countByStatus("perdido");
             Exibindo ${leads.length} lead(s). Clique nos títulos das colunas para ordenar.
           </div>
 
-          <table>
+          <div class="leads-table-card">
+<table>
+
            <thead>
   <tr>
     <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
@@ -22693,6 +23381,7 @@ const perdido = countByStatus("perdido");
                        ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
+</div>
         </div>
       </body>
       </html>
