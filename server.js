@@ -22690,7 +22690,8 @@ const kpiCardsHtml = [
         <title>CRM IQG</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-        /* =========================================================
+        <style>
+/* =========================================================
    DASHBOARD IQG — VISUAL MODERNO COM KPIS
    Cola este bloco no FINAL do <style> do /dashboard,
    imediatamente antes de </style>
@@ -23261,6 +23262,7 @@ tr:hover td {
 }
 
 </style>
+
         <script>
           setInterval(() => {
   window.location.reload();
@@ -23270,6 +23272,7 @@ tr:hover td {
             window.print();
           }
         </script>
+        
       </head>
 
       <body>
