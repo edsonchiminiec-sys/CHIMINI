@@ -21334,6 +21334,499 @@ function requireDashboardAuth(req, res) {
   return false;
 }
 
+/* =========================
+   MULTI C-LEVEL GPT — DASHBOARD KPIS
+   Consultor de Growth, Receita, KPIs e escala.
+   Não mexe em lead, não manda WhatsApp, não envia CRM.
+========================= */
+
+function safePercentNumber(part, base) {
+  const p = Number(part || 0);
+  const b = Number(base || 0);
+
+  if (!b || b <= 0) return 0;
+
+  return Number(((p / b) * 100).toFixed(1));
+}
+
+function getLeadDateForKpi(lead = {}) {
+  const value =
+    lead.createdAt ||
+    lead.created_at ||
+    lead.dataEntrada ||
+    lead.entradaEm ||
+    lead.updatedAt ||
+    lead.statusDashboardAtualizadoEm ||
+    null;
+
+  const date = value ? new Date(value) : null;
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+function getLeadStatusForKpi(lead = {}) {
+  return (
+    lead.statusDashboard ||
+    lead.statusVisualDashboard ||
+    lead.status ||
+    lead.faseQualificacao ||
+    lead.faseFunil ||
+    "indefinido"
+  );
+}
+
+function leadIsQualifiedForKpi(lead = {}) {
+  const status = getLeadStatusForKpi(lead);
+  const faseFunil = lead.faseFunil || "";
+  const faseQualificacao = lead.faseQualificacao || "";
+  const temperatura = lead.temperaturaComercial || "";
+
+  return Boolean(
+    [
+      "morno",
+      "qualificando",
+      "pre_analise",
+      "quente",
+      "em_atendimento",
+      "fechado",
+      "dados_confirmados",
+      "enviado_crm"
+    ].includes(status) ||
+    [
+      "beneficios",
+      "estoque",
+      "responsabilidades",
+      "investimento",
+      "compromisso",
+      "coleta_dados",
+      "confirmacao_dados",
+      "pre_analise",
+      "crm"
+    ].includes(faseFunil) ||
+    [
+      "morno",
+      "qualificando",
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "dados_confirmados",
+      "em_atendimento",
+      "enviado_crm"
+    ].includes(faseQualificacao) ||
+    ["morno", "quente"].includes(temperatura) ||
+    lead.interesseReal === true
+  );
+}
+
+function leadHadTaxPresentedForKpi(lead = {}) {
+  const etapas = lead.etapas || {};
+
+  return Boolean(
+    etapas.investimento === true ||
+    etapas.taxaPerguntada === true ||
+    lead.taxaAlinhada === true ||
+    lead.taxaApresentada === true ||
+    lead.taxaApresentadaEm ||
+    Number(lead.taxaObjectionCount || 0) > 0
+  );
+}
+
+function leadHadTaxObjectionForKpi(lead = {}) {
+  return Boolean(
+    Number(lead.taxaObjectionCount || 0) > 0 ||
+    lead.sinalObjecaoTaxa === true ||
+    lead.taxaModoConversao === true
+  );
+}
+
+function leadStartedPreAnalysisForKpi(lead = {}) {
+  const faseFunil = lead.faseFunil || "";
+  const faseQualificacao = lead.faseQualificacao || "";
+
+  return Boolean(
+    ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(faseFunil) ||
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "dados_confirmados",
+      "enviado_crm"
+    ].includes(faseQualificacao) ||
+    lead.campoEsperado ||
+    lead.campoPendente ||
+    lead.dadosConfirmadosPeloLead === true ||
+    lead.crmEnviado === true
+  );
+}
+
+function leadHasCompleteDataForKpi(lead = {}) {
+  return Boolean(
+    lead.dadosConfirmadosPeloLead === true ||
+    (
+      lead.nome &&
+      lead.cpf &&
+      (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+      lead.cidade &&
+      lead.estado
+    )
+  );
+}
+
+function leadRecoveredByAffiliateForKpi(lead = {}) {
+  return Boolean(
+    lead.rotaComercial === "afiliado" ||
+    lead.faseFunil === "afiliado" ||
+    lead.faseQualificacao === "afiliado" ||
+    lead.status === "afiliado" ||
+    lead.interesseAfiliado === true ||
+    lead.afiliadoOferecidoComoAlternativa === true ||
+    lead.afiliadoInstrucoesEnviadas === true
+  );
+}
+
+function buildKpiMetricsForCLevel(leads = []) {
+  const safeLeads = Array.isArray(leads) ? leads : [];
+
+  const total = safeLeads.length;
+
+  const qualificados = safeLeads.filter(leadIsQualifiedForKpi).length;
+  const taxaApresentada = safeLeads.filter(leadHadTaxPresentedForKpi).length;
+  const objecaoTaxa = safeLeads.filter(leadHadTaxObjectionForKpi).length;
+
+  const recuperadosPosObjecao = safeLeads.filter(lead => {
+    return leadHadTaxObjectionForKpi(lead) && (
+      leadStartedPreAnalysisForKpi(lead) ||
+      leadHasCompleteDataForKpi(lead) ||
+      lead.status === "em_atendimento" ||
+      lead.statusOperacional === "em_atendimento" ||
+      lead.status === "fechado" ||
+      lead.crmEnviado === true
+    );
+  }).length;
+
+  const preAnaliseIniciada = safeLeads.filter(leadStartedPreAnalysisForKpi).length;
+  const dadosCompletos = safeLeads.filter(leadHasCompleteDataForKpi).length;
+
+  const baseRecuperacaoAfiliados = safeLeads.filter(lead => {
+    return Boolean(
+      leadHadTaxObjectionForKpi(lead) ||
+      lead.status === "perdido" ||
+      lead.faseFunil === "encerrado" ||
+      lead.deveOferecerAfiliadoComoAlternativa === true ||
+      lead.afiliadoOferecidoComoAlternativa === true ||
+      lead.delayOrAbandonment === true
+    );
+  }).length;
+
+  const recuperadosAfiliados = safeLeads.filter(leadRecoveredByAffiliateForKpi).length;
+
+  const statusAtual = safeLeads.reduce((acc, lead) => {
+    const status = getLeadStatusForKpi(lead);
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    total,
+    qualificados,
+    taxaApresentada,
+    objecaoTaxa,
+    recuperadosPosObjecao,
+    preAnaliseIniciada,
+    dadosCompletos,
+    recuperadosAfiliados,
+    baseRecuperacaoAfiliados,
+    percentuais: {
+      qualificados: safePercentNumber(qualificados, total),
+      taxaApresentada: safePercentNumber(taxaApresentada, total),
+      objecaoTaxa: safePercentNumber(objecaoTaxa, taxaApresentada),
+      recuperacaoPosObjecao: safePercentNumber(recuperadosPosObjecao, objecaoTaxa),
+      preAnaliseIniciada: safePercentNumber(preAnaliseIniciada, total),
+      dadosCompletos: safePercentNumber(dadosCompletos, total),
+      recuperadosAfiliados: safePercentNumber(recuperadosAfiliados, baseRecuperacaoAfiliados)
+    },
+    statusAtual
+  };
+}
+
+function buildCLevelDashboardSnapshot(allLeads = []) {
+  const now = new Date();
+
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const sevenDaysAgo = new Date(now);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const leadsHoje = allLeads.filter(lead => {
+    const date = getLeadDateForKpi(lead);
+    return date && date.getTime() >= startOfToday.getTime();
+  });
+
+  const leadsUltimos7Dias = allLeads.filter(lead => {
+    const date = getLeadDateForKpi(lead);
+    return date && date.getTime() >= sevenDaysAgo.getTime();
+  });
+
+  return {
+    geradoEm: now.toISOString(),
+    periodoPrincipal: "ultimos_7_dias",
+    observacao:
+      "KPIs calculados a partir dos leads existentes no Mongo. Para análise de tráfego, use principalmente a janela dos últimos 7 dias.",
+    todosOsLeads: buildKpiMetricsForCLevel(allLeads),
+    hoje: buildKpiMetricsForCLevel(leadsHoje),
+    ultimos7Dias: buildKpiMetricsForCLevel(leadsUltimos7Dias)
+  };
+}
+
+const MULTI_C_LEVEL_SYSTEM_PROMPT = `
+Você é o Multi C-Level GPT da IQG.
+
+Atue como um comitê consultivo formado por:
+- CGO: Chief Growth Officer;
+- CRO: Chief Revenue Officer;
+- especialista em KPIs;
+- especialista em Revenue Operations;
+- especialista em Growth Analytics;
+- especialista em tráfego pago;
+- especialista em funil comercial com SDR IA no WhatsApp.
+
+Você analisa KPIs reais do dashboard da IQG.
+
+Contexto da IQG:
+- O funil principal é o Programa Parceiro Homologado IQG.
+- O lead vem de tráfego pago.
+- A SDR IA conversa no WhatsApp.
+- A fase da taxa é um gargalo importante.
+- O Programa de Afiliados IQG é rota alternativa para recuperar leads que não seguem no Homologado.
+- O objetivo do dashboard é avaliar qualidade do tráfego, qualidade da SDR IA, gargalos de conversão e oportunidade de escala.
+
+Você NÃO pode:
+- inventar números;
+- alterar leads;
+- mandar WhatsApp;
+- enviar CRM;
+- prometer resultados;
+- dizer que uma campanha está boa ou ruim sem base nos KPIs recebidos;
+- fingir certeza quando a amostra for pequena.
+
+Se a amostra for pequena, diga claramente que a leitura ainda é inicial.
+
+Responda SEMPRE em JSON válido, sem markdown e sem texto fora do JSON.
+
+Formato obrigatório:
+
+{
+  "tituloDiagnostico": "",
+  "resumoExecutivo": "",
+  "qualidadeTrafego": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "saudeFunil": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "indicadoresBons": [],
+  "indicadoresAtencao": [],
+  "gargaloPrincipal": "",
+  "possiveisCausas": [],
+  "estrategiaMelhoria": [],
+  "planoProximos7Dias": [],
+  "prioridadeExecutiva": "baixa | media | alta | critica",
+  "observacaoSobreAmostra": ""
+}
+
+Como responder:
+- Seja consultivo, direto e executivo.
+- Explique o que os indicadores significam.
+- Separe tráfego ruim de problema de atendimento quando possível.
+- Analise especialmente:
+  1. leads dos últimos 7 dias;
+  2. qualificados;
+  3. taxa apresentada;
+  4. objeção à taxa;
+  5. recuperação pós-objeção;
+  6. pré-análise iniciada;
+  7. dados completos;
+  8. recuperação por Afiliados.
+- Se houver poucos leads, não conclua com certeza. Fale em tendência inicial.
+- Sempre entregue estratégia prática.
+`;
+
+function buildDefaultCLevelAnalysis() {
+  return {
+    tituloDiagnostico: "Análise indisponível",
+    resumoExecutivo:
+      "Não foi possível gerar a análise neste momento. Tente novamente em instantes.",
+    qualidadeTrafego: {
+      status: "inconclusiva",
+      analise: "Sem análise disponível."
+    },
+    saudeFunil: {
+      status: "inconclusiva",
+      analise: "Sem análise disponível."
+    },
+    indicadoresBons: [],
+    indicadoresAtencao: [],
+    gargaloPrincipal: "",
+    possiveisCausas: [],
+    estrategiaMelhoria: [],
+    planoProximos7Dias: [],
+    prioridadeExecutiva: "media",
+    observacaoSobreAmostra: ""
+  };
+}
+
+function parseCLevelAnalysisJson(rawText = "") {
+  const fallback = buildDefaultCLevelAnalysis();
+
+  try {
+    const parsed = JSON.parse(rawText);
+
+    return {
+      ...fallback,
+      ...parsed,
+      qualidadeTrafego: {
+        ...fallback.qualidadeTrafego,
+        ...(parsed.qualidadeTrafego || {})
+      },
+      saudeFunil: {
+        ...fallback.saudeFunil,
+        ...(parsed.saudeFunil || {})
+      },
+      indicadoresBons: Array.isArray(parsed.indicadoresBons) ? parsed.indicadoresBons : [],
+      indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
+      possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
+      estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
+      planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
+    };
+  } catch (error) {
+    try {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+
+      if (start === -1 || end === -1 || end <= start) {
+        return fallback;
+      }
+
+      const parsed = JSON.parse(rawText.slice(start, end + 1));
+
+      return {
+        ...fallback,
+        ...parsed,
+        qualidadeTrafego: {
+          ...fallback.qualidadeTrafego,
+          ...(parsed.qualidadeTrafego || {})
+        },
+        saudeFunil: {
+          ...fallback.saudeFunil,
+          ...(parsed.saudeFunil || {})
+        },
+        indicadoresBons: Array.isArray(parsed.indicadoresBons) ? parsed.indicadoresBons : [],
+        indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
+        possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
+        estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
+        planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
+      };
+    } catch (secondError) {
+      return fallback;
+    }
+  }
+}
+
+async function runMultiCLevelDashboardAnalysis({
+  pergunta = "",
+  kpiSnapshot = {}
+} = {}) {
+  const payload = {
+    perguntaDoGestor: pergunta,
+    kpisDashboard: kpiSnapshot
+  };
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_CLEVEL_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: MULTI_C_LEVEL_SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: JSON.stringify(payload)
+        }
+      ]
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro ao chamar Multi C-Level GPT:", data);
+    return {
+      ...buildDefaultCLevelAnalysis(),
+      resumoExecutivo:
+        "Falha ao chamar o Multi C-Level GPT. Verifique a chave da OpenAI e tente novamente."
+    };
+  }
+
+  const rawText = data.choices?.[0]?.message?.content || "{}";
+
+  return parseCLevelAnalysisJson(rawText);
+}
+
+app.post("/dashboard/c-level-consultor", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    const pergunta = String(req.body?.pergunta || "").trim();
+
+    if (!pergunta || pergunta.length < 8) {
+      return res.status(400).json({
+        ok: false,
+        error: "Digite uma pergunta um pouco mais completa para o Multi C-Level GPT."
+      });
+    }
+
+    await connectMongo();
+
+    const allLeads = await db.collection("leads").find({}).toArray();
+    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads);
+
+    const analysis = await runMultiCLevelDashboardAnalysis({
+      pergunta,
+      kpiSnapshot
+    });
+
+    return res.json({
+      ok: true,
+      analysis,
+      kpiSnapshot
+    });
+  } catch (error) {
+    console.error("Erro na rota Multi C-Level GPT:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Erro ao gerar análise do Multi C-Level GPT."
+    });
+  }
+});
+
 app.get("/lead/:user/status/:status", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
@@ -23287,6 +23780,73 @@ body {
   }
 }
 
+/* Multi C-Level GPT ativo */
+.c-level-primary,
+.c-level-chip {
+  cursor: pointer;
+}
+
+.c-level-primary:hover {
+  filter: brightness(1.05);
+}
+
+.c-level-chip:hover {
+  background: rgba(255,255,255,0.18);
+}
+
+.c-level-primary:disabled,
+.c-level-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.c-level-response.loading {
+  border-color: rgba(96, 165, 250, 0.50);
+}
+
+.c-level-response.error {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(127, 29, 29, 0.25);
+}
+
+.c-level-response h4 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  color: #ffffff;
+}
+
+.c-level-response h5 {
+  margin: 14px 0 7px;
+  font-size: 13px;
+  color: #bfdbfe;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.c-level-response .c-level-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.16);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 800;
+  margin: 4px 8px 8px 0;
+}
+
+.c-level-response .c-level-priority {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.16);
+  color: #fef3c7;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
 /* Toolbar/filtros */
 .toolbar {
   display: flex;
@@ -23502,15 +24062,171 @@ tr:hover td {
 
 </style>
 
-        <script>
-          setInterval(() => {
-  window.location.reload();
-}, 10000);
+<script>
+  window.cLevelWorking = false;
 
-          function printCRM() {
-            window.print();
-          }
-        </script>
+  const dashboardSenha = ${JSON.stringify(String(req.query.senha || ""))};
+
+  setInterval(() => {
+    const questionBox = document.getElementById("cLevelQuestion");
+    const hasQuestionText = questionBox && questionBox.value.trim().length > 0;
+    const isQuestionFocused = questionBox && document.activeElement === questionBox;
+
+    if (window.cLevelWorking || hasQuestionText || isQuestionFocused) {
+      return;
+    }
+
+    window.location.reload();
+  }, 10000);
+
+  function printCRM() {
+    window.print();
+  }
+
+  function escapeHtmlClient(value) {
+    return String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function renderCLevelList(title, items) {
+    const safeItems = Array.isArray(items) ? items : [];
+
+    if (!safeItems.length) {
+      return "";
+    }
+
+    return [
+      "<h5>" + escapeHtmlClient(title) + "</h5>",
+      "<ul>",
+      safeItems.map(item => "<li>" + escapeHtmlClient(item) + "</li>").join(""),
+      "</ul>"
+    ].join("");
+  }
+
+  function renderCLevelAnalysis(analysis) {
+    if (!analysis) {
+      return "<p>Não foi possível montar a análise.</p>";
+    }
+
+    const qualidadeTrafego = analysis.qualidadeTrafego || {};
+    const saudeFunil = analysis.saudeFunil || {};
+
+    return [
+      "<div class='c-level-response-title'>Resposta estratégica</div>",
+      "<h4>" + escapeHtmlClient(analysis.tituloDiagnostico || "Diagnóstico executivo") + "</h4>",
+      "<div>",
+        "<span class='c-level-status-pill'>Tráfego: " + escapeHtmlClient(qualidadeTrafego.status || "inconclusiva") + "</span>",
+        "<span class='c-level-status-pill'>Funil: " + escapeHtmlClient(saudeFunil.status || "inconclusiva") + "</span>",
+      "</div>",
+      "<div class='c-level-priority'>Prioridade executiva: " + escapeHtmlClient(analysis.prioridadeExecutiva || "media") + "</div>",
+      "<p>" + escapeHtmlClient(analysis.resumoExecutivo || "") + "</p>",
+      qualidadeTrafego.analise ? "<h5>Qualidade do tráfego</h5><p>" + escapeHtmlClient(qualidadeTrafego.analise) + "</p>" : "",
+      saudeFunil.analise ? "<h5>Saúde do funil</h5><p>" + escapeHtmlClient(saudeFunil.analise) + "</p>" : "",
+      renderCLevelList("Indicadores bons", analysis.indicadoresBons),
+      renderCLevelList("Indicadores de atenção", analysis.indicadoresAtencao),
+      analysis.gargaloPrincipal ? "<h5>Gargalo principal</h5><p>" + escapeHtmlClient(analysis.gargaloPrincipal) + "</p>" : "",
+      renderCLevelList("Possíveis causas", analysis.possiveisCausas),
+      renderCLevelList("Estratégia de melhoria", analysis.estrategiaMelhoria),
+      renderCLevelList("Plano dos próximos 7 dias", analysis.planoProximos7Dias),
+      analysis.observacaoSobreAmostra ? "<h5>Observação sobre a amostra</h5><p>" + escapeHtmlClient(analysis.observacaoSobreAmostra) + "</p>" : ""
+    ].join("");
+  }
+
+  async function askCLevel(questionOverride) {
+    const questionBox = document.getElementById("cLevelQuestion");
+    const responseBox = document.getElementById("cLevelResponse");
+    const askButton = document.getElementById("askCLevelButton");
+
+    if (!questionBox || !responseBox) {
+      return;
+    }
+
+    const pergunta = String(questionOverride || questionBox.value || "").trim();
+
+    if (!pergunta || pergunta.length < 8) {
+      responseBox.classList.add("error");
+      responseBox.innerHTML = [
+        "<div class='c-level-response-title'>Atenção</div>",
+        "<p>Digite uma pergunta um pouco mais completa para o Multi C-Level GPT.</p>"
+      ].join("");
+      return;
+    }
+
+    questionBox.value = pergunta;
+
+    try {
+      window.cLevelWorking = true;
+
+      if (askButton) {
+        askButton.disabled = true;
+        askButton.textContent = "Analisando KPIs...";
+      }
+
+      responseBox.classList.remove("error");
+      responseBox.classList.add("loading");
+      responseBox.innerHTML = [
+        "<div class='c-level-response-title'>Analisando cenário</div>",
+        "<p>O Multi C-Level GPT está lendo os KPIs do dashboard e montando uma análise executiva...</p>"
+      ].join("");
+
+      const url = "/dashboard/c-level-consultor" + (
+        dashboardSenha ? "?senha=" + encodeURIComponent(dashboardSenha) : ""
+      );
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          pergunta
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || data.ok !== true) {
+        throw new Error(data.error || "Falha ao gerar análise.");
+      }
+
+      responseBox.classList.remove("loading");
+      responseBox.innerHTML = renderCLevelAnalysis(data.analysis);
+    } catch (error) {
+      responseBox.classList.remove("loading");
+      responseBox.classList.add("error");
+      responseBox.innerHTML = [
+        "<div class='c-level-response-title'>Erro</div>",
+        "<p>" + escapeHtmlClient(error.message || "Não foi possível gerar a análise agora.") + "</p>"
+      ].join("");
+    } finally {
+      window.cLevelWorking = false;
+
+      if (askButton) {
+        askButton.disabled = false;
+        askButton.textContent = "Perguntar ao Multi C-Level GPT";
+      }
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const askButton = document.getElementById("askCLevelButton");
+
+    if (askButton) {
+      askButton.addEventListener("click", () => askCLevel());
+    }
+
+    document.querySelectorAll("[data-clevel-question]").forEach(button => {
+      button.addEventListener("click", () => {
+        const question = button.getAttribute("data-clevel-question") || "";
+        askCLevel(question);
+      });
+    });
+  });
+</script>
         
       </head>
 
@@ -23572,24 +24288,45 @@ tr:hover td {
       ></textarea>
 
       <div class="c-level-actions">
-        <button type="button" class="c-level-primary" disabled>
+        <button type="button" class="c-level-primary" id="askCLevelButton">
           Perguntar ao Multi C-Level GPT
         </button>
-        <button type="button" class="c-level-chip" disabled>Analisar 7 dias</button>
-        <button type="button" class="c-level-chip" disabled>Onde está o gargalo?</button>
-        <button type="button" class="c-level-chip" disabled>Estratégia da semana</button>
+
+        <button
+          type="button"
+          class="c-level-chip"
+          data-clevel-question="Analise os KPIs dos últimos 7 dias. Quero um diagnóstico da qualidade do tráfego, principais indicadores bons, pontos de atenção, gargalos e estratégia prática para melhorar a conversão."
+        >
+          Analisar 7 dias
+        </button>
+
+        <button
+          type="button"
+          class="c-level-chip"
+          data-clevel-question="Com base nos KPIs atuais, onde está o principal gargalo do meu funil? Separe se o problema parece estar no tráfego, na SDR IA, na taxa, na pré-análise, nos dados completos ou na recuperação por Afiliados."
+        >
+          Onde está o gargalo?
+        </button>
+
+        <button
+          type="button"
+          class="c-level-chip"
+          data-clevel-question="Com base nos KPIs atuais, monte uma estratégia executiva para os próximos 7 dias para melhorar conversão, qualidade do tráfego, recuperação pós-objeção e recuperação por Afiliados."
+        >
+          Estratégia da semana
+        </button>
       </div>
 
       <small>
-        Nesta etapa o painel visual está pronto. Na próxima correção ligaremos este campo ao GPT real.
+        O Multi C-Level GPT analisa os KPIs do dashboard. Ele não altera leads, não manda WhatsApp e não envia CRM.
       </small>
     </div>
 
-    <div class="c-level-response">
+    <div class="c-level-response" id="cLevelResponse">
       <div class="c-level-response-title">Resposta estratégica</div>
       <p>
-        O Multi C-Level GPT ficará aqui. Ele será preparado para atuar como CGO, CRO,
-        especialista em KPIs, Revenue Operations e Growth Analytics da IQG.
+        Faça uma pergunta ao Multi C-Level GPT para receber uma leitura consultiva dos seus KPIs,
+        qualidade do tráfego, gargalos e estratégia de crescimento.
       </p>
 
       <ul>
@@ -23600,7 +24337,6 @@ tr:hover td {
       </ul>
     </div>
   </div>
-</div>
 </div>
 
           <form class="toolbar" method="GET" action="/dashboard">
