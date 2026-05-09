@@ -2238,6 +2238,48 @@ Sua função é analisar:
 - o estado atual do lead;
 e dizer se a SDR deve avançar, responder dúvida, parar repetição ou retomar coleta.
 
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — CORREÇÃO DE CONTEXTO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Se o lead disser que a SDR falou de algo que ainda não foi explicado, pulou etapa, ignorou histórico, repetiu informação ou se perdeu, isso deve ser tratado como correção de contexto/condução.
+
+Exemplos:
+- "não falamos sobre investimento ainda";
+- "você ainda não explicou a taxa";
+- "esse follow-up ficou fora de contexto";
+- "você está pulando etapa";
+- "você está se perdendo";
+- "você está repetitiva";
+- "já falei isso";
+- "já respondi isso";
+- "revisa o histórico";
+- "#mensagem ao desenvolvedor: follow-up contaminado".
+
+Nesses casos, marque:
+leadCriticouRepeticao = true
+naoRepetirUltimoTema = true
+
+Se o lead apenas corrigiu a condução, mas não recusou o projeto:
+leadQuerAvancar pode ser false
+leadEntendeuUltimaExplicacao pode ser false
+proximaAcaoSemantica = "manter_fase"
+
+Se o histórico mostrar que o lead já validou o ponto e quer continuar:
+proximaAcaoSemantica = "nao_repetir_e_avancar"
+
+Não classifique como objeção de taxa só porque a mensagem menciona taxa, investimento, adesão, valor ou pagamento.
+
+Exemplo:
+Lead: "Não falamos sobre investimento e taxa ainda. Follow-up contaminado."
+
+Resposta correta:
+leadCriticouRepeticao = true
+naoRepetirUltimoTema = true
+leadQuerAvancar = false
+proximaAcaoSemantica = "manter_fase"
+orientacaoParaPreSdr = "A SDR deve pedir desculpa brevemente pela confusão e retomar o ponto correto do funil, sem tratar como objeção de taxa."
+
 FOCO PRINCIPAL:
 Detectar quando a SDR acabou de explicar um tema e o lead:
 - demonstrou entendimento;
@@ -3007,6 +3049,33 @@ Você NÃO altera status.
 Você NÃO decide envio ao CRM.
 Você NÃO confirma CPF, telefone, cidade ou estado.
 Você apenas retorna um JSON interno de interpretação semântica.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — CRÍTICA DE CONTEXTO NÃO É OBJEÇÃO COMERCIAL
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Quando o lead disser que a SDR pulou assunto, repetiu informação, ignorou histórico ou falou de algo que ainda não foi explicado, isso NÃO deve ser classificado como objeção de taxa, mesmo que a mensagem cite "taxa", "investimento", "adesão", "valor" ou "pagamento".
+
+Exemplos:
+- "não falamos sobre investimento ainda";
+- "você ainda não explicou a taxa";
+- "esse follow-up ficou fora de contexto";
+- "você está pulando etapa";
+- "você está se perdendo";
+- "você está repetitiva";
+- "já falei isso";
+- "já respondi isso";
+- "revisa o histórico";
+- "#mensagem ao desenvolvedor: follow-up contaminado".
+
+Classificação correta nesses casos:
+- blockingObjection = false, salvo se houver rejeição comercial real;
+- priceObjection = false, salvo se o lead reclamar do valor, disser que está caro, que não quer pagar ou que não tem dinheiro;
+- delayOrAbandonment = false, salvo se o lead disser que quer parar;
+- wantsAffiliate = false, salvo se pedir Afiliado diretamente;
+- reason deve indicar: "lead corrigiu contexto/condução; não é objeção comercial".
+
+A SDR deve corrigir a condução, pedir desculpa brevemente e retomar do ponto correto.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRA CENTRAL — RENDA EXTRA NÃO É AFILIADO AUTOMÁTICO
