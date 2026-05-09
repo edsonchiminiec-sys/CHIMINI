@@ -22574,56 +22574,56 @@ const kpiCardsHtml = [
     color: "blue"
   },
   {
-    title: "Leads últimos 7 dias",
+    title: "Leads 7 dias",
     value: numberBr(leadsUltimos7Dias),
     description: "Total de leads recebidos nos últimos 7 dias.",
     icon: "🗓️",
     color: "green"
   },
   {
-    title: "Qualificados %",
+    title: "Qualificados",
     value: kpiQualificados,
     description: "Leads que avançaram além do estágio inicial e demonstraram interesse real.",
     icon: "⭐",
     color: "orange"
   },
   {
-    title: "Taxa Apresentada %",
+    title: "Taxa apresentada",
     value: kpiTaxaApresentada,
     description: "Leads que chegaram até a etapa em que a taxa/investimento foi apresentada.",
     icon: "💰",
     color: "purple"
   },
   {
-    title: "Objeção Taxa %",
+    title: "Objeção à taxa",
     value: kpiObjecaoTaxa,
     description: "Leads que apresentaram objeção à taxa entre os que ouviram a proposta.",
     icon: "⚠️",
     color: "red"
   },
   {
-    title: "Recuperação Pós-Objeção %",
+    title: "Recuperação da taxa",
     value: kpiRecuperacaoPosObjecao,
     description: "Leads que objetaram a taxa, mas avançaram depois no funil.",
     icon: "↗️",
     color: "green"
   },
   {
-    title: "Leads que iniciaram pré-análise",
+    title: "Pré-análise iniciada",
     value: numberBr(preAnalysisStartedCount),
     description: "Quantidade de leads que chegaram à pré-análise ou início da coleta de dados.",
     icon: "📄",
     color: "blue"
   },
   {
-    title: "Leads com dados completos",
+    title: "Dados completos",
     value: numberBr(completeDataCount),
     description: "Quantidade de leads que concluíram os dados necessários para análise.",
     icon: "📋",
     color: "cyan"
   },
   {
-    title: "Recuperados por Afiliados %",
+    title: "Recuperação Afiliados",
     value: kpiRecuperadosAfiliados,
     description: "Leads que não seguiram no Homologado, mas foram reaproveitados pelo Afiliados.",
     icon: "👥",
@@ -22839,6 +22839,37 @@ body {
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* Ajuste fino: cards superiores mais compactos */
+.metric-card {
+  min-height: 112px;
+  padding: 12px 14px;
+}
+
+.metric-card .metric-top {
+  gap: 8px;
+  min-height: 32px;
+}
+
+.metric-card .metric-icon {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+}
+
+.metric-card .metric-title {
+  font-size: 13px;
+  line-height: 1.18;
+}
+
+.metric-card .metric-value {
+  font-size: 28px;
+  margin: 14px 0 8px;
+}
+
+.metric-card .metric-subtitle {
+  font-size: 11.5px;
+}
+
 .metric-card:hover,
 .kpi-card:hover {
   transform: translateY(-1px);
@@ -22873,6 +22904,16 @@ body {
   line-height: 1.25;
 }
 
+.kpi-title {
+  font-size: 13.5px;
+  line-height: 1.2;
+}
+
+.kpi-description {
+  font-size: 12.5px;
+  line-height: 1.38;
+}
+
 .metric-value {
   font-size: 30px;
   line-height: 1;
@@ -22888,7 +22929,7 @@ body {
 
 /* Cards de KPI com descrição */
 .kpi-card {
-  min-height: 250px;
+  min-height: 235px;
   display: flex;
   flex-direction: column;
 }
@@ -23046,6 +23087,180 @@ body {
   color: #475569;
   line-height: 1.45;
   font-size: 14px;
+}
+
+/* Multi C-Level GPT */
+.c-level-panel {
+  margin-top: 16px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #172554 100%);
+  border-radius: 14px;
+  padding: 20px;
+  color: #ffffff;
+  box-shadow: 0 12px 34px rgba(15, 23, 42, 0.20);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.c-level-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.c-level-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 10px;
+}
+
+.c-level-header h3 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.15;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.c-level-header p {
+  margin: 9px 0 0;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1.45;
+  max-width: 860px;
+}
+
+.c-level-badge {
+  white-space: nowrap;
+  padding: 9px 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.c-level-body {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 16px;
+}
+
+.c-level-input-area,
+.c-level-response {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.c-level-input-area label {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 9px;
+  color: #e2e8f0;
+}
+
+.c-level-input-area textarea {
+  width: 100%;
+  min-height: 116px;
+  resize: vertical;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(15, 23, 42, 0.72);
+  color: #ffffff;
+  border-radius: 10px;
+  padding: 12px;
+  font-family: Inter, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.c-level-input-area textarea::placeholder {
+  color: #94a3b8;
+}
+
+.c-level-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.c-level-primary,
+.c-level-chip {
+  border: 0;
+  border-radius: 999px;
+  height: 36px;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: not-allowed;
+}
+
+.c-level-primary {
+  background: #60a5fa;
+  color: #0f172a;
+}
+
+.c-level-chip {
+  background: rgba(255,255,255,0.12);
+  color: #e2e8f0;
+}
+
+.c-level-input-area small {
+  display: block;
+  margin-top: 10px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.c-level-response-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #bfdbfe;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.c-level-response p {
+  margin: 0 0 10px;
+  color: #e2e8f0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.c-level-response ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+@media (max-width: 1100px) {
+  .c-level-body {
+    grid-template-columns: 1fr;
+  }
+
+  .c-level-header {
+    flex-direction: column;
+  }
+
+  .c-level-badge {
+    white-space: normal;
+  }
 }
 
 /* Toolbar/filtros */
@@ -23310,17 +23525,58 @@ tr:hover td {
     ${kpiCardsHtml}
   </div>
 
-  <div class="kpi-help">
-    <span class="kpi-help-icon">i</span>
+  <div class="c-level-panel">
+  <div class="c-level-header">
     <div>
-      <strong>Como interpretar esses indicadores?</strong>
+      <div class="c-level-eyebrow">Multi C-Level GPT</div>
+      <h3>CGO/CRO IA — Crescimento, Receita e KPIs</h3>
       <p>
-        Eles mostram a saúde do funil, a qualidade do tráfego e a eficiência da SDR IA.
-        Acompanhe os KPIs para identificar gargalos na taxa, evolução para pré-análise,
-        conclusão de dados e recuperação por Afiliados.
+        Consultor estratégico para analisar qualidade do tráfego, funil comercial,
+        gargalos da SDR IA, recuperação por Afiliados e oportunidades de escala.
       </p>
     </div>
+
+    <span class="c-level-badge">Growth • Receita • KPIs</span>
   </div>
+
+  <div class="c-level-body">
+    <div class="c-level-input-area">
+      <label for="cLevelQuestion">Pergunte ao seu diretor IA:</label>
+      <textarea
+        id="cLevelQuestion"
+        placeholder="Exemplo: Bom dia, com base nos KPIs dos últimos 7 dias, me diga como está a qualidade do meu tráfego, quais indicadores estão bons, quais precisam de atenção e qual estratégia devo seguir para melhorar a conversão."
+      ></textarea>
+
+      <div class="c-level-actions">
+        <button type="button" class="c-level-primary" disabled>
+          Perguntar ao Multi C-Level GPT
+        </button>
+        <button type="button" class="c-level-chip" disabled>Analisar 7 dias</button>
+        <button type="button" class="c-level-chip" disabled>Onde está o gargalo?</button>
+        <button type="button" class="c-level-chip" disabled>Estratégia da semana</button>
+      </div>
+
+      <small>
+        Nesta etapa o painel visual está pronto. Na próxima correção ligaremos este campo ao GPT real.
+      </small>
+    </div>
+
+    <div class="c-level-response">
+      <div class="c-level-response-title">Resposta estratégica</div>
+      <p>
+        O Multi C-Level GPT ficará aqui. Ele será preparado para atuar como CGO, CRO,
+        especialista em KPIs, Revenue Operations e Growth Analytics da IQG.
+      </p>
+
+      <ul>
+        <li>Diagnóstico da qualidade do tráfego.</li>
+        <li>Resumo dos principais indicadores.</li>
+        <li>Alertas sobre gargalos de conversão.</li>
+        <li>Estratégia prática para melhorar os resultados.</li>
+      </ul>
+    </div>
+  </div>
+</div>
 </div>
 
           <form class="toolbar" method="GET" action="/dashboard">
