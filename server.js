@@ -15776,6 +15776,159 @@ function normalizeTextForIntent(text = "") {
 // Esta função pode permanecer apenas como apoio secundário em travas antigas,
 // mas não deve comandar status, fase ou rota comercial.
 
+/* =========================
+   AFILIADOS — GATILHO CAUTELOSO PÓS-TAXA
+   Não usar "trava" genérica.
+   Só oferecer Afiliados quando houver pedido claro de alternativa,
+   desistência explícita ou recusa persistente após tentativas.
+========================= */
+
+function normalizeAffiliateFallbackIntent(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isClearAlternativeRequestWithoutFee(text = "") {
+  const t = normalizeAffiliateFallbackIntent(text);
+
+  if (!t) return false;
+
+  return /\b(outra opcao|outra forma|outra alternativa|alguma alternativa|alternativa sem taxa|opcao sem taxa|modelo sem taxa|sem essa taxa|sem taxa|sem pagar taxa|sem pagar|sem investimento|modelo mais simples|opcao mais simples|tem outra opcao|tem alguma outra forma|nao tem outra opcao|nenhuma outra opcao|voce nao tem nenhuma outra opcao|voces nao tem nenhuma outra opcao)\b/i.test(t);
+}
+
+function isPersistentFeeRefusal(text = "") {
+  const t = normalizeAffiliateFallbackIntent(text);
+
+  if (!t) return false;
+
+  return /\b(ja disse que nao tenho como pagar|ja falei que nao tenho como pagar|nao tenho como pagar|nao consigo pagar|nao tenho dinheiro|sem condicoes|e inviavel|inviavel|nao cabe pra mim|nao cabe para mim|nao da pra mim|nao da para mim|nao consigo seguir com essa taxa|nao consigo continuar com essa taxa)\b/i.test(t);
+}
+
+function isExplicitMainProjectGiveUpBecauseFee(text = "") {
+  const t = normalizeAffiliateFallbackIntent(text);
+
+  if (!t) return false;
+
+  return /\b(entao nao vou ter como trabalhar|entao nao vou conseguir trabalhar|nao vou ter como trabalhar com voces|nao vou conseguir trabalhar com voces|entao nao da|entao nao vai dar|vou deixar pra la|vou desistir|desisto|nao vou seguir|nao consigo participar|nao tenho como participar|nesse formato nao consigo|com essa taxa nao consigo)\b/i.test(t);
+}
+
+function isTemporaryTaxHesitationOnly(text = "") {
+  const t = normalizeAffiliateFallbackIntent(text);
+
+  if (!t) return false;
+
+  /*
+    Estes casos NÃO devem puxar Afiliados automaticamente.
+    São dúvidas ou travas recuperáveis.
+  */
+  return /\b(achei caro|vou pensar|preciso pensar|preciso falar com|vou ver com|tem contrato|tem garantia|qual garantia|e se eu nao vender|tem como parcelar|parcela|boleto|cartao|pix|nao entendi|me explica melhor)\b/i.test(t);
+}
+
+function shouldOfferAffiliateByQualifiedFallback({
+  lead = {},
+  text = "",
+  semanticIntent = {}
+} = {}) {
+  const taxaObjectionCount = Number(lead?.taxaObjectionCount || 0);
+
+  const alreadyInTaxConversation =
+    taxaObjectionCount > 0 ||
+    lead?.taxaModoConversao === true ||
+    lead?.sinalObjecaoTaxa === true ||
+    lead?.etapas?.taxaPerguntada === true ||
+    lead?.etapas?.investimento === true;
+
+  const askedAlternative = isClearAlternativeRequestWithoutFee(text);
+  const persistentFeeRefusal = isPersistentFeeRefusal(text);
+  const explicitGiveUp = isExplicitMainProjectGiveUpBecauseFee(text);
+  const temporaryOnly = isTemporaryTaxHesitationOnly(text);
+
+  /*
+    Segurança:
+    Se é só uma dúvida/trava temporária, não oferecer Afiliados por esta regra.
+  */
+  if (temporaryOnly && !askedAlternative && !persistentFeeRefusal && !explicitGiveUp) {
+    return {
+      shouldOffer: false,
+      reason: "apenas_duvida_ou_trava_temporaria"
+    };
+  }
+
+  /*
+    Segurança:
+    Se nem começou conversa real de taxa, não puxa Afiliados.
+    Isso evita oferecer Afiliados cedo demais.
+  */
+  if (!alreadyInTaxConversation) {
+    return {
+      shouldOffer: false,
+      reason: "taxa_ainda_nao_foi_tratada_suficientemente"
+    };
+  }
+
+  /*
+    Cenário A:
+    Lead pediu outra opção/forma sem taxa.
+    Só oferecemos se já houve pelo menos 2 sinais/tentativas de taxa.
+    Assim não estragamos a primeira recuperação do Homologado.
+  */
+  if (askedAlternative && taxaObjectionCount >= 2) {
+    return {
+      shouldOffer: true,
+      reason: "lead_pediu_alternativa_sem_taxa_apos_tentativas"
+    };
+  }
+
+  /*
+    Cenário B:
+    Lead desistiu explicitamente de trabalhar/participar por causa da taxa.
+    Com 2 tentativas, já é melhor recuperar via Afiliados do que despedir.
+  */
+  if (explicitGiveUp && taxaObjectionCount >= 2) {
+    return {
+      shouldOffer: true,
+      reason: "lead_desistiu_do_homologado_por_taxa_apos_tentativas"
+    };
+  }
+
+  /*
+    Cenário C:
+    Recusa persistente da taxa.
+    Aqui esperamos 3 tentativas/sinais para preservar o fluxo bom do Homologado.
+  */
+  if (persistentFeeRefusal && taxaObjectionCount >= 3) {
+    return {
+      shouldOffer: true,
+      reason: "recusa_persistente_taxa_apos_tres_tentativas"
+    };
+  }
+
+  /*
+    Cenário D:
+    O classificador marcou objeção de preço e o contador já passou de 3.
+    Só usamos isso se também houver texto forte de recusa ou alternativa.
+  */
+  if (
+    semanticIntent?.priceObjection === true &&
+    taxaObjectionCount >= 3 &&
+    (askedAlternative || persistentFeeRefusal || explicitGiveUp)
+  ) {
+    return {
+      shouldOffer: true,
+      reason: "objecao_preco_persistente_com_sinal_qualificado"
+    };
+  }
+
+  return {
+    shouldOffer: false,
+    reason: "sem_gatilho_qualificado_para_afiliado"
+  };
+}
+
 function isAffiliateIntent(text = "") {
   const t = normalizeTextForIntent(text);
 
@@ -16049,6 +16202,21 @@ function shouldSendAffiliateInstructionsNow({
     };
   }
 
+  // 🧭 REGRA CAUTELOSA — Afiliados como alternativa após recusa qualificada da taxa
+  const qualifiedAffiliateFallback = shouldOfferAffiliateByQualifiedFallback({
+    lead,
+    text: rawText,
+    semanticIntent
+  });
+
+  if (qualifiedAffiliateFallback.shouldOffer === true) {
+    return {
+      shouldSend: true,
+      reason: qualifiedAffiliateFallback.reason,
+      responseMode: "recovery_affiliate"
+    };
+  }
+   
   if (lead?.afiliadoInstrucoesEnviadas === true) {
     return {
       shouldSend: false,
@@ -18617,6 +18785,15 @@ if (
     afiliadoInstrucoesEnviadas: true,
     afiliadoInstrucoesEnviadasEm: new Date(),
 
+    // Ao migrar para Afiliados, a objeção de taxa do Homologado vira histórico,
+    // mas não deve continuar como trava ativa da conversa.
+    taxaModoConversao: false,
+    sinalObjecaoTaxa: false,
+    bloqueioComercialAtivo: false,
+    pendenciaPerguntaComercialAberta: false,
+    motivoPendenciaPerguntaComercialAberta: "",
+    deveOferecerAfiliadoComoAlternativa: false,
+     
     homologadoFollowupsCanceladosEm: new Date(),
     botBloqueadoPorHumano: false,
     atendimentoHumanoAtivo: false,
