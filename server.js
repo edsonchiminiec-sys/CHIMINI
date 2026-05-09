@@ -6094,15 +6094,8 @@ function containsInternalContextLeak(text = "") {
   ];
 
   const hasForbiddenTerm = forbiddenTerms.some(term => normalized.includes(term));
-
   const hasMetaReviewPattern = metaReviewPatterns.some(pattern => pattern.test(text || ""));
 
-  /*
-    Separador típico de resposta + justificativa interna:
-    mensagem comercial
-    ---
-    explicação sobre por que a resposta está correta
-  */
   const hasSuspiciousSeparator =
     /\n\s*---+\s*\n/i.test(text || "") &&
     /\b(resposta|mensagem|abordagem|lead|funil|fase|etapa|foco|conduz|conduzir)\b/i.test(text || "");
@@ -6115,28 +6108,16 @@ function stripInternalReviewLeakFromReply(text = "") {
 
   if (!clean) return clean;
 
-  /*
-    Caso real:
-    resposta comercial
-    ---
-    Essa resposta mantém o foco...
-  */
   clean = clean.replace(
     /\n\s*---+\s*\n[\s\S]*?(essa resposta|esta resposta|essa mensagem|esta mensagem|essa abordagem|esta abordagem|mant[eé]m o foco|conduz o lead|sem pular fases|sem pular etapas|respeitando o funil)[\s\S]*$/i,
     ""
   ).trim();
 
-  /*
-    Se a IA colocou só a justificativa no final, sem separador.
-  */
   clean = clean.replace(
     /\n+[\s\S]*?(essa resposta|esta resposta|essa mensagem|esta mensagem|essa abordagem|esta abordagem)\s+[\s\S]*?(mant[eé]m|conduz|respeita|evita|garante)\s+[\s\S]*$/i,
     ""
   ).trim();
 
-  /*
-    Remove linhas soltas de meta-comentário.
-  */
   const lines = clean.split("\n");
 
   const safeLines = lines.filter(line => {
@@ -6175,28 +6156,7 @@ function enforceNoInternalLeakBeforeSend(text = "") {
     return clean;
   }
 
-  /*
-    Última barreira:
-    Se ainda parece vazamento, não deixa a mensagem vazar.
-    Resposta segura, genérica e comercial.
-  */
   return "Perfeito 😊 Vou seguir de forma simples e objetiva.\n\nQuer que eu continue te explicando o próximo ponto do Programa Parceiro Homologado?";
-}
-
-function debugLeakGuardTest() {
-  const sample = `Agora, vamos seguir para os próximos pontos que precisamos alinhar antes da pré-análise. Quer que eu te explique os benefícios do programa?
-
----
-
-Essa resposta mantém o foco no Programa Parceiro Homologado e conduz o lead para a próxima etapa sem pular fases.`;
-
-  const cleaned = enforceNoInternalLeakBeforeSend(sample);
-
-  console.log("🧪 Teste barreira anti-vazamento:", {
-    contemVazamentoAntes: containsInternalContextLeak(sample),
-    contemVazamentoDepois: containsInternalContextLeak(cleaned),
-    resultado: cleaned
-  });
 }
 
 function enforceConsultantDirectionOnFinalReply({
@@ -20999,13 +20959,7 @@ respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 
 /*
   🛡️ BARREIRA FINAL ANTI-VAZAMENTO
-  Esta proteção roda depois de:
-  - resposta inicial da SDR;
-  - revisões;
-  - ações de arquivo;
-  - sanitização de WhatsApp.
-
-  Portanto, é a última chance antes de enviar ao lead.
+  Última proteção antes de enviar a mensagem ao WhatsApp.
 */
 const respostaAntesDaBarreiraFinalLeak = respostaFinal;
 
@@ -21021,12 +20975,7 @@ if (respostaFinal !== respostaAntesDaBarreiraFinalLeak) {
 
 console.log("📎 Actions sincronizados com a resposta final:", {
   user: from,
-  actions: syncedFinalReply.actions || []
-});
-
-console.log("📎 Actions sincronizados com a resposta final:",
-  user: from,
-  actions
+  actions: syncedFinalReply.actions || actions || []
 });
      
 // 🔥 Mostra "digitando..." real no WhatsApp
