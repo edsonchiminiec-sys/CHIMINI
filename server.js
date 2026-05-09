@@ -21196,6 +21196,269 @@ app.get("/conversation/:user", async (req, res) => {
   }
 });
 
+app.get("/lead/:user/dados-adicionais", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const user = decodeURIComponent(req.params.user || "");
+    const senhaQuery = req.query.senha
+      ? `?senha=${encodeURIComponent(req.query.senha)}`
+      : "";
+
+    const lead = await db.collection("leads").findOne({ user });
+    const history = await loadConversation(user);
+
+    const rows = Array.isArray(history)
+      ? history
+          .map(message => {
+            const role = message.role === "assistant"
+              ? "SDR IA"
+              : message.role === "user"
+                ? "Lead"
+                : message.role || "Sistema";
+
+            const cssClass = message.role === "assistant"
+              ? "assistant"
+              : message.role === "user"
+                ? "user"
+                : "system";
+
+            const content = escapeHtml(message.content || "");
+            const createdAt = message.createdAt || message.timestamp || message.date || "";
+
+            return `
+              <div class="message ${cssClass}">
+                <div class="role">${escapeHtml(role)}</div>
+                ${createdAt ? `<div class="date">${escapeHtml(formatDate(createdAt))}</div>` : ""}
+                <div class="content">${content}</div>
+              </div>
+            `;
+          })
+          .join("")
+      : "";
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta http-equiv="refresh" content="10" />
+        <title>Dados Adicionais — ${escapeHtml(lead?.nome || user)}</title>
+
+        <style>
+          body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            color: #111827;
+          }
+
+          header {
+            background: #111827;
+            color: white;
+            padding: 20px 28px;
+          }
+
+          header h1 {
+            margin: 0;
+            font-size: 24px;
+          }
+
+          header p {
+            margin: 6px 0 0;
+            color: #d1d5db;
+          }
+
+          .container {
+            max-width: 1050px;
+            margin: 0 auto;
+            padding: 24px;
+          }
+
+          .topbar {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+          }
+
+          .btn {
+            display: inline-block;
+            padding: 9px 12px;
+            background: #374151;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 14px;
+          }
+
+          .btn.whatsapp {
+            background: #16a34a;
+          }
+
+          .card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            margin-bottom: 18px;
+          }
+
+          .grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+          }
+
+          .info {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 12px;
+          }
+
+          .info small {
+            display: block;
+            color: #6b7280;
+            font-size: 12px;
+            margin-bottom: 4px;
+          }
+
+          .info strong {
+            font-size: 15px;
+          }
+
+          .message {
+            max-width: 78%;
+            padding: 12px 14px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            line-height: 1.45;
+          }
+
+          .message.user {
+            background: #dcfce7;
+            margin-left: auto;
+          }
+
+          .message.assistant {
+            background: #e5e7eb;
+            margin-right: auto;
+          }
+
+          .message.system {
+            background: #fef3c7;
+            margin-right: auto;
+          }
+
+          .role {
+            font-size: 12px;
+            font-weight: bold;
+            color: #374151;
+            margin-bottom: 5px;
+          }
+
+          .date {
+            font-size: 11px;
+            color: #6b7280;
+            margin-bottom: 6px;
+          }
+
+          .content {
+            font-size: 15px;
+            white-space: pre-wrap;
+          }
+
+          .empty {
+            color: #6b7280;
+            font-style: italic;
+          }
+
+          @media (max-width: 800px) {
+            .grid {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .message {
+              max-width: 92%;
+            }
+          }
+        </style>
+      </head>
+
+      <body>
+        <header>
+          <h1>Dados Adicionais</h1>
+          <p>${escapeHtml(lead?.nome || "-")} — ${escapeHtml(user)}</p>
+        </header>
+
+        <div class="container">
+          <div class="topbar">
+            <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
+            <a class="btn whatsapp" href="https://wa.me/${escapeHtml(lead?.telefoneWhatsApp || lead?.user || user)}" target="_blank">WhatsApp</a>
+            <a class="btn" href="/conversation/${encodeURIComponent(user)}${senhaQuery}">Mensagens</a>
+          </div>
+
+          <div class="card">
+            <div class="grid">
+              <div class="info">
+                <small>Status</small>
+                <strong>${escapeHtml(lead?.statusDashboard || lead?.statusVisualDashboard || lead?.status || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Funil</small>
+                <strong>${escapeHtml(lead?.faseFunil || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Temperatura</small>
+                <strong>${escapeHtml(lead?.temperaturaComercial || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Rota</small>
+                <strong>${escapeHtml(lead?.rotaComercial || lead?.origemConversao || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Nome</small>
+                <strong>${escapeHtml(lead?.nome || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Telefone</small>
+                <strong>${escapeHtml(lead?.telefone || lead?.telefoneWhatsApp || user || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>CPF</small>
+                <strong>${escapeHtml(lead?.cpf || "-")}</strong>
+              </div>
+
+              <div class="info">
+                <small>Atualizado</small>
+                <strong>${formatDate(lead?.updatedAt)}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2 style="margin-top:0;">Histórico da Conversa</h2>
+            ${rows || `<p class="empty">Nenhuma mensagem encontrada para este lead.</p>`}
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Erro ao carregar dados adicionais:", error);
+    res.status(500).send("Erro ao carregar dados adicionais.");
+  }
+});
 
    app.get("/dashboard", async (req, res) => {
   try {
@@ -21203,53 +21466,53 @@ app.get("/conversation/:user", async (req, res) => {
 
     await connectMongo();
 
-        const statusFilter = req.query.status || "";
-    const statusOperacionalFilter = req.query.statusOperacional || "";
-    const faseFunilFilter = req.query.faseFunil || "";
-    const temperaturaComercialFilter = req.query.temperaturaComercial || "";
-    const rotaComercialFilter = req.query.rotaComercial || "";
-
-    const search = req.query.q || "";
-    const sort = req.query.sort || "updatedAt";
-    const dir = req.query.dir === "asc" ? 1 : -1;
+       const search = req.query.q || "";
+const cidadeFilter = req.query.cidade || "";
+const estadoFilter = req.query.estado || "";
+const humanoFilter = req.query.humano || "";
+const sort = req.query.sort || "updatedAt";
+const dir = req.query.dir === "asc" ? 1 : -1;
 
    const queryConditions = [];
 
-if (statusFilter) {
+if (cidadeFilter) {
   queryConditions.push({
     $or: [
-      { statusDashboard: statusFilter },
-      { statusVisualDashboard: statusFilter },
-      {
-        status: statusFilter,
-        statusDashboard: { $exists: false },
-        statusVisualDashboard: { $exists: false }
-      }
+      { cidade: { $regex: cidadeFilter, $options: "i" } },
+      { cidadeEstado: { $regex: cidadeFilter, $options: "i" } }
     ]
   });
 }
 
-if (statusOperacionalFilter) {
+if (estadoFilter) {
   queryConditions.push({
-    statusOperacional: statusOperacionalFilter
+    estado: { $regex: `^${estadoFilter}$`, $options: "i" }
   });
 }
 
-if (faseFunilFilter) {
+if (humanoFilter === "sim") {
   queryConditions.push({
-    faseFunil: faseFunilFilter
+    $or: [
+      { humanoAssumiu: true },
+      { atendimentoHumanoAtivo: true },
+      { botBloqueadoPorHumano: true },
+      { statusOperacional: "em_atendimento" },
+      { status: "em_atendimento" },
+      { faseQualificacao: "em_atendimento" }
+    ]
   });
 }
 
-if (temperaturaComercialFilter) {
+if (humanoFilter === "nao") {
   queryConditions.push({
-    temperaturaComercial: temperaturaComercialFilter
-  });
-}
-
-if (rotaComercialFilter) {
-  queryConditions.push({
-    rotaComercial: rotaComercialFilter
+    $and: [
+      { humanoAssumiu: { $ne: true } },
+      { atendimentoHumanoAtivo: { $ne: true } },
+      { botBloqueadoPorHumano: { $ne: true } },
+      { statusOperacional: { $ne: "em_atendimento" } },
+      { status: { $ne: "em_atendimento" } },
+      { faseQualificacao: { $ne: "em_atendimento" } }
+    ]
   });
 }
 
@@ -21258,7 +21521,11 @@ if (search) {
     $or: [
       { user: { $regex: search, $options: "i" } },
       { telefoneWhatsApp: { $regex: search, $options: "i" } },
+      { telefone: { $regex: search, $options: "i" } },
+      { cpf: { $regex: search, $options: "i" } },
       { nome: { $regex: search, $options: "i" } },
+      { cidade: { $regex: search, $options: "i" } },
+      { estado: { $regex: search, $options: "i" } },
       { cidadeEstado: { $regex: search, $options: "i" } },
       { ultimaMensagem: { $regex: search, $options: "i" } }
     ]
@@ -21269,14 +21536,15 @@ const query =
   queryConditions.length > 0
     ? { $and: queryConditions }
     : {};
-    const sortMap = {
-  status: "statusDashboard",
+     
+   const sortMap = {
   nome: "nome",
   telefone: "telefoneWhatsApp",
-  cidade: "cidadeEstado",
+  cpf: "cpf",
+  cidade: "cidade",
+  estado: "estado",
   updatedAt: "updatedAt"
 };
-
     const sortField = sortMap[sort] || "updatedAt";
 
     const leads = await db
@@ -21314,104 +21582,57 @@ const perdido = countByStatus("perdido");
        const makeSortLink = (field, label) => {
       const nextDir = sort === field && req.query.dir !== "asc" ? "asc" : "desc";
 
-      const filtrosNovos =
-        `${statusFilter ? `&status=${encodeURIComponent(statusFilter)}` : ""}` +
-        `${statusOperacionalFilter ? `&statusOperacional=${encodeURIComponent(statusOperacionalFilter)}` : ""}` +
-        `${faseFunilFilter ? `&faseFunil=${encodeURIComponent(faseFunilFilter)}` : ""}` +
-        `${temperaturaComercialFilter ? `&temperaturaComercial=${encodeURIComponent(temperaturaComercialFilter)}` : ""}` +
-        `${rotaComercialFilter ? `&rotaComercial=${encodeURIComponent(rotaComercialFilter)}` : ""}` +
-        `${search ? `&q=${encodeURIComponent(search)}` : ""}` +
-        `${senhaParam}`;
+     const filtrosNovos =
+  `${cidadeFilter ? `&cidade=${encodeURIComponent(cidadeFilter)}` : ""}` +
+  `${estadoFilter ? `&estado=${encodeURIComponent(estadoFilter)}` : ""}` +
+  `${humanoFilter ? `&humano=${encodeURIComponent(humanoFilter)}` : ""}` +
+  `${search ? `&q=${encodeURIComponent(search)}` : ""}` +
+  `${senhaParam}`;
 
       return `/dashboard?sort=${field}&dir=${nextDir}${filtrosNovos}`;
     };
 
     const rows = leads.map(lead => {
-      const phone = lead.telefoneWhatsApp || lead.user || "";
-      const waLink = phone ? `https://wa.me/${phone}` : "#";
-      const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
+  const phone = lead.telefoneWhatsApp || lead.telefone || lead.user || "";
+  const waLink = phone ? `https://wa.me/${phone}` : "#";
+  const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
 
-               const status = lead.statusDashboard || lead.statusVisualDashboard || lead.status || "novo";
-const statusIa = lead.status || "novo";
-const faseAntiga = lead.faseQualificacao || "-";
-const statusOperacional = lead.statusOperacional || "-";
-const faseFunil = lead.faseFunil || "-";
-const temperaturaComercial = lead.temperaturaComercial || "-";
-const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
-            const supervisor = lead.supervisor || {};
-      const supervisorRisco = supervisor.riscoPerda || "nao_analisado";
-      const supervisorTrava = supervisor.pontoTrava || "-";
-      const supervisorHumano = supervisor.necessitaHumano === true ? "sim" : "não";
-      const supervisorQualidade = supervisor.qualidadeConducaoSdr || "nao_analisado";
-      const supervisorUltimaAnalise = supervisor.analisadoEm
-        ? formatDate(supervisor.analisadoEm)
-        : "-";
+  const user = encodeURIComponent(lead.user || phone);
+  const baseStatusLink = `/lead/${user}/status`;
 
-            const classificacao = lead.classificacao || {};
-      const classificacaoPerfil = classificacao.perfilComportamentalPrincipal || "nao_analisado";
-      const classificacaoIntencao = classificacao.intencaoPrincipal || "nao_analisado";
-      const classificacaoObjecao = classificacao.objecaoPrincipal || "sem_objecao_detectada";
-      const classificacaoConfianca = classificacao.confiancaClassificacao || "nao_analisado";
-      const classificacaoUltima = classificacao.classificadoEm
-        ? formatDate(classificacao.classificadoEm)
-        : "-";
+  const humanoAtivo =
+    lead.humanoAssumiu === true ||
+    lead.atendimentoHumanoAtivo === true ||
+    lead.botBloqueadoPorHumano === true ||
+    lead.statusOperacional === "em_atendimento" ||
+    lead.status === "em_atendimento" ||
+    lead.faseQualificacao === "em_atendimento";
 
-      const consultoria = lead.consultoria || {};
-      const consultoriaEstrategia = consultoria.estrategiaRecomendada || "nao_analisado";
-      const consultoriaProximaAcao = consultoria.proximaMelhorAcao || "-";
-      const consultoriaOferta = consultoria.ofertaMaisAdequada || "nao_analisado";
-      const consultoriaPrioridade = consultoria.prioridadeComercial || "nao_analisado";
-      const consultoriaUltima = consultoria.consultadoEm
-        ? formatDate(consultoria.consultadoEm)
-        : "-";
-
-      const user = encodeURIComponent(lead.user || phone);
-
-      const baseStatusLink = `/lead/${user}/status`;
-      return `
-                       <tr>
-  <td>
-    <span class="badge ${status}">${escapeHtml(status)}</span>
-    <div style="font-size:11px;color:#6b7280;margin-top:4px;">
-      IA: ${escapeHtml(statusIa)}
-    </div>
-  </td>
-  <td>${escapeHtml(faseAntiga)}</td>
-  <td>${escapeHtml(statusOperacional)}</td>
-  <td>${escapeHtml(faseFunil)}</td>
-  <td>${escapeHtml(temperaturaComercial)}</td>
-  <td>${escapeHtml(rotaComercial)}</td>
-    <td>${escapeHtml(supervisorRisco)}</td>
-  <td>${escapeHtml(supervisorTrava)}</td>
-  <td>${escapeHtml(supervisorHumano)}</td>
-  <td>${escapeHtml(supervisorQualidade)}</td>
-  <td>${escapeHtml(supervisorUltimaAnalise)}</td>
-    <td>${escapeHtml(classificacaoPerfil)}</td>
-  <td>${escapeHtml(classificacaoIntencao)}</td>
-  <td>${escapeHtml(classificacaoObjecao)}</td>
-  <td>${escapeHtml(classificacaoConfianca)}</td>
-  <td>${escapeHtml(classificacaoUltima)}</td>
-  <td>${escapeHtml(consultoriaEstrategia)}</td>
-  <td>${escapeHtml(consultoriaProximaAcao)}</td>
-  <td>${escapeHtml(consultoriaOferta)}</td>
-  <td>${escapeHtml(consultoriaPrioridade)}</td>
-  <td>${escapeHtml(consultoriaUltima)}</td>
-  <td>${escapeHtml(lead.origemConversao || "-")}</td>
-<td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone)}</td>
-<td>${escapeHtml(lead.cpf || "-")}</td>
-<td>${escapeHtml(lead.cidade || cidade)}</td>
-<td>${escapeHtml(lead.estado || estado)}</td>
-<td>${formatDate(lead.updatedAt)}</td>
-<td class="actions">
-            <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
-<a class="btn" href="/conversation/${user}${senhaQuery}">Mensagens</a>
-<a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
-            <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
-            <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
-          </td>
-        </tr>
-      `;
-    }).join("");
+  return `
+    <tr>
+      <td>${escapeHtml(lead.nome || "-")}</td>
+      <td>${escapeHtml(phone || "-")}</td>
+      <td>${escapeHtml(lead.cpf || "-")}</td>
+      <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
+      <td>${escapeHtml(lead.estado || estado || "-")}</td>
+      <td>${formatDate(lead.updatedAt)}</td>
+      <td>
+        <span class="badge ${humanoAtivo ? "em_atendimento" : "ativo"}">
+          ${humanoAtivo ? "sim" : "não"}
+        </span>
+      </td>
+      <td class="actions">
+        <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
+        <span class="action-divider"></span>
+        <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
+        <a class="btn" href="/conversation/${user}${senhaQuery}">Mensagem</a>
+        <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
+        <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
+        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
+      </td>
+    </tr>
+  `;
+}).join("");
 
     res.send(`
       <!DOCTYPE html>
@@ -21578,8 +21799,17 @@ const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
           }
 
           .btn.whatsapp { background: #16a34a; }
-          .btn.success { background: #15803d; }
-          .btn.danger { background: #dc2626; }
+.btn.info { background: #2563eb; }
+.btn.success { background: #15803d; }
+.btn.danger { background: #dc2626; }
+
+.action-divider {
+  width: 1px;
+  min-height: 28px;
+  background: #d1d5db;
+  display: inline-block;
+  margin: 0 4px;
+}
 
           .print-info {
             font-size: 12px;
@@ -21654,125 +21884,62 @@ const rotaComercial = lead.rotaComercial || lead.origemConversao || "-";
           </div>
 
           <form class="toolbar" method="GET" action="/dashboard">
-            ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}" />` : ""}
+  ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}">` : ""}
 
-            <input
-              type="text"
-              name="q"
-              placeholder="Buscar por nome, telefone, cidade ou mensagem"
-              value="${escapeHtml(search)}"
-              style="min-width: 320px;"
-            />
+  <input
+    type="text"
+    name="q"
+    placeholder="Buscar nome, telefone, CPF, cidade, UF..."
+    value="${escapeHtml(search)}"
+  />
 
-            <select name="status">
-              <option value="">Todos os status</option>
-              <option value="novo" ${statusFilter === "novo" ? "selected" : ""}>Novo</option>
-              <option value="morno" ${statusFilter === "morno" ? "selected" : ""}>Morno</option>
-             <option value="qualificando" ${statusFilter === "qualificando" ? "selected" : ""}>Qualificando</option>
-<option value="afiliado" ${statusFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
-<option value="pre_analise" ${statusFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
-              <option value="quente" ${statusFilter === "quente" ? "selected" : ""}>Quente</option>
-              <option value="em_atendimento" ${statusFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
-              <option value="fechado" ${statusFilter === "fechado" ? "selected" : ""}>Fechado</option>
-              <option value="perdido" ${statusFilter === "perdido" ? "selected" : ""}>Perdido</option>
-              <option value="dados_parciais" ${statusFilter === "dados_parciais" ? "selected" : ""}>Dados parciais</option>
-<option value="aguardando_confirmacao_dados" ${statusFilter === "aguardando_confirmacao_dados" ? "selected" : ""}>Aguardando confirmação</option>
-<option value="dados_confirmados" ${statusFilter === "dados_confirmados" ? "selected" : ""}>Dados confirmados</option>
-<option value="erro_dados" ${statusFilter === "erro_dados" ? "selected" : ""}>Erro nos dados</option>
-<option value="erro_envio_crm" ${statusFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
-<option value="aguardando_confirmacao_campo" ${statusFilter === "aguardando_confirmacao_campo" ? "selected" : ""}>Aguardando confirmação de campo</option>
-<option value="corrigir_dado" ${statusFilter === "corrigir_dado" ? "selected" : ""}>Corrigir dado</option>
-<option value="qualificado" ${statusFilter === "qualificado" ? "selected" : ""}>Qualificado</option>
-            </select>
+  <input
+    type="text"
+    name="cidade"
+    placeholder="Cidade"
+    value="${escapeHtml(cidadeFilter)}"
+  />
 
-            <select name="statusOperacional">
-              <option value="">Operacional: todos</option>
-              <option value="ativo" ${statusOperacionalFilter === "ativo" ? "selected" : ""}>Ativo</option>
-              <option value="em_atendimento" ${statusOperacionalFilter === "em_atendimento" ? "selected" : ""}>Em atendimento</option>
-              <option value="enviado_crm" ${statusOperacionalFilter === "enviado_crm" ? "selected" : ""}>Enviado CRM</option>
-              <option value="fechado" ${statusOperacionalFilter === "fechado" ? "selected" : ""}>Fechado</option>
-              <option value="perdido" ${statusOperacionalFilter === "perdido" ? "selected" : ""}>Perdido</option>
-              <option value="erro_dados" ${statusOperacionalFilter === "erro_dados" ? "selected" : ""}>Erro dados</option>
-              <option value="erro_envio_crm" ${statusOperacionalFilter === "erro_envio_crm" ? "selected" : ""}>Erro envio CRM</option>
-            </select>
+  <select name="estado">
+    <option value="">Estado: todos</option>
+    ${[
+      "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS",
+      "MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC",
+      "SP","SE","TO"
+    ].map(uf => `
+      <option value="${uf}" ${estadoFilter === uf ? "selected" : ""}>${uf}</option>
+    `).join("")}
+  </select>
 
-            <select name="faseFunil">
-              <option value="">Funil: todos</option>
-              <option value="inicio" ${faseFunilFilter === "inicio" ? "selected" : ""}>Início</option>
-              <option value="esclarecimento" ${faseFunilFilter === "esclarecimento" ? "selected" : ""}>Esclarecimento</option>
-              <option value="beneficios" ${faseFunilFilter === "beneficios" ? "selected" : ""}>Benefícios</option>
-              <option value="estoque" ${faseFunilFilter === "estoque" ? "selected" : ""}>Estoque</option>
-              <option value="responsabilidades" ${faseFunilFilter === "responsabilidades" ? "selected" : ""}>Responsabilidades</option>
-              <option value="investimento" ${faseFunilFilter === "investimento" ? "selected" : ""}>Investimento</option>
-              <option value="compromisso" ${faseFunilFilter === "compromisso" ? "selected" : ""}>Compromisso</option>
-              <option value="coleta_dados" ${faseFunilFilter === "coleta_dados" ? "selected" : ""}>Coleta de dados</option>
-              <option value="confirmacao_dados" ${faseFunilFilter === "confirmacao_dados" ? "selected" : ""}>Confirmação de dados</option>
-              <option value="pre_analise" ${faseFunilFilter === "pre_analise" ? "selected" : ""}>Pré-análise</option>
-              <option value="crm" ${faseFunilFilter === "crm" ? "selected" : ""}>CRM</option>
-              <option value="encerrado" ${faseFunilFilter === "encerrado" ? "selected" : ""}>Encerrado</option>
-              <option value="afiliado" ${faseFunilFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
-            </select>
+  <select name="humano">
+    <option value="">Humano: todos</option>
+    <option value="sim" ${humanoFilter === "sim" ? "selected" : ""}>Sim</option>
+    <option value="nao" ${humanoFilter === "nao" ? "selected" : ""}>Não</option>
+  </select>
 
-            <select name="temperaturaComercial">
-              <option value="">Temperatura: todas</option>
-              <option value="indefinida" ${temperaturaComercialFilter === "indefinida" ? "selected" : ""}>Indefinida</option>
-              <option value="frio" ${temperaturaComercialFilter === "frio" ? "selected" : ""}>Frio</option>
-              <option value="morno" ${temperaturaComercialFilter === "morno" ? "selected" : ""}>Morno</option>
-              <option value="quente" ${temperaturaComercialFilter === "quente" ? "selected" : ""}>Quente</option>
-            </select>
-
-            <select name="rotaComercial">
-              <option value="">Rota: todas</option>
-              <option value="homologado" ${rotaComercialFilter === "homologado" ? "selected" : ""}>Homologado</option>
-              <option value="afiliado" ${rotaComercialFilter === "afiliado" ? "selected" : ""}>Afiliado</option>
-              <option value="ambos" ${rotaComercialFilter === "ambos" ? "selected" : ""}>Ambos</option>
-              <option value="indefinida" ${rotaComercialFilter === "indefinida" ? "selected" : ""}>Indefinida</option>
-            </select>
-
-            <button type="submit">Filtrar</button>
-            <button type="button" onclick="printCRM()">Imprimir</button>
-          </form>
-
+  <button type="submit">Filtrar</button>
+  <a class="btn" href="/dashboard${senhaQuery}">Limpar</a>
+  <button type="button" onclick="printCRM()">Imprimir</button>
+</form>
           <div class="print-info">
             Exibindo ${leads.length} lead(s). Clique nos títulos das colunas para ordenar.
           </div>
 
           <table>
-            <thead>
-                                          <tr>
-               <th><a href="${makeSortLink("status", "Status")}">Status antigo</a></th>
-<th>Fase antiga</th>
-<th>Operacional</th>
-<th>Funil</th>
-<th>Temperatura</th>
-<th>Rota</th>
-<th>Risco</th>
-<th>Ponto de trava</th>
-<th>Humano?</th>
-<th>Qualidade SDR</th>
-<th>Última análise</th>
-<th>Perfil</th>
-<th>Intenção</th>
-<th>Objeção</th>
-<th>Confiança</th>
-<th>Classificado em</th>
-<th>Estratégia</th>
-<th>Próxima ação</th>
-<th>Oferta ideal</th>
-<th>Prioridade</th>
-<th>Consultado em</th>
-<th>Origem</th>
-<th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
-<th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
-<th>CPF</th>
-<th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
-<th>Estado</th>
-<th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
-<th>Ação</th>
-              </tr>
-            </thead>
+           <thead>
+  <tr>
+    <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
+    <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
+    <th><a href="${makeSortLink("cpf", "CPF")}">CPF</a></th>
+    <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
+    <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
+    <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
+    <th>Humano</th>
+    <th>Ação</th>
+  </tr>
+</thead>
             <tbody>
-                        ${rows || `<tr><td colspan="29">Nenhum lead encontrado.</td></tr>`}
+                       ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
         </div>
