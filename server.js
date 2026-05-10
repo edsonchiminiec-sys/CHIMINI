@@ -4489,20 +4489,27 @@ function applyTurnPolicyToPreSdrAdvice({
   lead = {}
 } = {}) {
   /*
-    CORREÇÃO PRODUÇÃO — Política do Turno em modo proteção.
+    CORREÇÃO PRODUÇÃO — Política do Turno como proteção, não como comandante.
 
     Explicação simples:
-    A Política do Turno continua existindo, mas ela não pode mais
-    mandar sozinha na coleta de dados.
+    A Política do Turno continua existindo para impedir erro grave:
+    - falar taxa cedo;
+    - pedir CPF cedo;
+    - mandar Afiliado indevido;
+    - voltar etapa errada;
+    - iniciar coleta fora de hora.
+
+    Mas ela NÃO deve apagar uma boa orientação do Pré-SDR.
+
+    Exemplo:
+    Pré-SDR: "Responder a dúvida sobre estoque e comodato."
+    Política: "Responder focando no Homologado e conduzir para próxima etapa."
 
     Antes:
-    - Se a política dizia "iniciar coleta", ela podia forçar "pedir nome completo".
-    - Isso causava regressão quando o nome já estava salvo e faltava CPF, telefone, cidade ou estado.
+    O sistema podia trocar a orientação específica por uma genérica.
 
     Agora:
-    - Antes da coleta, a política ainda protege contra Afiliado indevido, taxa cedo, dados cedo etc.
-    - Durante coleta/dados parciais/confirmação, a política vira apenas proteção.
-    - Quem decide o próximo dado é o estado real do lead + buildDataFlowResumeMessage().
+    A orientação específica do Pré-SDR é preservada se for segura.
   */
 
   const safeAdvice = {
@@ -4516,6 +4523,120 @@ function applyTurnPolicyToPreSdrAdvice({
 
   const modoPolitica = turnPolicy.modo || "";
 
+  const normalizeLocalPolicyText = value =>
+    normalizeTurnPolicyText(value || "");
+
+  const isEmptyOrNotAnalyzed = value => {
+    const t = normalizeLocalPolicyText(value);
+    return !t || t === "nao analisado" || t === "nao_analisado";
+  };
+
+  const adviceActionText = normalizeLocalPolicyText(safeAdvice.proximaMelhorAcao || "");
+  const policyActionText = normalizeLocalPolicyText(turnPolicy.proximaMelhorAcao || "");
+  const adviceCareText = normalizeLocalPolicyText(safeAdvice.cuidadoPrincipal || "");
+  const adviceStrategyText = normalizeLocalPolicyText(safeAdvice.estrategiaRecomendada || "");
+
+  const adviceLooksSpecific =
+    adviceActionText.length >= 35 &&
+    (
+      adviceActionText.includes("estoque") ||
+      adviceActionText.includes("comodato") ||
+      adviceActionText.includes("beneficio") ||
+      adviceActionText.includes("benefícios") ||
+      adviceActionText.includes("beneficios") ||
+      adviceActionText.includes("programa") ||
+      adviceActionText.includes("responsabilidade") ||
+      adviceActionText.includes("responsabilidades") ||
+      adviceActionText.includes("taxa") ||
+      adviceActionText.includes("investimento") ||
+      adviceActionText.includes("contrato") ||
+      adviceActionText.includes("pagamento") ||
+      adviceActionText.includes("catalogo") ||
+      adviceActionText.includes("catálogo") ||
+      adviceActionText.includes("folder") ||
+      adviceActionText.includes("material") ||
+      adviceActionText.includes("arquivo") ||
+      adviceActionText.includes("duvida") ||
+      adviceActionText.includes("dúvida") ||
+      adviceActionText.includes("pergunta") ||
+      adviceActionText.includes("responder")
+    );
+
+  const adviceLooksGeneric =
+    !adviceActionText ||
+    adviceActionText.includes("proxima etapa pendente") ||
+    adviceActionText.includes("próxima etapa pendente") ||
+    adviceActionText.includes("conduzir para a proxima etapa") ||
+    adviceActionText.includes("conduzir para a próxima etapa") ||
+    adviceActionText.includes("manter nutricao") ||
+    adviceActionText.includes("manter nutrição") ||
+    adviceActionText.includes("responder focando somente no programa") ||
+    adviceActionText.includes("cumprimentar e perguntar como pode ajudar");
+
+  const policyModeShouldCommand =
+    [
+      "saudacao",
+      "abandono_homologado",
+      "afiliado_escolhido",
+      "descoberta_neutra"
+    ].includes(modoPolitica);
+
+  const policyModeCanPreserveSpecificAdvice =
+    [
+      "esclarecimento",
+      "homologado_escolhido",
+      "taxa_pagamento_contrato",
+      "pedido_material"
+    ].includes(modoPolitica);
+
+  const adviceMentionsDataCollection =
+    adviceActionText.includes("nome completo") ||
+    adviceActionText.includes("cpf") ||
+    adviceActionText.includes("telefone") ||
+    adviceActionText.includes("cidade") ||
+    adviceActionText.includes("estado") ||
+    adviceActionText.includes("uf") ||
+    adviceActionText.includes("pre cadastro") ||
+    adviceActionText.includes("pré cadastro") ||
+    adviceActionText.includes("pre-cadastro") ||
+    adviceActionText.includes("pré-cadastro") ||
+    adviceActionText.includes("pre analise") ||
+    adviceActionText.includes("pré análise") ||
+    adviceActionText.includes("coleta");
+
+  const adviceMentionsTaxOrPayment =
+    adviceActionText.includes("taxa") ||
+    adviceActionText.includes("investimento") ||
+    adviceActionText.includes("pagamento") ||
+    adviceActionText.includes("pix") ||
+    adviceActionText.includes("cartao") ||
+    adviceActionText.includes("cartão") ||
+    adviceCareText.includes("taxa") ||
+    adviceCareText.includes("pagamento");
+
+  const adviceMentionsAffiliate =
+    adviceActionText.includes("afiliado") ||
+    adviceActionText.includes("afiliados") ||
+    adviceActionText.includes("link de afiliado") ||
+    adviceActionText.includes("minhaiqg") ||
+    adviceCareText.includes("afiliado") ||
+    adviceCareText.includes("afiliados");
+
+  const adviceViolatesPolicy =
+    (
+      turnPolicy.podePedirDados !== true &&
+      adviceMentionsDataCollection
+    ) ||
+    (
+      turnPolicy.podeFalarTaxa !== true &&
+      adviceMentionsTaxOrPayment
+    ) ||
+    (
+      turnPolicy.podeMandarLinkAfiliado !== true &&
+      adviceMentionsAffiliate &&
+      turnPolicy.ofertaPermitida !== "afiliado"
+    );
+
   const leadEstaEmColetaOuConfirmacao =
     isLeadInActiveCollectionForTurnPolicy(lead || {}) ||
     modoPolitica === "coleta" ||
@@ -4523,17 +4644,10 @@ function applyTurnPolicyToPreSdrAdvice({
     modoPolitica === "coleta_dados_liberada";
 
   /*
-    CASO MAIS IMPORTANTE:
-    Durante coleta/dados parciais/confirmação, a Política do Turno
-    NÃO pode decidir "pedir nome".
+    BLOCO ESPECIAL — COLETA / CONFIRMAÇÃO
 
-    Ela apenas protege:
-    - não voltar para taxa;
-    - não voltar para benefícios;
-    - não oferecer Afiliados sem motivo;
-    - não reiniciar funil;
-    - não repetir assunto antigo;
-    - usar o próximo campo faltante real.
+    Durante coleta, a Política do Turno não pode decidir "pedir nome".
+    Ela só protege contra regressão comercial.
   */
   if (leadEstaEmColetaOuConfirmacao) {
     const retomadaColeta = buildDataFlowResumeMessage(lead || {});
@@ -4561,18 +4675,13 @@ function applyTurnPolicyToPreSdrAdvice({
       advicePareceForcarNome ||
       safeAdvice.estrategiaRecomendada === "iniciar_coleta";
 
-    const result = {
+    return {
       ...safeAdvice,
 
       politicaTurnoAplicada: true,
       modoPoliticaTurno: modoPolitica,
       politicaTurnoModoProtecaoColeta: true,
 
-      /*
-        Não usamos "iniciar_coleta" aqui porque isso vira comando rígido.
-        "avancar_pre_analise" é mais compatível com o funil e deixa claro
-        que a coleta está liberada, mas o campo deve vir do backend.
-      */
       estrategiaRecomendada:
         safeAdvice.estrategiaRecomendada === "iniciar_coleta"
           ? "avancar_pre_analise"
@@ -4610,40 +4719,84 @@ function applyTurnPolicyToPreSdrAdvice({
         `Retomada correta: ${retomadaColeta}`
       ].filter(Boolean).join("\n")
     };
-
-    return result;
   }
 
   /*
-    Fora da coleta, mantém a função original da Política do Turno:
-    proteger contra avanço cedo, Afiliado indevido, taxa fora de hora etc.
+    FORA DA COLETA
+
+    Aqui a Política do Turno protege.
+    Mas, quando o Pré-SDR trouxe uma ação específica e segura,
+    nós preservamos essa ação.
   */
+  const shouldPreserveSpecificPreSdrAction =
+    policyModeCanPreserveSpecificAdvice &&
+    adviceLooksSpecific &&
+    !adviceLooksGeneric &&
+    !adviceViolatesPolicy;
+
   let result = {
     ...safeAdvice,
     politicaTurnoAplicada: true,
     modoPoliticaTurno: modoPolitica,
+    politicaTurnoPreservouAcaoPreSdr: shouldPreserveSpecificPreSdrAction,
     resumoConsultivo: [
       safeAdvice.resumoConsultivo || "",
-      `Política do turno: ${modoPolitica}. ${turnPolicy.motivo || ""}`
+      `Política do turno: ${modoPolitica}. ${turnPolicy.motivo || ""}`,
+      shouldPreserveSpecificPreSdrAction
+        ? "Correção aplicada: a Política do Turno preservou a ação específica e segura do Pré-SDR."
+        : ""
     ].filter(Boolean).join("\n")
   };
 
+  /*
+    Estratégia:
+    - em modos críticos, a política pode comandar;
+    - em modos normais, preserva a estratégia do Pré-SDR se ela já for útil;
+    - se o Pré-SDR veio vazio/nao_analisado, usa a estratégia da política.
+  */
   if (turnPolicy.estrategiaObrigatoria) {
-    /*
-      Evita manter "iniciar_coleta" como comando rígido.
-      Se em algum ponto antigo ainda vier esse valor, convertemos
-      para uma estratégia válida e menos robótica.
-    */
-    result.estrategiaRecomendada =
-      turnPolicy.estrategiaObrigatoria === "iniciar_coleta"
-        ? "avancar_pre_analise"
-        : turnPolicy.estrategiaObrigatoria;
+    if (
+      policyModeShouldCommand ||
+      isEmptyOrNotAnalyzed(result.estrategiaRecomendada) ||
+      adviceViolatesPolicy
+    ) {
+      result.estrategiaRecomendada =
+        turnPolicy.estrategiaObrigatoria === "iniciar_coleta"
+          ? "avancar_pre_analise"
+          : turnPolicy.estrategiaObrigatoria;
+    }
   }
 
+  /*
+    Próxima melhor ação:
+    Este é o ponto principal da correção.
+
+    Antes:
+    A política sempre sobrescrevia a ação do Pré-SDR.
+
+    Agora:
+    - se o Pré-SDR tem ação específica e segura, preserva;
+    - se a política está em modo comandante, usa política;
+    - se o Pré-SDR veio vazio/genérico/arriscado, usa política.
+  */
   if (turnPolicy.proximaMelhorAcao) {
-    result.proximaMelhorAcao = turnPolicy.proximaMelhorAcao;
+    if (
+      policyModeShouldCommand ||
+      !shouldPreserveSpecificPreSdrAction ||
+      adviceLooksGeneric ||
+      adviceViolatesPolicy
+    ) {
+      result.proximaMelhorAcao = turnPolicy.proximaMelhorAcao;
+    } else {
+      result.proximaMelhorAcao = safeAdvice.proximaMelhorAcao;
+    }
   }
 
+  /*
+    Cuidado principal:
+    Aqui a política sempre pode acrescentar proteção,
+    mas sem apagar o cuidado específico do Pré-SDR.
+  */
   if (turnPolicy.cuidadoPrincipal) {
     result.cuidadoPrincipal = [
       turnPolicy.cuidadoPrincipal,
@@ -4655,6 +4808,11 @@ function applyTurnPolicyToPreSdrAdvice({
     result.ofertaMaisAdequada = turnPolicy.ofertaPermitida;
   }
 
+  /*
+    Travas finais de segurança.
+    Mesmo preservando o Pré-SDR, se a orientação violar a política,
+    corrigimos.
+  */
   const textoProximaAcao = normalizeTurnPolicyText(result.proximaMelhorAcao);
   const textoCuidado = normalizeTurnPolicyText(result.cuidadoPrincipal);
 
@@ -4668,7 +4826,12 @@ function applyTurnPolicyToPreSdrAdvice({
     textoProximaAcao.includes("pre-analise") ||
     textoProximaAcao.includes("pre analise") ||
     textoProximaAcao.includes("pré-analise") ||
-    textoProximaAcao.includes("pré análise");
+    textoProximaAcao.includes("pré análise") ||
+    textoProximaAcao.includes("cpf") ||
+    textoProximaAcao.includes("nome completo") ||
+    textoProximaAcao.includes("telefone") ||
+    textoProximaAcao.includes("cidade") ||
+    textoProximaAcao.includes("estado");
 
   if (turnPolicy.podePedirDados !== true && tentouAvancarParaColeta) {
     result = {
@@ -4680,7 +4843,8 @@ function applyTurnPolicyToPreSdrAdvice({
       cuidadoPrincipal: [
         "Política do turno bloqueou avanço para coleta ou pré-análise nesta resposta.",
         result.cuidadoPrincipal || ""
-      ].filter(Boolean).join("\n")
+      ].filter(Boolean).join("\n"),
+      politicaTurnoCorrigiuViolacao: "bloqueou_coleta_ou_dados"
     };
   }
 
@@ -4690,6 +4854,9 @@ function applyTurnPolicyToPreSdrAdvice({
       result.estrategiaRecomendada === "tratar_objecao_taxa" ||
       textoProximaAcao.includes("taxa") ||
       textoProximaAcao.includes("pagamento") ||
+      textoProximaAcao.includes("pix") ||
+      textoProximaAcao.includes("cartao") ||
+      textoProximaAcao.includes("cartão") ||
       textoCuidado.includes("pagamento")
     )
   ) {
@@ -4702,7 +4869,8 @@ function applyTurnPolicyToPreSdrAdvice({
       cuidadoPrincipal: [
         "Política do turno bloqueou taxa/pagamento nesta resposta.",
         result.cuidadoPrincipal || ""
-      ].filter(Boolean).join("\n")
+      ].filter(Boolean).join("\n"),
+      politicaTurnoCorrigiuViolacao: "bloqueou_taxa_ou_pagamento"
     };
   }
 
@@ -4718,12 +4886,14 @@ function applyTurnPolicyToPreSdrAdvice({
       cuidadoPrincipal: [
         "Política do turno bloqueou oferta/link de Afiliado nesta resposta.",
         result.cuidadoPrincipal || ""
-      ].filter(Boolean).join("\n")
+      ].filter(Boolean).join("\n"),
+      politicaTurnoCorrigiuViolacao: "bloqueou_afiliado"
     };
   }
 
   return result;
 }
+
 function buildSemanticQualificationPatch({
   lead = {},
   semanticIntent = null,
@@ -14326,6 +14496,144 @@ function iqgLeadConfirmedInvestmentUnderstanding(text = "", semanticIntent = nul
 }
 
 function iqgBuildFunnelProgressUpdateFromLeadReply({
+  leadText = "",
+  history = [],
+  currentLead = {},
+  semanticIntent = null
+} = {}) {
+  /*
+    CORREÇÃO PRODUÇÃO — entendimento explícito vence dúvida em outro tema.
+
+    Exemplo real:
+    Lead: "Dos benefícios já entendi bem pelo folder... tenho dúvidas sobre estoque."
+
+    Antes:
+    - O backend via "dúvida sobre estoque"
+    - retornava changed:false
+    - não consolidava beneficios:true
+
+    Agora:
+    - Consolida beneficios:true
+    - Mantém estoque pendente, porque a dúvida atual é sobre estoque
+    - Não libera coleta cedo
+    - Não pula taxa
+    - Não remove a obrigatoriedade das etapas
+  */
+
+  const currentEtapas = {
+    ...(currentLead?.etapas || {})
+  };
+
+  const lastAssistantText = iqgGetLastAssistantMessageForFunnel(history);
+  const explainedPreviously = iqgDetectFunnelStepsExplainedInText(lastAssistantText);
+
+  const hasStrongUnderstanding = iqgLeadHasStrongUnderstandingSignal(leadText, semanticIntent);
+  const hasBlockingDoubtOrObjection = iqgLeadHasBlockingDoubtOrObjection(leadText, semanticIntent);
+
+  const movedToNextTopic = iqgLeadMovedToNextLogicalTopic({
+    leadText,
+    explainedSteps: explainedPreviously
+  });
+
+  const explicitUnderstoodSteps =
+    Array.isArray(semanticIntent?.understoodStepsFromLeadText)
+      ? semanticIntent.understoodStepsFromLeadText
+      : iqgGetExplicitUnderstoodFunnelStepsFromLead(leadText);
+
+  const etapasUpdate = {
+    ...currentEtapas
+  };
+
+  const understoodSteps = [];
+
+  const evidence = {
+    leadText,
+    lastAssistantText,
+    criterio: "",
+    explainedPreviously,
+    movedToNextTopic,
+    explicitUnderstoodSteps
+  };
+
+  function markStep(step, reason) {
+    if (etapasUpdate[step] !== true) {
+      etapasUpdate[step] = true;
+      understoodSteps.push(step);
+    }
+
+    evidence.criterio = evidence.criterio || reason;
+  }
+
+  /*
+    1. Primeiro consolidamos o que o lead declarou explicitamente que entendeu.
+    Isso é diferente de avançar coleta.
+    É apenas registrar entendimento real do conteúdo.
+  */
+  for (const step of explicitUnderstoodSteps) {
+    if (
+      [
+        "programa",
+        "beneficios",
+        "estoque",
+        "responsabilidades",
+        "investimento"
+      ].includes(step)
+    ) {
+      markStep(step, `lead_declarou_entendimento_explicito_${step}`);
+    }
+  }
+
+  /*
+    2. Se existe dúvida/objeção atual, não marcamos novas etapas por inferência.
+    Mas preservamos as etapas explicitamente entendidas acima.
+  */
+  if (hasBlockingDoubtOrObjection) {
+    return {
+      changed: understoodSteps.length > 0,
+      etapas: etapasUpdate,
+      understoodSteps,
+      evidence: {
+        ...evidence,
+        criterio: evidence.criterio || "lead_trouxe_duvida_ou_objecao_sem_entendimento_explicito"
+      }
+    };
+  }
+
+  /*
+    3. Sem dúvida bloqueante, mantemos a lógica anterior:
+    se a SDR explicou e o lead demonstrou entendimento ou avançou para o próximo tema,
+    consolidamos a etapa.
+  */
+  if (explainedPreviously.programa && (hasStrongUnderstanding || movedToNextTopic.programa)) {
+    markStep("programa", "lead_confirmou_ou_avancou_contexto_apos_programa");
+  }
+
+  if (explainedPreviously.beneficios && (hasStrongUnderstanding || movedToNextTopic.beneficios)) {
+    markStep("beneficios", "lead_confirmou_ou_avancou_contexto_apos_beneficios");
+  }
+
+  if (explainedPreviously.estoque && (hasStrongUnderstanding || movedToNextTopic.estoque)) {
+    markStep("estoque", "lead_confirmou_ou_avancou_contexto_apos_estoque");
+  }
+
+  if (explainedPreviously.responsabilidades && (hasStrongUnderstanding || movedToNextTopic.responsabilidades)) {
+    markStep("responsabilidades", "lead_confirmou_ou_avancou_contexto_apos_responsabilidades");
+  }
+
+  if (
+    explainedPreviously.investimento &&
+    iqgLeadConfirmedInvestmentUnderstanding(leadText, semanticIntent)
+  ) {
+    markStep("investimento", "lead_confirmou_entendimento_do_investimento");
+  }
+
+  return {
+    changed: understoodSteps.length > 0,
+    etapas: etapasUpdate,
+    understoodSteps,
+    evidence
+  };
+}
 
 function iqgIsInitialRouteComparisonReply(text = "", currentLead = {}) {
   /*
@@ -15372,7 +15680,87 @@ function buildOrientacaoCnpjPontoFisicoHomologado() {
   ].join("\n");
 }
 
-function isLikelyPureDataAnswer(text = "", currentLead = {}) {
+/* =========================
+   COLETA — DADO CADASTRAL FORTE
+   Evita bloquear CPF, telefone, cidade/UF quando o roteador semântico
+   chamar a mensagem de "misto", mas a extração já encontrou dado válido.
+========================= */
+
+function iqgIsStrongCpfValue(value = "") {
+  const digits = onlyDigits(value);
+
+  if (digits.length !== 11) return false;
+
+  // Evita CPF obviamente falso tipo 00000000000, 11111111111 etc.
+  if (/^(\d)\1{10}$/.test(digits)) return false;
+
+  return true;
+}
+
+function iqgIsStrongPhoneValue(value = "") {
+  const digits = onlyDigits(value);
+
+  // Brasil normalmente fica entre 10 e 13 dígitos dependendo de DDI/DDDs.
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+function iqgIsStrongUfValue(value = "") {
+  const uf = normalizeUF(value);
+
+  return /^[A-Z]{2}$/.test(uf);
+}
+
+function iqgHasStrongCadastroDataForCollection({
+  extractedData = {},
+  currentLead = {},
+  text = ""
+} = {}) {
+  /*
+    Regra simples:
+    Nome sozinho NÃO libera a trava, porque já vimos frase comercial virar nome.
+    Esta liberação é somente para CPF, telefone, cidade+UF ou combinações fortes.
+  */
+
+  const data = extractedData || {};
+
+  const hasCpfForte =
+    data.cpf &&
+    iqgIsStrongCpfValue(data.cpf);
+
+  const hasTelefoneForte =
+    data.telefone &&
+    iqgIsStrongPhoneValue(data.telefone);
+
+  const hasCidadeEstadoForte =
+    data.cidade &&
+    String(data.cidade || "").trim().length >= 2 &&
+    data.estado &&
+    iqgIsStrongUfValue(data.estado);
+
+  const hasUfForteQuandoEsperada =
+    currentLead?.campoEsperado === "estado" &&
+    data.estado &&
+    iqgIsStrongUfValue(data.estado);
+
+  const hasTextoComCpfQuandoEsperado =
+    currentLead?.campoEsperado === "cpf" &&
+    iqgIsStrongCpfValue(text);
+
+  const hasTextoComTelefoneQuandoEsperado =
+    currentLead?.campoEsperado === "telefone" &&
+    iqgIsStrongPhoneValue(text);
+
+  return Boolean(
+    hasCpfForte ||
+    hasTelefoneForte ||
+    hasCidadeEstadoForte ||
+    hasUfForteQuandoEsperada ||
+    hasTextoComCpfQuandoEsperado ||
+    hasTextoComTelefoneQuandoEsperado
+  );
+}
+
+function isLikelyPureDataAnswer(text = "", currentLead = {}) {  
   const cleanText = String(text || "").trim();
 
   if (!cleanText) {
@@ -20101,12 +20489,34 @@ Vou deixar isso registrado no sistema da IQG para verificação interna. Essa et
 // Não é uma trava nova do funil.
 // É só impedir que o mesmo turno seja tratado como "dado cadastral"
 // quando o roteador já identificou pergunta/objeção comercial.
+     
+const mensagemTemDadoCadastralForte =
+  iqgHasStrongCadastroDataForCollection({
+    extractedData,
+    currentLead: currentLead || {},
+    text
+  });
+
 const deveBloquearExtracaoDeDadosNesteTurno =
-  dataFlowQuestionAlreadyGuided === true ||
+  !mensagemTemDadoCadastralForte &&
   (
-    isDataFlowState(currentLead || {}) &&
-    !isLikelyPureDataAnswer(text, currentLead || {})
+    dataFlowQuestionAlreadyGuided === true ||
+    (
+      isDataFlowState(currentLead || {}) &&
+      !isLikelyPureDataAnswer(text, currentLead || {})
+    )
   );
+
+if (mensagemTemDadoCadastralForte && dataFlowQuestionAlreadyGuided === true) {
+  console.log("✅ Extração cadastral liberada apesar do roteador semântico ter marcado pergunta/misto, pois há dado forte:", {
+    user: from,
+    ultimaMensagemLead: text,
+    extractedData,
+    campoEsperado: currentLead?.campoEsperado || "",
+    faseAtual: currentLead?.faseQualificacao || "",
+    faseFunil: currentLead?.faseFunil || ""
+  });
+}
 
 if (deveBloquearExtracaoDeDadosNesteTurno) {
   console.log("🛡️ Extração cadastral bloqueada neste turno por pergunta comercial/mensagem mista:", {
@@ -21655,6 +22065,50 @@ if (unansweredQuestionGuard.changed) {
         "A resposta não cobriu a pergunta ou objeção atual do lead. Reescrever respondendo primeiro a mensagem real do lead."
     });
   }
+}
+
+     const disciplinaFunil = enforceFunnelDiscipline({
+  respostaFinal,
+  currentLead,
+  leadText: text
+});
+
+if (disciplinaFunil.changed) {
+  const motivoDisciplina = disciplinaFunil.reason || {};
+
+  sdrReviewFindings.push({
+    tipo: "disciplina_funil",
+    prioridade: "critica",
+    reason: motivoDisciplina,
+    orientacao:
+      [
+        "A resposta realmente tentou quebrar uma regra importante do funil.",
+
+        motivoDisciplina.pediuDadosCedo
+          ? "Remover qualquer pedido de nome, CPF, telefone, cidade, estado ou dados pessoais, porque a coleta ainda não está liberada."
+          : "",
+
+        motivoDisciplina.falouTaxaCedo
+          ? "Remover qualquer menção à taxa, investimento, valor, pagamento, PIX, cartão ou parcelamento, porque ainda é cedo para falar disso."
+          : "",
+
+        motivoDisciplina.falouTaxaSemControle
+          ? "Não falar da taxa de forma solta. Só falar de investimento quando a etapa estiver corretamente contextualizada e autorizada pelo backend."
+          : "",
+
+        motivoDisciplina.tentouPularFase &&
+        !motivoDisciplina.pediuDadosCedo &&
+        !motivoDisciplina.falouTaxaCedo &&
+        !motivoDisciplina.falouTaxaSemControle
+          ? "Ajustar a resposta para respeitar a etapa atual, mas sem apagar uma explicação útil que responda a última mensagem do lead."
+          : "",
+
+        "Se o lead fez uma pergunta específica, responder primeiro essa pergunta de forma objetiva e consultiva.",
+        "Não transformar a resposta em pré-cadastro, taxa ou coleta de dados se isso ainda não estiver liberado.",
+        "Não voltar para uma mensagem genérica como 'como posso ajudar?', se o lead já deixou claro o que quer entender.",
+        "Reescrever mantendo naturalidade, contexto e fluidez comercial."
+      ].filter(Boolean).join("\n")
+  });
 }
 
 const routeMixGuard = await runFinalRouteMixGuard({
