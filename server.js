@@ -4247,14 +4247,24 @@ function buildTurnPolicy({
 
 function applyTurnPolicyToPreSdrAdvice({
   advice = {},
-  turnPolicy = {}
+  turnPolicy = {},
+  lead = {}
 } = {}) {
   /*
-    ETAPA 16.3A — aplicação da Política do Turno no Pré-SDR.
+    CORREÇÃO PRODUÇÃO — Política do Turno em modo proteção.
 
     Explicação simples:
-    O Pré-SDR continua pensando comercialmente.
-    Esta função só corrige quando ele tenta ultrapassar o limite do turno.
+    A Política do Turno continua existindo, mas ela não pode mais
+    mandar sozinha na coleta de dados.
+
+    Antes:
+    - Se a política dizia "iniciar coleta", ela podia forçar "pedir nome completo".
+    - Isso causava regressão quando o nome já estava salvo e faltava CPF, telefone, cidade ou estado.
+
+    Agora:
+    - Antes da coleta, a política ainda protege contra Afiliado indevido, taxa cedo, dados cedo etc.
+    - Durante coleta/dados parciais/confirmação, a política vira apenas proteção.
+    - Quem decide o próximo dado é o estado real do lead + buildDataFlowResumeMessage().
   */
 
   const safeAdvice = {
@@ -4266,18 +4276,130 @@ function applyTurnPolicyToPreSdrAdvice({
     return safeAdvice;
   }
 
+  const modoPolitica = turnPolicy.modo || "";
+
+  const leadEstaEmColetaOuConfirmacao =
+    isLeadInActiveCollectionForTurnPolicy(lead || {}) ||
+    modoPolitica === "coleta" ||
+    modoPolitica === "confirmacao_dados" ||
+    modoPolitica === "coleta_dados_liberada";
+
+  /*
+    CASO MAIS IMPORTANTE:
+    Durante coleta/dados parciais/confirmação, a Política do Turno
+    NÃO pode decidir "pedir nome".
+
+    Ela apenas protege:
+    - não voltar para taxa;
+    - não voltar para benefícios;
+    - não oferecer Afiliados sem motivo;
+    - não reiniciar funil;
+    - não repetir assunto antigo;
+    - usar o próximo campo faltante real.
+  */
+  if (leadEstaEmColetaOuConfirmacao) {
+    const retomadaColeta = buildDataFlowResumeMessage(lead || {});
+    const missingFields = getMissingLeadFields(lead || {});
+
+    const nomeJaExiste = Boolean(String(lead?.nome || "").trim());
+    const cpfJaExiste = Boolean(String(lead?.cpf || "").trim());
+    const telefoneJaExiste = Boolean(String(lead?.telefone || "").trim());
+    const cidadeJaExiste = Boolean(String(lead?.cidade || "").trim());
+    const estadoJaExiste = Boolean(String(lead?.estado || "").trim());
+
+    const proximaAcaoOriginal = normalizeTurnPolicyText(safeAdvice.proximaMelhorAcao || "");
+
+    const advicePareceForcarNome =
+      proximaAcaoOriginal.includes("nome completo") ||
+      proximaAcaoOriginal.includes("pedir nome") ||
+      proximaAcaoOriginal.includes("peça o nome") ||
+      proximaAcaoOriginal.includes("peca o nome") ||
+      proximaAcaoOriginal.includes("iniciar coleta") ||
+      proximaAcaoOriginal.includes("iniciar pre-cadastro") ||
+      proximaAcaoOriginal.includes("iniciar pré-cadastro");
+
+    const precisaCorrigirProximaAcao =
+      !safeAdvice.proximaMelhorAcao ||
+      advicePareceForcarNome ||
+      safeAdvice.estrategiaRecomendada === "iniciar_coleta";
+
+    const result = {
+      ...safeAdvice,
+
+      politicaTurnoAplicada: true,
+      modoPoliticaTurno: modoPolitica,
+      politicaTurnoModoProtecaoColeta: true,
+
+      /*
+        Não usamos "iniciar_coleta" aqui porque isso vira comando rígido.
+        "avancar_pre_analise" é mais compatível com o funil e deixa claro
+        que a coleta está liberada, mas o campo deve vir do backend.
+      */
+      estrategiaRecomendada:
+        safeAdvice.estrategiaRecomendada === "iniciar_coleta"
+          ? "avancar_pre_analise"
+          : (safeAdvice.estrategiaRecomendada || "avancar_pre_analise"),
+
+      ofertaMaisAdequada: "nenhuma_no_momento",
+
+      proximaMelhorAcao: precisaCorrigirProximaAcao
+        ? [
+            "Retomar a coleta pelo próximo dado realmente faltante no cadastro.",
+            "Não pedir nome se o nome já estiver preenchido.",
+            `Orientação operacional do backend: ${retomadaColeta}`
+          ].join("\n")
+        : safeAdvice.proximaMelhorAcao,
+
+      cuidadoPrincipal: [
+        "Política do Turno em modo proteção durante coleta:",
+        "NÃO escolher manualmente o campo da coleta.",
+        "NÃO mandar pedir nome completo se o nome já estiver preenchido.",
+        "NÃO reiniciar pré-cadastro.",
+        "NÃO voltar para taxa, benefícios, estoque ou responsabilidades.",
+        "NÃO oferecer Afiliados durante coleta do Homologado, salvo pedido explícito do lead.",
+        "Usar sempre o próximo campo real faltante calculado pelo backend.",
+        `Campos atuais: nome=${nomeJaExiste ? "preenchido" : "faltando"}, cpf=${cpfJaExiste ? "preenchido" : "faltando"}, telefone=${telefoneJaExiste ? "preenchido" : "faltando"}, cidade=${cidadeJaExiste ? "preenchido" : "faltando"}, estado=${estadoJaExiste ? "preenchido" : "faltando"}.`,
+        missingFields.length > 0
+          ? `Campos faltantes: ${missingFields.join(", ")}.`
+          : "Nenhum campo obrigatório faltante; seguir para confirmação dos dados.",
+        safeAdvice.cuidadoPrincipal || ""
+      ].filter(Boolean).join("\n"),
+
+      resumoConsultivo: [
+        safeAdvice.resumoConsultivo || "",
+        `Política do turno: ${modoPolitica}.`,
+        "Correção aplicada: durante coleta, a política virou proteção e não pode mais forçar pedido de nome.",
+        `Retomada correta: ${retomadaColeta}`
+      ].filter(Boolean).join("\n")
+    };
+
+    return result;
+  }
+
+  /*
+    Fora da coleta, mantém a função original da Política do Turno:
+    proteger contra avanço cedo, Afiliado indevido, taxa fora de hora etc.
+  */
   let result = {
     ...safeAdvice,
     politicaTurnoAplicada: true,
-    modoPoliticaTurno: turnPolicy.modo,
+    modoPoliticaTurno: modoPolitica,
     resumoConsultivo: [
       safeAdvice.resumoConsultivo || "",
-      `Política do turno: ${turnPolicy.modo}. ${turnPolicy.motivo || ""}`
+      `Política do turno: ${modoPolitica}. ${turnPolicy.motivo || ""}`
     ].filter(Boolean).join("\n")
   };
 
   if (turnPolicy.estrategiaObrigatoria) {
-    result.estrategiaRecomendada = turnPolicy.estrategiaObrigatoria;
+    /*
+      Evita manter "iniciar_coleta" como comando rígido.
+      Se em algum ponto antigo ainda vier esse valor, convertemos
+      para uma estratégia válida e menos robótica.
+    */
+    result.estrategiaRecomendada =
+      turnPolicy.estrategiaObrigatoria === "iniciar_coleta"
+        ? "avancar_pre_analise"
+        : turnPolicy.estrategiaObrigatoria;
   }
 
   if (turnPolicy.proximaMelhorAcao) {
@@ -4301,6 +4423,10 @@ function applyTurnPolicyToPreSdrAdvice({
   const tentouAvancarParaColeta =
     result.estrategiaRecomendada === "avancar_pre_analise" ||
     textoProximaAcao.includes("coleta") ||
+    textoProximaAcao.includes("pre-cadastro") ||
+    textoProximaAcao.includes("pré-cadastro") ||
+    textoProximaAcao.includes("pre cadastro") ||
+    textoProximaAcao.includes("pré cadastro") ||
     textoProximaAcao.includes("pre-analise") ||
     textoProximaAcao.includes("pre analise") ||
     textoProximaAcao.includes("pré-analise") ||
@@ -4360,7 +4486,6 @@ function applyTurnPolicyToPreSdrAdvice({
 
   return result;
 }
-
 function buildSemanticQualificationPatch({
   lead = {},
   semanticIntent = null,
@@ -20256,9 +20381,10 @@ const preSdrAdviceBeforeTurnPolicy = {
 
 preSdrConsultantAdvice = applyTurnPolicyToPreSdrAdvice({
   advice: preSdrConsultantAdvice,
-  turnPolicy
+  turnPolicy,
+  lead: currentLead || {}
 });
-
+   
 if (
   preSdrAdviceBeforeTurnPolicy?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
   preSdrAdviceBeforeTurnPolicy?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
@@ -20350,9 +20476,10 @@ const fallbackAdviceBeforeTurnPolicy = {
 
 preSdrConsultantAdvice = applyTurnPolicyToPreSdrAdvice({
   advice: preSdrConsultantAdvice,
-  turnPolicy
+  turnPolicy,
+  lead: currentLead || {}
 });
-
+   
 if (
   fallbackAdviceBeforeTurnPolicy?.estrategiaRecomendada !== preSdrConsultantAdvice?.estrategiaRecomendada ||
   fallbackAdviceBeforeTurnPolicy?.proximaMelhorAcao !== preSdrConsultantAdvice?.proximaMelhorAcao ||
