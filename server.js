@@ -3158,6 +3158,235 @@ function enforceSemanticContinuityHardLimits({
   return safeContinuity;
 }
 
+/* =========================
+   NORMALIZAÇÃO SEMÂNTICA PÓS-CLASSIFICADOR
+   Corrige incoerências do GPT classificador antes de contaminar
+   Política do Turno, Pré-SDR, Historiador e travas.
+========================= */
+
+function iqgNormalizeSemanticText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function iqgAddUniqueTopic(topics = [], topic = "") {
+  const safeTopics = Array.isArray(topics) ? [...topics] : [];
+  const cleanTopic = String(topic || "").trim();
+
+  if (cleanTopic && !safeTopics.includes(cleanTopic)) {
+    safeTopics.push(cleanTopic);
+  }
+
+  return safeTopics;
+}
+
+function iqgTextHasCommercialInterest(text = "") {
+  const t = iqgNormalizeSemanticText(text);
+
+  return Boolean(
+    /\b(tenho interesse|tenho interesse no programa|quero saber mais|quero entender|quero entender melhor|me explica|me conte|como funciona|como me cadastro|como faço|como faco|quero participar|quero entrar|quero ser parceiro|programa|parceiro homologado|homologado)\b/i.test(t)
+  );
+}
+
+function iqgTextMentionsHomologadoContext(text = "") {
+  const t = iqgNormalizeSemanticText(text);
+
+  return Boolean(
+    /\b(programa|parceiro|homologado|parceiro homologado|estoque|comodato|lote|produto|produtos|revenda|vender produtos|pronta entrega|industria|indústria)\b/i.test(t)
+  );
+}
+
+function iqgTextIsOnlyGreeting(text = "") {
+  const t = iqgNormalizeSemanticText(text);
+
+  if (!t) return false;
+
+  const withoutGreetings = t
+    .replace(/\b(oi|ola|olá|bom dia|boa tarde|boa noite|tudo bem|td bem|opa|e ai|e aí)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return withoutGreetings.length === 0;
+}
+
+function iqgTextIsStockQuestionNotObjection(text = "") {
+  const t = iqgNormalizeSemanticText(text);
+
+  const mentionsStock =
+    /\b(estoque|comodato|lote|kit|produtos|produto|vem nele|o que vem|o que vem no estoque|itens|unidades)\b/i.test(t);
+
+  const asksOrShowsDoubt =
+    /\b(duvida|dúvida|duvidas|dúvidas|tenho duvida|tenho dúvida|queria entender|quero entender|como funciona|o que vem|vem nele|quais produtos|quais itens|me explica|explica)\b/i.test(t) ||
+    t.includes("?");
+
+  const refusesStock =
+    /\b(nao quero estoque|não quero estoque|nao consigo cuidar|não consigo cuidar|nao quero produto fisico|não quero produto físico|nao quero produto físico|nao posso receber estoque|não posso receber estoque|estoque e problema|estoque é problema)\b/i.test(t);
+
+  return mentionsStock && asksOrShowsDoubt && !refusesStock;
+}
+
+function iqgTextDeclaresUnderstandingOfStep(text = "", step = "") {
+  const t = iqgNormalizeSemanticText(text);
+
+  const understoodSignal =
+    /\b(ja entendi|já entendi|entendi bem|entendi|ficou claro|ta claro|tá claro|compreendi|li no folder|li todo folder|li o folder|vi no folder|pelo folder|ja li|já li|ja vi|já vi|faz sentido)\b/i.test(t);
+
+  if (!understoodSignal) return false;
+
+  if (step === "programa") {
+    return /\b(programa|homologado|parceiro homologado|modelo)\b/i.test(t);
+  }
+
+  if (step === "beneficios") {
+    return /\b(beneficio|beneficios|benefício|benefícios|vantagem|vantagens|folder)\b/i.test(t);
+  }
+
+  if (step === "estoque") {
+    return /\b(estoque|comodato|lote|kit|produtos|produto)\b/i.test(t);
+  }
+
+  if (step === "responsabilidades") {
+    return /\b(responsabilidade|responsabilidades|minha parte|compromisso|obrigações|obrigacoes)\b/i.test(t);
+  }
+
+  if (step === "investimento") {
+    return /\b(taxa|investimento|valor|adesao|adesão)\b/i.test(t);
+  }
+
+  return false;
+}
+
+function iqgGetExplicitUnderstoodFunnelStepsFromLead(text = "") {
+  const understoodSteps = [];
+
+  if (iqgTextDeclaresUnderstandingOfStep(text, "programa")) {
+    understoodSteps.push("programa");
+  }
+
+  if (iqgTextDeclaresUnderstandingOfStep(text, "beneficios")) {
+    understoodSteps.push("beneficios");
+  }
+
+  if (iqgTextDeclaresUnderstandingOfStep(text, "estoque")) {
+    understoodSteps.push("estoque");
+  }
+
+  if (iqgTextDeclaresUnderstandingOfStep(text, "responsabilidades")) {
+    understoodSteps.push("responsabilidades");
+  }
+
+  if (iqgTextDeclaresUnderstandingOfStep(text, "investimento")) {
+    understoodSteps.push("investimento");
+  }
+
+  return understoodSteps;
+}
+
+function iqgNormalizeSemanticIntentAfterClassifier({
+  semanticIntent = {},
+  lastUserText = "",
+  lastSdrText = "",
+  lead = {}
+} = {}) {
+  const normalized = {
+    ...(semanticIntent || {}),
+    questionTopics: Array.isArray(semanticIntent?.questionTopics)
+      ? [...semanticIntent.questionTopics]
+      : [],
+    otherProductLineTopics: Array.isArray(semanticIntent?.otherProductLineTopics)
+      ? [...semanticIntent.otherProductLineTopics]
+      : []
+  };
+
+  const text = String(lastUserText || "");
+  const normalizedText = iqgNormalizeSemanticText(text);
+
+  const onlyGreeting = iqgTextIsOnlyGreeting(text);
+  const hasCommercialInterest = iqgTextHasCommercialInterest(text);
+  const mentionsHomologadoContext = iqgTextMentionsHomologadoContext(text);
+  const stockQuestionNotObjection = iqgTextIsStockQuestionNotObjection(text);
+  const understoodSteps = iqgGetExplicitUnderstoodFunnelStepsFromLead(text);
+
+  /*
+    Caso 1:
+    Se a mensagem tem saudação + interesse comercial,
+    NÃO é greetingOnly.
+  */
+  if (normalized.greetingOnly === true && !onlyGreeting && hasCommercialInterest) {
+    normalized.greetingOnly = false;
+    normalized.positiveRealInterest = true;
+    normalized.asksQuestion = normalized.asksQuestion === true || /\b(quero saber|quero entender|como funciona|me explica|programa)\b/i.test(normalizedText);
+    normalized.questionTopics = iqgAddUniqueTopic(normalized.questionTopics, "programa");
+    normalized.reason = [
+      normalized.reason || "",
+      "Correção backend: mensagem tinha saudação, mas também interesse comercial. Não é apenas cumprimento."
+    ].filter(Boolean).join(" ");
+  }
+
+  /*
+    Caso 2:
+    Se o lead fala de programa/homologado/estoque/comodato/produto físico,
+    manter Homologado como contexto principal.
+  */
+  if (mentionsHomologadoContext) {
+    normalized.wantsHomologado = true;
+  }
+
+  /*
+    Caso 3:
+    Pergunta de estoque/comodato não é automaticamente objeção bloqueante.
+    Só é objeção se houver recusa ou trava real.
+  */
+  if (stockQuestionNotObjection) {
+    normalized.asksQuestion = true;
+    normalized.questionTopics = iqgAddUniqueTopic(normalized.questionTopics, "estoque");
+    normalized.wantsHomologado = true;
+
+    const existeOutraObjecaoReal =
+      normalized.priceObjection === true ||
+      normalized.riskObjection === true ||
+      normalized.delayOrAbandonment === true ||
+      normalized.humanRequest === true;
+
+    if (!existeOutraObjecaoReal) {
+      normalized.blockingObjection = false;
+      normalized.stockObjection = false;
+      normalized.blockingReason = "";
+      normalized.reason = [
+        normalized.reason || "",
+        "Correção backend: dúvida sobre estoque/comodato foi tratada como pergunta objetiva, não como objeção bloqueante."
+      ].filter(Boolean).join(" ");
+    }
+  }
+
+  /*
+    Caso 4:
+    Quando o lead declara que já entendeu uma etapa,
+    guardamos isso no próprio semanticIntent para o backend consolidar depois.
+  */
+  if (understoodSteps.length > 0) {
+    normalized.softUnderstandingOnly = true;
+    normalized.understoodStepsFromLeadText = understoodSteps;
+    normalized.reason = [
+      normalized.reason || "",
+      `Correção backend: lead declarou entendimento explícito das etapas: ${understoodSteps.join(", ")}.`
+    ].filter(Boolean).join(" ");
+  }
+
+  /*
+    Segurança:
+    Se por algum motivo tudo ficou vazio, preserva fallback.
+  */
+  normalized.confidence = normalized.confidence || "baixa";
+
+  return normalized;
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -3736,7 +3965,7 @@ Responda somente JSON válido neste formato:
     const rawText = data.choices?.[0]?.message?.content || "{}";
     const parsed = JSON.parse(rawText);
 
-   const semanticIntentResult = {
+   const semanticIntentResultRaw = {
   ...fallback,
   ...parsed,
   questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
@@ -3748,15 +3977,24 @@ Responda somente JSON válido neste formato:
   reason: parsed?.reason || ""
 };
 
+const semanticIntentResult = iqgNormalizeSemanticIntentAfterClassifier({
+  semanticIntent: semanticIntentResultRaw,
+  lastUserText,
+  lastSdrText,
+  lead
+});
+
 auditLog("Resposta do Classificador Semantico", {
   ultimaMensagemLead: lastUserText || "",
   ultimaRespostaSdr: lastSdrText || "",
   lead: buildLeadAuditSnapshot(lead || {}),
   historicoRecente: recentHistory || [],
+  semanticIntentResultRaw,
   semanticIntentResult
 });
 
 return semanticIntentResult;
+     
   } catch (error) {
     console.error("Falha no classificador semântico:", error.message);
     return fallback;
@@ -12928,93 +13166,144 @@ Primeiro, pode me enviar seu nome completo?`,
   };
 }
 
+/* =========================
+   TRAVAS FINAIS — LEITURA SEMÂNTICA LEVE
+   Evita revisão desnecessária quando a SDR respondeu corretamente.
+========================= */
+
+function iqgNormalizeGuardText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function iqgLeadAskedToUnderstandHomologado(leadText = "") {
+  const t = iqgNormalizeGuardText(leadText);
+
+  return Boolean(
+    /\b(tenho interesse|quero saber mais|quero entender|quero entender melhor|me explica|me conte|como funciona|programa|programa homologado|parceiro homologado|homologado|quero ser parceiro|quero participar|como me cadastro|como faco cadastro|como faço cadastro)\b/i.test(t)
+  );
+}
+
+function iqgReplyIsSafeHomologadoOverview(respostaFinal = "") {
+  const r = iqgNormalizeGuardText(respostaFinal);
+
+  const falaHomologado =
+    /\b(programa|parceiro homologado|homologado|parceria comercial|vender produtos|vender produtos da industria|vender produtos diretamente da industria)\b/i.test(r);
+
+  const falaValorInicial =
+    /\b(suporte|treinamento|materiais|material|comodato|estoque em comodato|lote inicial|pronta entrega|demonstração|demonstracao|beneficios|benefícios)\b/i.test(r);
+
+  const falaTaxa =
+    /\b(taxa|investimento|valor de adesao|valor de adesão|r 1 990|1990|pagamento|pix|cartao|cartão|parcelado|10x)\b/i.test(r);
+
+  const pedeDados =
+    /\b(nome completo|cpf|telefone|cidade|estado|uf|dados|pre cadastro|pré cadastro|pre analise|pré analise|pre analise|pré análise)\b/i.test(r);
+
+  const falaAfiliado =
+    /\b(afiliado|afiliados|link de afiliado|minhaiqg|comissao por link|comissão por link)\b/i.test(r);
+
+  return Boolean(
+    falaHomologado &&
+    falaValorInicial &&
+    !falaTaxa &&
+    !pedeDados &&
+    !falaAfiliado
+  );
+}
+
+function iqgLeadSaidThemeAlreadyUnderstood(leadText = "", theme = "") {
+  const t = iqgNormalizeGuardText(leadText);
+
+  const saidUnderstood =
+    /\b(ja entendi|já entendi|entendi bem|entendi|ficou claro|ta claro|tá claro|compreendi|li no folder|pelo folder|ja li|já li|ja vi|já vi|vi no folder)\b/i.test(t);
+
+  if (!saidUnderstood) return false;
+
+  if (theme === "beneficios" || theme === "benefícios") {
+    return /\b(beneficio|beneficios|benefício|benefícios|vantagem|vantagens|folder)\b/i.test(t);
+  }
+
+  if (theme === "programa") {
+    return /\b(programa|homologado|parceiro homologado|modelo)\b/i.test(t);
+  }
+
+  if (theme === "estoque") {
+    return /\b(estoque|comodato|lote|kit|produtos|produto)\b/i.test(t);
+  }
+
+  if (theme === "responsabilidades") {
+    return /\b(responsabilidade|responsabilidades|minha parte|obrigacao|obrigação|obrigacoes|obrigações)\b/i.test(t);
+  }
+
+  return false;
+}
+
+function iqgFilterMissingThemesAlreadyUnderstood({
+  leadText = "",
+  missingThemes = []
+} = {}) {
+  const safeThemes = Array.isArray(missingThemes) ? missingThemes : [];
+
+  return safeThemes.filter(theme => {
+    const cleanTheme = iqgNormalizeGuardText(theme);
+
+    if (cleanTheme.includes("beneficio") && iqgLeadSaidThemeAlreadyUnderstood(leadText, "beneficios")) {
+      return false;
+    }
+
+    if (cleanTheme.includes("programa") && iqgLeadSaidThemeAlreadyUnderstood(leadText, "programa")) {
+      return false;
+    }
+
+    if (cleanTheme.includes("estoque") && iqgLeadSaidThemeAlreadyUnderstood(leadText, "estoque")) {
+      return false;
+    }
+
+    if (cleanTheme.includes("responsabilidade") && iqgLeadSaidThemeAlreadyUnderstood(leadText, "responsabilidades")) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
 function isSafeInitialHomologadoOverviewReply({
   respostaFinal = "",
   leadText = "",
   currentLead = {}
 } = {}) {
   /*
-    ETAPA 14.7A — visão geral inicial do Homologado.
+    Esta função evita revisão desnecessária.
 
-    Explicação simples:
-    Quando o lead pergunta diretamente sobre o Programa Parceiro Homologado,
-    a SDR pode dar uma visão geral curta do programa.
-
-    Isso pode mencionar:
+    Quando o lead está no começo e pede para entender o Programa Homologado,
+    a SDR pode dar uma visão geral curta com:
     - parceria comercial;
-    - produtos físicos;
     - suporte;
     - treinamento;
-    - lote em comodato;
-    - pronta-entrega;
-    - demonstração.
+    - material;
+    - lote/estoque em comodato.
 
-    Isso NÃO é pulo de fase, desde que a resposta não fale taxa,
-    não fale pré-análise e não peça dados.
+    Isso NÃO é pular fase, desde que ela NÃO fale taxa, NÃO peça dados,
+    NÃO prometa pré-análise e NÃO misture Afiliados.
   */
-
-  const normalize = value =>
-    String(value || "")
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-  const resposta = normalize(respostaFinal);
-  const leadMsg = normalize(leadText);
 
   const etapaAtual = getCurrentFunnelStage(currentLead);
 
   const leadPediuHomologado =
-    leadMsg.includes("parceiro homologado") ||
-    leadMsg.includes("programa homologado") ||
-    leadMsg.includes("programa parceiro homologado") ||
-    leadMsg.includes("homologado") ||
-    leadMsg.includes("homologar");
+    iqgLeadAskedToUnderstandHomologado(leadText);
 
-  const respostaFalaHomologado =
-    resposta.includes("parceiro homologado") ||
-    resposta.includes("programa parceiro homologado") ||
-    resposta.includes("parceria comercial") ||
-    resposta.includes("produtos diretamente da industria") ||
-    resposta.includes("produtos direto da industria") ||
-    resposta.includes("produtos fisicos") ||
-    resposta.includes("suporte") ||
-    resposta.includes("treinamento") ||
-    resposta.includes("lote inicial") ||
-    resposta.includes("comodato") ||
-    resposta.includes("pronta-entrega") ||
-    resposta.includes("demonstracao");
-
-  const respostaTemAfiliadoReal =
-    resposta.includes("programa de afiliados") ||
-    resposta.includes("link de afiliado") ||
-    resposta.includes("link exclusivo") ||
-    resposta.includes("minhaiqg.com.br") ||
-    resposta.includes("comissao por link") ||
-    resposta.includes("comissão por link") ||
-    resposta.includes("divulgacao online") ||
-    resposta.includes("divulgação online");
-
-  const respostaFalaPreAnalise =
-    resposta.includes("pre-analise") ||
-    resposta.includes("pre analise") ||
-    resposta.includes("preanalise") ||
-    resposta.includes("pré-análise") ||
-    resposta.includes("pré análise");
-
-  const falaTaxaOuInvestimento = replyMentionsInvestment(respostaFinal);
-  const pedeDados = replyAsksPersonalData(respostaFinal);
+  const respostaSegura =
+    iqgReplyIsSafeHomologadoOverview(respostaFinal);
 
   return Boolean(
-    etapaAtual <= 1 &&
+    etapaAtual <= 2 &&
     leadPediuHomologado &&
-    respostaFalaHomologado &&
-    !respostaTemAfiliadoReal &&
-    !respostaFalaPreAnalise &&
-    !falaTaxaOuInvestimento &&
-    !pedeDados
+    respostaSegura
   );
 }
 
@@ -13023,6 +13312,26 @@ function enforceFunnelDiscipline({
   currentLead = {},
   leadText = ""
 } = {}) {
+  /*
+    Trava de disciplina do funil.
+
+    O objetivo desta trava NÃO é engessar a SDR.
+    Ela deve bloquear somente riscos reais:
+    - falar taxa cedo;
+    - falar pagamento cedo;
+    - pedir dados cedo;
+    - mandar para pré-análise antes da hora.
+
+    Ela NÃO deve bloquear uma explicação útil quando o lead fez uma pergunta real.
+    Exemplo permitido:
+    Lead: "Quero entender melhor o programa"
+    SDR: explica parceria, suporte, treinamento e comodato, sem taxa e sem dados.
+
+    Exemplo permitido:
+    Lead: "Tenho dúvida sobre estoque"
+    SDR: explica estoque/comodato, sem taxa e sem dados.
+  */
+
   const etapaAtual = getCurrentFunnelStage(currentLead);
   const etapaDetectadaNaResposta = detectStageFromSdrReply(respostaFinal);
 
@@ -13044,7 +13353,7 @@ function enforceFunnelDiscipline({
     falaDeInvestimento &&
     etapaAtual === 5;
 
-   const pediuDadosCedo =
+  const pediuDadosCedo =
     pedeDadosPessoais &&
     !podeColetarDados;
 
@@ -13056,12 +13365,14 @@ function enforceFunnelDiscipline({
     });
 
   /*
-    ETAPA 14.7A:
-    Se o lead pediu para entender o Programa Parceiro Homologado,
-    uma visão geral inicial com benefícios/suporte/comodato não deve ser
-    tratada como pulo de fase.
+    CASO 1 — Visão geral segura do Homologado.
 
-    Continuamos bloqueando taxa cedo, pré-análise e dados pessoais.
+    Se o lead pediu para entender o Programa Parceiro Homologado,
+    a SDR pode citar parceria, suporte, treinamento, materiais,
+    benefícios e estoque em comodato.
+
+    Isso NÃO é pulo de fase, desde que ela não fale taxa,
+    não peça dados e não jogue para pré-análise.
   */
   if (
     tentouPularFase &&
@@ -13080,45 +13391,63 @@ function enforceFunnelDiscipline({
         falouTaxaCedo,
         falouTaxaSemControle,
         pediuDadosCedo,
+        leadTemPerguntaOuObjecao,
         preservadoPorqueVisaoGeralHomologado: true
       }
     };
   }
 
+  /*
+    CASO 2 — Lead fez pergunta real.
+
+    Se o lead perguntou sobre estoque, benefícios, programa,
+    responsabilidades ou outro ponto comercial,
+    a SDR deve responder primeiro a pergunta real.
+
+    A trava não deve mandar revisar só porque a resposta mencionou
+    um tema de uma etapa diferente.
+
+    Continuamos bloqueando taxa cedo e dados cedo.
+  */
   if (
-    tentouPularFase ||
+    tentouPularFase &&
+    leadTemPerguntaOuObjecao &&
+    !pediuDadosCedo &&
+    !falouTaxaCedo &&
+    !falouTaxaSemControle
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      reason: {
+        etapaAtual,
+        etapaDetectadaNaResposta,
+        tentouPularFase,
+        falouTaxaCedo,
+        falouTaxaSemControle,
+        pediuDadosCedo,
+        leadTemPerguntaOuObjecao,
+        preservadoPorqueRespondePerguntaAtual: true
+      }
+    };
+  }
+
+  /*
+    CASO 3 — Bloqueios realmente críticos.
+
+    Estes continuam sendo problema:
+    - taxa cedo;
+    - taxa sem controle;
+    - pedido de dados antes da coleta estar liberada.
+  */
+  if (
     falouTaxaCedo ||
     falouTaxaSemControle ||
     pediuDadosCedo
   ) {
-     
-    // 🧠 REGRA 25B-2:
-    // Se o lead fez pergunta, objeção ou correção,
-    // não trocar automaticamente a resposta da SDR por um bloco rígido de fase.
-    // A SDR deve responder primeiro o lead.
-    if (
-      leadTemPerguntaOuObjecao &&
-      !pediuDadosCedo
-    ) {
-      return {
-        changed: false,
-        respostaFinal,
-        reason: {
-          etapaAtual,
-          etapaDetectadaNaResposta,
-          tentouPularFase,
-          falouTaxaCedo,
-          falouTaxaSemControle,
-          pediuDadosCedo,
-          preservadoPorqueLeadPerguntou: true
-        }
-      };
-    }
-
-    const safeResponse = getSafeCurrentPhaseResponse(currentLead);
-
     return {
       changed: true,
+      respostaFinal,
       reason: {
         etapaAtual,
         etapaDetectadaNaResposta,
@@ -13127,15 +13456,49 @@ function enforceFunnelDiscipline({
         falouTaxaSemControle,
         pediuDadosCedo,
         leadTemPerguntaOuObjecao
-      },
-      respostaFinal: safeResponse.message,
-      fileKey: safeResponse.fileKey
+      }
     };
   }
 
+  /*
+    CASO 4 — Pulo de fase real.
+
+    Se não era resposta a pergunta do lead,
+    não era visão geral segura,
+    e mesmo assim a resposta pulou etapa,
+    aí sim a revisão deve acontecer.
+  */
+  if (tentouPularFase) {
+    return {
+      changed: true,
+      respostaFinal,
+      reason: {
+        etapaAtual,
+        etapaDetectadaNaResposta,
+        tentouPularFase,
+        falouTaxaCedo,
+        falouTaxaSemControle,
+        pediuDadosCedo,
+        leadTemPerguntaOuObjecao
+      }
+    };
+  }
+
+  /*
+    Sem problema detectado.
+  */
   return {
     changed: false,
-    respostaFinal
+    respostaFinal,
+    reason: {
+      etapaAtual,
+      etapaDetectadaNaResposta,
+      tentouPularFase,
+      falouTaxaCedo,
+      falouTaxaSemControle,
+      pediuDadosCedo,
+      leadTemPerguntaOuObjecao
+    }
   };
 }
 
@@ -13963,89 +14326,6 @@ function iqgLeadConfirmedInvestmentUnderstanding(text = "", semanticIntent = nul
 }
 
 function iqgBuildFunnelProgressUpdateFromLeadReply({
-  leadText = "",
-  history = [],
-  currentLead = {},
-  semanticIntent = null
-} = {}) {
-  const currentEtapas = {
-    ...(currentLead?.etapas || {})
-  };
-
-  const lastAssistantText = iqgGetLastAssistantMessageForFunnel(history);
-  const explainedPreviously = iqgDetectFunnelStepsExplainedInText(lastAssistantText);
-
-  const hasStrongUnderstanding = iqgLeadHasStrongUnderstandingSignal(leadText, semanticIntent);
-  const hasBlockingDoubtOrObjection = iqgLeadHasBlockingDoubtOrObjection(leadText, semanticIntent);
-  const movedToNextTopic = iqgLeadMovedToNextLogicalTopic({
-    leadText,
-    explainedSteps: explainedPreviously
-  });
-
-  const etapasUpdate = {
-    ...currentEtapas
-  };
-
-  const understoodSteps = [];
-  const evidence = {
-    leadText,
-    lastAssistantText,
-    criterio: "",
-    explainedPreviously,
-    movedToNextTopic
-  };
-
-  if (hasBlockingDoubtOrObjection) {
-    return {
-      changed: false,
-      etapas: etapasUpdate,
-      understoodSteps,
-      evidence: {
-        ...evidence,
-        criterio: "lead_trouxe_duvida_ou_objecao"
-      }
-    };
-  }
-
-  function markStep(step, reason) {
-    if (etapasUpdate[step] !== true) {
-      etapasUpdate[step] = true;
-      understoodSteps.push(step);
-    }
-
-    evidence.criterio = evidence.criterio || reason;
-  }
-
-  if (explainedPreviously.programa && (hasStrongUnderstanding || movedToNextTopic.programa)) {
-    markStep("programa", "lead_confirmou_ou_avancou_contexto_apos_programa");
-  }
-
-  if (explainedPreviously.beneficios && (hasStrongUnderstanding || movedToNextTopic.beneficios)) {
-    markStep("beneficios", "lead_confirmou_ou_avancou_contexto_apos_beneficios");
-  }
-
-  if (explainedPreviously.estoque && (hasStrongUnderstanding || movedToNextTopic.estoque)) {
-    markStep("estoque", "lead_confirmou_ou_avancou_contexto_apos_estoque");
-  }
-
-  if (explainedPreviously.responsabilidades && (hasStrongUnderstanding || movedToNextTopic.responsabilidades)) {
-    markStep("responsabilidades", "lead_confirmou_ou_avancou_contexto_apos_responsabilidades");
-  }
-
-  if (
-    explainedPreviously.investimento &&
-    iqgLeadConfirmedInvestmentUnderstanding(leadText, semanticIntent)
-  ) {
-    markStep("investimento", "lead_confirmou_entendimento_do_investimento");
-  }
-
-  return {
-    changed: understoodSteps.length > 0,
-    etapas: etapasUpdate,
-    understoodSteps,
-    evidence
-  };
-}
 
 function iqgIsInitialRouteComparisonReply(text = "", currentLead = {}) {
   /*
@@ -21341,29 +21621,40 @@ const unansweredQuestionGuard = enforceLeadQuestionWasAnswered({
 });
 
 if (unansweredQuestionGuard.changed) {
-  sdrReviewFindings.push({
-    tipo: "pergunta_ou_objecao_nao_respondida",
-    prioridade: "critica",
-    reason: unansweredQuestionGuard.reason,
-    orientacao:
-      "A resposta não cobriu a pergunta ou objeção atual do lead. Reescrever respondendo primeiro a mensagem real do lead."
-  });
-}
+  const originalMissingThemes =
+    Array.isArray(unansweredQuestionGuard.reason?.missingThemes)
+      ? unansweredQuestionGuard.reason.missingThemes
+      : [];
 
-const disciplinaFunil = enforceFunnelDiscipline({
-  respostaFinal,
-  currentLead,
-  leadText: text
-});
-
-if (disciplinaFunil.changed) {
-  sdrReviewFindings.push({
-    tipo: "disciplina_funil",
-    prioridade: "critica",
-    reason: disciplinaFunil.reason,
-    orientacao:
-      "A resposta tentou pular fase, falar tema cedo demais, misturar assuntos ou pedir dados antes da hora. Reescrever respeitando o funil e a fase atual."
+  const filteredMissingThemes = iqgFilterMissingThemesAlreadyUnderstood({
+    leadText: text,
+    missingThemes: originalMissingThemes
   });
+
+  const deveIgnorarPerguntaNaoRespondida =
+    originalMissingThemes.length > 0 &&
+    filteredMissingThemes.length === 0;
+
+  if (deveIgnorarPerguntaNaoRespondida) {
+    console.log("🧠 Trava pergunta_ou_objecao_nao_respondida ignorada: tema citado como já entendido pelo lead.", {
+      user: from,
+      ultimaMensagemLead: text,
+      originalMissingThemes,
+      filteredMissingThemes
+    });
+  } else {
+    sdrReviewFindings.push({
+      tipo: "pergunta_ou_objecao_nao_respondida",
+      prioridade: "critica",
+      reason: {
+        ...(unansweredQuestionGuard.reason || {}),
+        originalMissingThemes,
+        missingThemes: filteredMissingThemes
+      },
+      orientacao:
+        "A resposta não cobriu a pergunta ou objeção atual do lead. Reescrever respondendo primeiro a mensagem real do lead."
+    });
+  }
 }
 
 const routeMixGuard = await runFinalRouteMixGuard({
