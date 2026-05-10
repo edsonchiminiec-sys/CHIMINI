@@ -15603,6 +15603,118 @@ function hasAllRequiredLeadFields(data = {}) {
   return getMissingLeadFields(data).length === 0;
 }
 
+/* =========================
+   COLETA — MERGE DO MONGO + MENSAGEM ATUAL
+   Calcula campos faltantes usando o que já está salvo no lead
+   junto com o que foi extraído da mensagem atual.
+========================= */
+
+function iqgPickFilledLeadFields(data = {}) {
+  const result = {};
+
+  for (const field of REQUIRED_LEAD_FIELDS) {
+    const value = data?.[field];
+
+    if (value !== undefined && value !== null && String(value).trim()) {
+      result[field] = value;
+    }
+  }
+
+  return result;
+}
+
+function iqgNormalizeLeadFieldsForStorage(data = {}) {
+  const picked = iqgPickFilledLeadFields(data);
+  const result = { ...picked };
+
+  if (result.cpf) {
+    result.cpf = formatCPF(result.cpf);
+  }
+
+  if (result.telefone) {
+    result.telefone = formatPhone(result.telefone);
+  }
+
+  if (result.estado) {
+    result.estado = normalizeUF(result.estado);
+  }
+
+  if (result.cidade && result.estado) {
+    result.cidadeEstado = `${result.cidade}/${normalizeUF(result.estado)}`;
+  }
+
+  return result;
+}
+
+function iqgBuildMergedLeadDataForCollection({
+  currentLead = {},
+  extractedData = {}
+} = {}) {
+  const normalizedExtractedData =
+    iqgNormalizeLeadFieldsForStorage(extractedData || {});
+
+  const mergedLeadData = {
+    ...(currentLead || {}),
+    ...normalizedExtractedData
+  };
+
+  if (mergedLeadData.cidade && mergedLeadData.estado) {
+    mergedLeadData.cidadeEstado =
+      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
+  }
+
+  return {
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge: getMissingLeadFields(mergedLeadData),
+    nextMissingField: getMissingLeadFields(mergedLeadData)[0] || null,
+    hasNewRequiredLeadData: Object.keys(normalizedExtractedData).some(key =>
+      REQUIRED_LEAD_FIELDS.includes(key)
+    )
+  };
+}
+
+function iqgBuildCollectionStatePatch({
+  currentLead = {},
+  extractedData = {}
+} = {}) {
+  const {
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge,
+    nextMissingField,
+    hasNewRequiredLeadData
+  } = iqgBuildMergedLeadDataForCollection({
+    currentLead,
+    extractedData
+  });
+
+  const patch = {
+    ...normalizedExtractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "dados_parciais",
+    status: "dados_parciais",
+    campoEsperado: nextMissingField,
+    campoPendente: null,
+    valorPendente: null
+  };
+
+  if (mergedLeadData.cidade && mergedLeadData.estado) {
+    patch.cidadeEstado =
+      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
+  }
+
+  return {
+    patch,
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge,
+    nextMissingField,
+    hasNewRequiredLeadData
+  };
+}
+
 function buildLeadConfirmationMessage(data = {}) {
   return `Perfeito, só para eu confirmar se entendi tudo certinho:
 
@@ -19645,7 +19757,16 @@ const leadStatus = classifyLead(text, extractedData, history);
 const strongIntent = isStrongBuyIntent(text);
 const leadDeuApenasConfirmacaoFraca = isSoftUnderstandingConfirmation(text);
 const leadDeuIntencaoExplicitaPreAnalise = isExplicitPreAnalysisIntent(text);
-const missingFields = getMissingLeadFields(extractedData);
+const collectionMergeState = iqgBuildMergedLeadDataForCollection({
+  currentLead: currentLead || {},
+  extractedData
+});
+
+const normalizedExtractedLeadData = collectionMergeState.normalizedExtractedData;
+const mergedLeadDataAfterExtraction = collectionMergeState.mergedLeadData;
+const missingFields = collectionMergeState.missingFieldsAfterMerge;
+const nextMissingField = collectionMergeState.nextMissingField;
+const hasNewRequiredLeadData = collectionMergeState.hasNewRequiredLeadData;
 const awaitingConfirmation = currentLead?.faseQualificacao === "aguardando_confirmacao_dados";
 
      // 🧠 CLASSIFICADOR SEMÂNTICO — MODO OBSERVAÇÃO
@@ -20641,32 +20762,57 @@ if (shouldConfirmNameBeforeSaving) {
 
 if (
   !deveBloquearExtracaoDeDadosNesteTurno &&
-  shouldAskMissingFields &&
-  missingFields.length > 0 &&
-  Object.keys(extractedData).some(key => REQUIRED_LEAD_FIELDS.includes(key)) &&
-  !currentLead?.aguardandoConfirmacaoCampo
-)
-
-{
+  hasNewRequiredLeadData &&
+  hasAllRequiredLeadFields(mergedLeadDataAfterExtraction) &&
+  !currentLead?.dadosConfirmadosPeloLead &&
+  !currentLead?.aguardandoConfirmacaoCampo &&
+  !currentLead?.aguardandoConfirmacao
+) {
   await saveLeadProfile(from, {
-    ...extractedData,
+    ...normalizedExtractedLeadData,
+
+    cidadeEstado:
+      mergedLeadDataAfterExtraction.cidade && mergedLeadDataAfterExtraction.estado
+        ? `${mergedLeadDataAfterExtraction.cidade}/${normalizeUF(mergedLeadDataAfterExtraction.estado)}`
+        : currentLead?.cidadeEstado || null,
+
+    // Limpeza de campos temporários da coleta.
+    cidadePendente: null,
+    estadoPendente: null,
+    campoPendente: null,
+    valorPendente: null,
+    campoEsperado: null,
+    aguardandoConfirmacaoCampo: false,
+
     dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: false,
-    faseQualificacao: "dados_parciais",
-    status: "dados_parciais"
+    aguardandoConfirmacao: true,
+    faseQualificacao: "aguardando_confirmacao_dados",
+    status: "aguardando_confirmacao_dados",
+
+    ultimaDecisaoBackend: buildBackendDecision({
+      tipo: "dados_completos_aguardando_confirmacao",
+      motivo: "Todos os campos obrigatórios foram preenchidos considerando dados já salvos no lead e dados extraídos da mensagem atual.",
+      acao: "confirmar_dados_completos",
+      mensagemLead: text,
+      detalhes: {
+        camposExtraidosAgora: Object.keys(normalizedExtractedLeadData),
+        camposFaltantesDepoisDoMerge: [],
+        origem: "merge_currentLead_extractedData"
+      }
+    })
   });
 
-  const missingMsg = buildPartialLeadDataMessage(extractedData, missingFields);
+  const confirmationMsg = buildLeadConfirmationMessage(mergedLeadDataAfterExtraction);
 
-  await sendWhatsAppMessage(from, missingMsg);
-   await saveHistoryStep(from, history, text, missingMsg, !!message.audio?.id);
-   
+  await sendWhatsAppMessage(from, confirmationMsg);
+  await saveHistoryStep(from, history, text, confirmationMsg, !!message.audio?.id);
+
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
 
   return;
-}     
+}
     // 🔥 MONGO HISTÓRICO
 // Salva a mensagem atual do lead no histórico completo.
 // NÃO cortar aqui com slice(-20), senão o botão "Mensagem" continua mostrando só o final da conversa.
