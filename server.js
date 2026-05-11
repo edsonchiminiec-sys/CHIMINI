@@ -21564,20 +21564,6 @@ if (Array.isArray(backendStrategicGuidance)) {
     detalhes: turnPolicy
   });
 }
-
-// 🔔 Realce contextual: benefício de indicação (renda vitalícia) do Homologado
-const indicacaoGuidance = buildHomologadoIndicationBenefitGuidance({
-  lead: currentLead,
-  text: textoDoLead,
-  forceMentionForPiscineiro: true
-});
-if (indicacaoGuidance) {
-  console.log("🔔 Realce de indicação ativado:", {
-    prioridade: indicacaoGuidance.prioridade,
-    piscineiro: indicacaoGuidance.detectorPiscineiro,
-    mencaoIndicacao: indicacaoGuidance.detectorMencaoIndicacao
-  });
-}
    
 preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
