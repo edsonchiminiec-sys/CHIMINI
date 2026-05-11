@@ -23672,6 +23672,229 @@ app.get("/auditoria", async (req, res) => {
   }
 });
 
+/* =========================
+   C-LEVEL AUDITOR GPT — ANÁLISE DOS EVENTOS DE AUDITORIA
+========================= */
+
+const CLEVEL_AUDITOR_SYSTEM_PROMPT = `
+Você é o C-Level Auditor GPT da IQG.
+
+Você analisa eventos de auditoria do sistema de SDR IA no WhatsApp e gera diagnósticos detalhados e acionáveis.
+
+Seu papel é:
+- Identificar padrões de erro nos GPTs (Classificador, Historiador, Pré-SDR, Supervisor, SDR).
+- Detectar decisões incorretas dos agentes.
+- Apontar gargalos de conversão, repetição ou perda de leads.
+- Avaliar a qualidade geral do atendimento automatizado.
+- Gerar recomendações PRÁTICAS e ESPECÍFICAS de correção.
+
+Você NÃO altera leads, NÃO manda WhatsApp, NÃO envia CRM, NÃO gera código.
+
+Contexto técnico da IQG:
+- Backend Node.js + Express + MongoDB no Render.
+- Arquivo principal: server.js (~7000 linhas).
+- Múltiplos GPTs: SDR IA, Consultor Pré-SDR, Supervisor, Classificador Comercial, Classificador Semântico de Intenção, Historiador Semântico de Continuidade, Roteador de Coleta, Anti-Mistura, C-Level Dashboard.
+- Travas determinísticas no backend protegem contra erros dos GPTs.
+- Funil principal: Programa Parceiro Homologado IQG (taxa R$ 1.990, lote em comodato, suporte).
+- Rota alternativa: Programa de Afiliados IQG (link, sem estoque, sem taxa).
+- A taxa de adesão é o principal gargalo de conversão.
+- Etapas do funil: programa → benefícios → estoque → responsabilidades → investimento → compromisso → coleta → confirmação → CRM.
+
+REGRA PRINCIPAL — DIAGNÓSTICOS ACIONÁVEIS:
+
+Para cada problema detectado, você DEVE informar:
+
+1. O QUE aconteceu — descrição clara do problema.
+2. ONDE no sistema — qual GPT, qual trava, qual parte do fluxo.
+3. POR QUE é problema — impacto na conversão, experiência do lead ou custo.
+4. COMO corrigir — descrição prática da correção necessária.
+5. PRIORIDADE — baixa, média, alta ou crítica.
+6. COMPONENTE — qual função/prompt/trava precisa ser ajustada.
+
+CATEGORIAS DE PROBLEMAS A MONITORAR:
+
+1. CLASSIFICAÇÃO INCORRETA — GPT interpretou errado a intenção do lead.
+2. REPETIÇÃO — SDR repetiu explicação que o lead já entendeu.
+3. COLETA PREMATURA — sistema tentou pedir dados antes da hora.
+4. ROTA ERRADA — lead foi jogado para Afiliado ou Homologado sem motivo.
+5. OBJEÇÃO MAL TRATADA — taxa/preço não foi respondida corretamente.
+6. PERDA EVITÁVEL — lead esfriou por erro de condução.
+7. TRAVA EXCESSIVA — backend bloqueou avanço legítimo do lead.
+8. TRAVA INSUFICIENTE — backend permitiu avanço indevido.
+9. CUSTO DESNECESSÁRIO — GPT chamado sem necessidade.
+10. LATÊNCIA — processamento demorou demais.
+
+Regras:
+1. Base sua análise SOMENTE nos eventos recebidos.
+2. Não invente dados.
+3. Se a amostra for pequena, diga claramente.
+4. Separe problemas dos GPTs de problemas do backend/travas.
+5. Priorize ações práticas e específicas.
+6. Para cada sugestão, indique o componente exato do sistema.
+7. Use linguagem técnica quando necessário, mas explique o impacto comercial.
+
+Responda SEMPRE em JSON válido:
+
+{
+  "tituloDiagnostico": "",
+  "resumoExecutivo": "",
+  "qualidadeGpts": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "qualidadeBackend": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "diagnosticosAcionaveis": [
+    {
+      "problema": "",
+      "onde": "",
+      "porqueEProblema": "",
+      "comoCorrigir": "",
+      "prioridade": "baixa | media | alta | critica",
+      "componente": ""
+    }
+  ],
+  "padroesObservados": [],
+  "gargalos": [],
+  "oportunidadesMelhoria": [],
+  "planoAcao": [],
+  "prioridadeExecutiva": "baixa | media | alta | critica",
+  "observacaoSobreAmostra": ""
+}
+`;
+
+app.post("/auditoria/c-level-auditor", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    const pergunta = String(req.body?.pergunta || "").trim();
+
+    if (!pergunta || pergunta.length < 8) {
+      return res.status(400).json({
+        ok: false,
+        error: "Digite uma pergunta mais completa para o C-Level Auditor."
+      });
+    }
+
+    await connectMongo();
+
+    const recentEvents = await db
+      .collection("audit_events")
+      .find({})
+      .sort({ timestamp: -1 })
+      .limit(200)
+      .toArray();
+
+    const totalEvents = await db
+      .collection("audit_events")
+      .countDocuments({});
+
+    const componentSummary = {};
+    const severitySummary = {};
+    const eventTypeSummary = {};
+
+    for (const evt of recentEvents) {
+      componentSummary[evt.component] = (componentSummary[evt.component] || 0) + 1;
+      severitySummary[evt.severity] = (severitySummary[evt.severity] || 0) + 1;
+      eventTypeSummary[evt.eventType] = (eventTypeSummary[evt.eventType] || 0) + 1;
+    }
+
+    const highSeverityEvents = recentEvents
+      .filter(evt => evt.severity === "high" || evt.severity === "critical")
+      .slice(0, 20)
+      .map(evt => ({
+        component: evt.component,
+        eventType: evt.eventType,
+        severity: evt.severity,
+        timestamp: evt.timestamp,
+        userMasked: evt.userMasked,
+        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, 500)
+      }));
+
+    const auditSnapshot = {
+      totalEvents,
+      eventosAnalisados: recentEvents.length,
+      auditLevelAtivo: getCurrentAuditLevel(),
+      resumoPorComponente: componentSummary,
+      resumoPorSeveridade: severitySummary,
+      resumoPorTipoEvento: eventTypeSummary,
+      eventosAltaSeveridade: highSeverityEvents,
+      amostraEventosRecentes: recentEvents.slice(0, 30).map(evt => ({
+        component: evt.component,
+        eventType: evt.eventType,
+        severity: evt.severity,
+        timestamp: evt.timestamp,
+        auditLevel: evt.auditLevel,
+        userMasked: evt.userMasked,
+        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, 300)
+      }))
+    };
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_CLEVEL_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: CLEVEL_AUDITOR_SYSTEM_PROMPT
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              perguntaDoGestor: pergunta,
+              auditSnapshot
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao chamar C-Level Auditor GPT:", data);
+      return res.status(500).json({
+        ok: false,
+        error: "Falha ao gerar análise do C-Level Auditor."
+      });
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+
+    let analysis;
+    try {
+      analysis = JSON.parse(rawText);
+    } catch (e) {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+      analysis = start !== -1 && end > start
+        ? JSON.parse(rawText.slice(start, end + 1))
+        : { resumoExecutivo: "Falha ao interpretar resposta do Auditor." };
+    }
+
+    return res.json({
+      ok: true,
+      analysis,
+      auditSnapshot
+    });
+  } catch (error) {
+    console.error("Erro na rota C-Level Auditor:", error);
+    return res.status(500).json({
+      ok: false,
+      error: "Erro ao gerar análise do C-Level Auditor."
+    });
+  }
+});
+
 app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
 });
