@@ -2661,6 +2661,25 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
   const rawText = data.choices?.[0]?.message?.content || "";
 const parsedConsultantAdvice = parseConsultantAdviceJson(rawText);
 
+await recordAuditEvent({
+  traceId: null,
+  component: AUDIT_COMPONENTS.GPT_PRE_SDR,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_CONSULTANT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    estrategiaRecomendada: parsedConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    proximaMelhorAcao: String(parsedConsultantAdvice?.proximaMelhorAcao || "").slice(0, 200),
+    ofertaMaisAdequada: parsedConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    prioridadeComercial: parsedConsultantAdvice?.prioridadeComercial || "nao_analisado",
+    momentoIdealHumano: parsedConsultantAdvice?.momentoIdealHumano || "nao_analisado",
+    cuidadoPrincipal: String(parsedConsultantAdvice?.cuidadoPrincipal || "").slice(0, 200)
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
+   
 auditLog("Resposta do Consultor Pre-SDR", {
   ultimaMensagemLead: lastUserText || "",
   rawText,
@@ -3321,6 +3340,26 @@ Se houver objeção, use:
   confidence: parsed?.confidence || "baixa",
   reason: parsed?.reason || ""
 };
+
+     await recordAuditEvent({
+  traceId: null,
+  component: AUDIT_COMPONENTS.GPT_SEMANTIC_CONTINUITY,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    leadEntendeuUltimaExplicacao: semanticContinuityResult?.leadEntendeuUltimaExplicacao === true,
+    leadQuerAvancar: semanticContinuityResult?.leadQuerAvancar === true,
+    leadCriticouRepeticao: semanticContinuityResult?.leadCriticouRepeticao === true,
+    naoRepetirUltimoTema: semanticContinuityResult?.naoRepetirUltimoTema === true,
+    proximaAcaoSemantica: semanticContinuityResult?.proximaAcaoSemantica || "nao_analisado",
+    confidence: semanticContinuityResult?.confidence || "baixa",
+    reason: semanticContinuityResult?.reason || ""
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
 
 auditLog("Resposta do Historiador Semantico", {
   ultimaMensagemLead: lastUserText || "",
