@@ -2552,7 +2552,8 @@ async function runConsultantAssistant({
   classification = {},
   semanticIntent = null,
   commercialRouteDecision = null,
-  backendStrategicGuidance = []
+  backendStrategicGuidance = [],
+  auditTraceId = null
 } = {}) {
   const recentHistory = Array.isArray(history)
     ? history.slice(-12).map(message => ({
@@ -2662,7 +2663,7 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
 const parsedConsultantAdvice = parseConsultantAdviceJson(rawText);
 
 await recordAuditEvent({
-  traceId: null,
+  traceId: auditTraceId,
   component: AUDIT_COMPONENTS.GPT_PRE_SDR,
   eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
   payload: {
@@ -21844,7 +21845,8 @@ preSdrConsultantAdvice = await runConsultantAssistant({
   classification: currentLead?.classificacao || {},
   semanticIntent,
   commercialRouteDecision,
-  backendStrategicGuidance
+  backendStrategicGuidance,
+   auditTraceId
 });
 
 const originalPreSdrConsultantAdvice = preSdrConsultantAdvice;
