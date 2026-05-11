@@ -23972,10 +23972,13 @@ app.get("/auditoria", async (req, res) => {
           '<p style="margin:0 0 18px;color:#cbd5e1;font-size:14px;">Analisa padrões, qualidade dos GPTs, gargalos e sugestões de melhoria com base nos eventos de auditoria.</p>' +
           '<div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;">' +
             '<div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:6px;color:#e2e8f0;">Filtrar por lead específico <span style="font-weight:500;color:#94a3b8;">(opcional — deixe vazio para análise geral)</span>:</label>' +
+              '<input id="auditorLeadFilter" type="text" style="width:100%;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px;font-family:monospace;" placeholder="Ex: 5554*****75 — cole o telefone mascarado do lead que aparece na lista">' +
               '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:9px;color:#e2e8f0;">Pergunte ao Auditor:</label>' +
               '<textarea id="auditorQuestion" style="width:100%;min-height:100px;resize:vertical;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:12px;font-size:13px;line-height:1.45;outline:none;" placeholder="Ex: Quais GPTs estão gerando mais erros? Tem algum padrão de falha?"></textarea>' +
               '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
                 '<button type="button" id="askAuditorBtn" onclick="askAuditor()" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Perguntar ao Auditor</button>' +
+                '<button type="button" onclick="document.getElementById(\'auditorLeadFilter\').value=\'\';document.getElementById(\'auditorLeadFilter\').focus();" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:700;cursor:pointer;background:transparent;color:#cbd5e1;">Limpar filtro de lead</button>' +
                 '<button type="button" onclick="askAuditor(\'Analise os eventos recentes. Quais GPTs estão funcionando bem, quais precisam de atenção e existe algum padrão de erro?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Diagnóstico geral</button>' +
                 '<button type="button" onclick="askAuditor(\'Existem eventos de alta severidade? Se sim, o que causou e como corrigir?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Erros críticos</button>' +
                 '<button type="button" onclick="askAuditor(\'Quais melhorias nos prompts ou travas do backend você sugere com base nos eventos?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Sugestões</button>' +
@@ -23991,20 +23994,32 @@ app.get("/auditoria", async (req, res) => {
         'var auditorSenha = ' + JSON.stringify(String(req.query.senha || "")) + ';' +
         'async function askAuditor(qOverride) {' +
           'var qBox = document.getElementById("auditorQuestion");' +
+          'var leadBox = document.getElementById("auditorLeadFilter");' +
           'var rBox = document.getElementById("auditorResponse");' +
           'var btn = document.getElementById("askAuditorBtn");' +
           'var pergunta = String(qOverride || qBox.value || "").trim();' +
+          'var leadFiltro = leadBox ? String(leadBox.value || "").trim() : "";' +
           'if (!pergunta || pergunta.length < 8) { rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">Digite uma pergunta mais completa.</p>"; return; }' +
           'qBox.value = pergunta;' +
-          'if (btn) { btn.disabled = true; btn.textContent = "Analisando..."; }' +
-          'rBox.innerHTML = "<p style=\\"color:#e2e8f0;\\">Analisando eventos de auditoria...</p>";' +
+          'if (btn) { btn.disabled = true; btn.textContent = leadFiltro ? "Analisando lead..." : "Analisando..."; }' +
+          'var loadingMsg = leadFiltro ? ("Analisando eventos do lead <strong>" + leadFiltro + "</strong>...") : "Analisando eventos de auditoria (todos os leads)...";' +
+          'rBox.innerHTML = "<p style=\\"color:#e2e8f0;\\">" + loadingMsg + "</p>";' +
           'try {' +
             'var url = "/auditoria/c-level-auditor" + (auditorSenha ? "?senha=" + encodeURIComponent(auditorSenha) : "");' +
-            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pergunta: pergunta }) });' +
+            'var body = { pergunta: pergunta };' +
+            'if (leadFiltro) { body.lead = leadFiltro; }' +
+            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });' +
             'var data = await resp.json();' +
             'if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na análise.");' +
             'var a = data.analysis || {};' +
-            'var html = "<h4 style=\\"margin:0 0 10px;font-size:18px;color:#fff;\\">" + (a.tituloDiagnostico || "Diagnóstico") + "</h4>";' +
+            'var snap = data.auditSnapshot || {};' +
+            'var modoBadge = "";' +
+            'if (snap.modoAnalise === "lead_especifico") {' +
+              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(245,158,11,0.18);color:#fde68a;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(245,158,11,0.35);\\">🎯 Análise de lead específico: " + (snap.leadAnalisado || leadFiltro) + " · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
+            '} else {' +
+              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(96,165,250,0.18);color:#dbeafe;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(96,165,250,0.35);\\">🌐 Análise geral do sistema · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
+            '}' +
+            'var html = modoBadge + "<h4 style=\\"margin:0 0 10px;font-size:18px;color:#fff;\\">" + (a.tituloDiagnostico || "Diagnóstico") + "</h4>";' +
             'if (a.qualidadeGpts) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">GPTs: " + (a.qualidadeGpts.status || "-") + "</span>";' +
             'if (a.qualidadeBackend) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">Backend: " + (a.qualidadeBackend.status || "-") + "</span>";' +
             'if (a.prioridadeExecutiva) html += "<div style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(250,204,21,0.16);color:#fef3c7;font-size:12px;font-weight:800;margin-bottom:10px;\\">Prioridade: " + a.prioridadeExecutiva + "</div>";' +
@@ -24145,6 +24160,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
     if (!requireDashboardAuth(req, res)) return;
 
     const pergunta = String(req.body?.pergunta || "").trim();
+    const leadFilter = String(req.body?.lead || "").trim();
 
     if (!pergunta || pergunta.length < 8) {
       return res.status(400).json({
@@ -24155,16 +24171,28 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
 
     await connectMongo();
 
+    /*
+      Filtro opcional por lead específico.
+      Se vier `lead` no body, restringe a análise apenas aos eventos
+      daquele lead (busca por userMasked, case-insensitive).
+      Útil para analisar 1 conversa específica sem desperdiçar tokens
+      revisando leads onde a condução da SDR foi ok.
+    */
+    const eventQuery = {};
+    if (leadFilter) {
+      eventQuery.userMasked = { $regex: leadFilter, $options: "i" };
+    }
+
     const recentEvents = await db
       .collection("audit_events")
-      .find({})
+      .find(eventQuery)
       .sort({ timestamp: -1 })
-      .limit(200)
+      .limit(leadFilter ? 500 : 200)
       .toArray();
 
     const totalEvents = await db
       .collection("audit_events")
-      .countDocuments({});
+      .countDocuments(eventQuery);
 
     const componentSummary = {};
     const severitySummary = {};
@@ -24189,6 +24217,11 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       }));
 
     const auditSnapshot = {
+      modoAnalise: leadFilter ? "lead_especifico" : "sistema_geral",
+      leadAnalisado: leadFilter || null,
+      avisoParaOAuditor: leadFilter
+        ? `IMPORTANTE: esta análise é de UM LEAD ESPECÍFICO (${leadFilter}). Os dados abaixo referem-se SOMENTE a este lead, não ao sistema inteiro. Foque em diagnosticar a condução desta conversa específica. Não tire conclusões sobre volume geral, gargalos do sistema ou performance global a partir destes dados.`
+        : "Esta análise é GERAL do sistema (todos os leads recentes). Identifique padrões, gargalos e problemas recorrentes entre múltiplos leads.",
       totalEvents,
       eventosAnalisados: recentEvents.length,
       auditLevelAtivo: getCurrentAuditLevel(),
@@ -24196,14 +24229,14 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       resumoPorSeveridade: severitySummary,
       resumoPorTipoEvento: eventTypeSummary,
       eventosAltaSeveridade: highSeverityEvents,
-      amostraEventosRecentes: recentEvents.slice(0, 30).map(evt => ({
+      amostraEventosRecentes: recentEvents.slice(0, leadFilter ? 80 : 30).map(evt => ({
         component: evt.component,
         eventType: evt.eventType,
         severity: evt.severity,
         timestamp: evt.timestamp,
         auditLevel: evt.auditLevel,
         userMasked: evt.userMasked,
-        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, 300)
+        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, leadFilter ? 600 : 300)
       }))
     };
 
