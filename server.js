@@ -23358,6 +23358,9 @@ app.get("/auditoria", async (req, res) => {
     if (componentFilter) query.component = componentFilter;
     if (severityFilter) query.severity = severityFilter;
     if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
+    if (leadFilter) {
+      query.userMasked = { $regex: leadFilter, $options: "i" };
+    } 
 
     const events = await db
       .collection("audit_events")
@@ -23414,10 +23417,98 @@ app.get("/auditoria", async (req, res) => {
         '<thead><tr><th>Trace</th><th>Timestamp</th><th>Componente</th><th>Evento</th><th>Severidade</th><th>Lead</th><th>Payload</th><th>Nível</th></tr></thead>' +
         '<tbody>' + (rows || '<tr><td colspan="8" class="empty">Nenhum evento encontrado.</td></tr>') + '</tbody>' +
         '</table></div>';
+    } else if (modeFilter === "by_lead") {
+      const byLead = {};
+      for (const evt of events) {
+        const key = evt.userMasked || "sem_lead";
+        if (!byLead[key]) byLead[key] = [];
+        byLead[key].push(evt);
+      }
+
+      for (const key of Object.keys(byLead)) {
+        byLead[key].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      }
+
+      const sortedLeads = Object.keys(byLead).sort((a, b) => {
+        return new Date(byLead[b][0].timestamp) - new Date(byLead[a][0].timestamp);
+      });
+
+      const leadCards = sortedLeads.map(leadKey => {
+        const leadEvents = byLead[leadKey];
+        const totalEvts = leadEvents.length;
+
+        const traceIds = [...new Set(leadEvents.map(e => e.traceId).filter(Boolean))];
+        const totalConversas = traceIds.length;
+
+        const maxSeverity = leadEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low");
+
+        const sevColor = severityColors[maxSeverity] || "#6b7280";
+
+        const firstTime = leadEvents[leadEvents.length - 1].timestamp
+          ? new Date(leadEvents[leadEvents.length - 1].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+        const lastTime = leadEvents[0].timestamp
+          ? new Date(leadEvents[0].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+
+        const componentBreakdown = {};
+        for (const evt of leadEvents) {
+          componentBreakdown[evt.component] = (componentBreakdown[evt.component] || 0) + 1;
+        }
+
+        const componentBadges = Object.keys(componentBreakdown)
+          .sort()
+          .map(c => '<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;margin:2px;">' + escapeHtml(c) + ' (' + componentBreakdown[c] + ')</span>')
+          .join(" ");
+
+        const recentTraces = traceIds.slice(0, 5).map(tid => {
+          const traceEvts = leadEvents.filter(e => e.traceId === tid);
+          const traceTime = traceEvts[0]?.timestamp
+            ? new Date(traceEvts[0].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+            : "-";
+          const traceText = traceEvts[0]?.payload?.textPreview || traceEvts[0]?.payload?.ultimaMensagemLead || "-";
+          const traceShort = tid.slice(0, 8);
+
+          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<span style="font-family:monospace;font-size:11px;color:#6b7280;flex:0 0 70px;">' + escapeHtml(traceShort) + '</span>' +
+            '<span style="font-size:12px;color:#6b7280;flex:0 0 140px;">' + escapeHtml(traceTime) + '</span>' +
+            '<span style="font-size:12px;color:#374151;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(String(traceText).slice(0, 120)) + '</span>' +
+            '<a style="font-size:11px;color:#2563eb;flex:0 0 auto;" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=grouped&trace=' + encodeURIComponent(tid) + '">ver</a>' +
+          '</div>';
+        }).join("");
+
+        return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">' +
+            '<div>' +
+              '<span style="font-size:16px;font-weight:700;">📱 ' + escapeHtml(leadKey) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(maxSeverity) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + totalEvts + ' eventos</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + totalConversas + ' conversas</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<div style="font-size:12px;color:#6b7280;">Primeiro evento: ' + escapeHtml(firstTime) + '</div>' +
+            '<div style="font-size:12px;color:#6b7280;">Último evento: ' + escapeHtml(lastTime) + '</div>' +
+          '</div>' +
+          '<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px;">' + componentBadges + '</div>' +
+          '<div style="border-top:1px solid #e5e7eb;padding-top:10px;">' +
+            '<div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;">Últimas conversas:</div>' +
+            recentTraces +
+          '</div>' +
+        '</div>';
+      }).join("");
+
+      contentHtml = leadCards || '<p class="empty">Nenhum evento encontrado.</p>';
     } else {
       const grouped = {};
       for (const evt of events) {
         const key = evt.traceId || "sem_trace";
+         
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(evt);
       }
@@ -23506,9 +23597,16 @@ app.get("/auditoria", async (req, res) => {
       contentHtml = cards || '<p class="empty">Nenhum evento encontrado.</p>';
     }
 
-    const modeToggle = modeFilter === "flat"
-      ? '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=grouped">Agrupar por conversa</a>'
-      : '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=flat">Ver lista plana</a>';
+    const modeLinks = [
+      { mode: "grouped", label: "Por conversa" },
+      { mode: "by_lead", label: "Por lead" },
+      { mode: "flat", label: "Lista plana" }
+    ];
+
+    const modeToggle = modeLinks
+      .filter(m => m.mode !== modeFilter)
+      .map(m => '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=' + m.mode + '">' + m.label + '</a>')
+      .join(" ");
 
     res.send('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Auditoria IQG</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>' +
       'body{margin:0;font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;}' +
