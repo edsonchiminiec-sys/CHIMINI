@@ -23664,6 +23664,79 @@ app.get("/auditoria", async (req, res) => {
           '<a class="btn" href="/auditoria' + senhaQuery + '">Limpar</a>' +
         '</form>' +
         contentHtml +
+      '<div style="margin-bottom:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#172554 100%);border-radius:14px;padding:20px;color:#fff;box-shadow:0 12px 34px rgba(15,23,42,0.20);border:1px solid rgba(255,255,255,0.08);">' +
+          '<div style="display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:rgba(59,130,246,0.18);color:#bfdbfe;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">C-Level Auditor GPT</div>' +
+          '<h3 style="margin:0 0 8px;font-size:22px;font-weight:900;">Auditor IA — Análise dos Eventos</h3>' +
+          '<p style="margin:0 0 18px;color:#cbd5e1;font-size:14px;">Analisa padrões, qualidade dos GPTs, gargalos e sugestões de melhoria com base nos eventos de auditoria.</p>' +
+          '<div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;">' +
+            '<div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:9px;color:#e2e8f0;">Pergunte ao Auditor:</label>' +
+              '<textarea id="auditorQuestion" style="width:100%;min-height:100px;resize:vertical;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:12px;font-size:13px;line-height:1.45;outline:none;" placeholder="Ex: Quais GPTs estão gerando mais erros? Tem algum padrão de falha?"></textarea>' +
+              '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
+                '<button type="button" id="askAuditorBtn" onclick="askAuditor()" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Perguntar ao Auditor</button>' +
+                '<button type="button" onclick="askAuditor(\'Analise os eventos recentes. Quais GPTs estão funcionando bem, quais precisam de atenção e existe algum padrão de erro?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Diagnóstico geral</button>' +
+                '<button type="button" onclick="askAuditor(\'Existem eventos de alta severidade? Se sim, o que causou e como corrigir?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Erros críticos</button>' +
+                '<button type="button" onclick="askAuditor(\'Quais melhorias nos prompts ou travas do backend você sugere com base nos eventos?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Sugestões</button>' +
+              '</div>' +
+            '</div>' +
+            '<div id="auditorResponse" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+              '<div style="font-size:13px;font-weight:900;color:#bfdbfe;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Resposta do Auditor</div>' +
+              '<p style="color:#e2e8f0;font-size:13px;">Faça uma pergunta para receber uma análise técnica dos eventos de auditoria.</p>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<script>' +
+        'var auditorSenha = ' + JSON.stringify(String(req.query.senha || "")) + ';' +
+        'async function askAuditor(qOverride) {' +
+          'var qBox = document.getElementById("auditorQuestion");' +
+          'var rBox = document.getElementById("auditorResponse");' +
+          'var btn = document.getElementById("askAuditorBtn");' +
+          'var pergunta = String(qOverride || qBox.value || "").trim();' +
+          'if (!pergunta || pergunta.length < 8) { rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">Digite uma pergunta mais completa.</p>"; return; }' +
+          'qBox.value = pergunta;' +
+          'if (btn) { btn.disabled = true; btn.textContent = "Analisando..."; }' +
+          'rBox.innerHTML = "<p style=\\"color:#e2e8f0;\\">Analisando eventos de auditoria...</p>";' +
+          'try {' +
+            'var url = "/auditoria/c-level-auditor" + (auditorSenha ? "?senha=" + encodeURIComponent(auditorSenha) : "");' +
+            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pergunta: pergunta }) });' +
+            'var data = await resp.json();' +
+            'if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na análise.");' +
+            'var a = data.analysis || {};' +
+            'var html = "<h4 style=\\"margin:0 0 10px;font-size:18px;color:#fff;\\">" + (a.tituloDiagnostico || "Diagnóstico") + "</h4>";' +
+            'if (a.qualidadeGpts) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">GPTs: " + (a.qualidadeGpts.status || "-") + "</span>";' +
+            'if (a.qualidadeBackend) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">Backend: " + (a.qualidadeBackend.status || "-") + "</span>";' +
+            'if (a.prioridadeExecutiva) html += "<div style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(250,204,21,0.16);color:#fef3c7;font-size:12px;font-weight:800;margin-bottom:10px;\\">Prioridade: " + a.prioridadeExecutiva + "</div>";' +
+            'html += "<p style=\\"color:#e2e8f0;font-size:13px;line-height:1.45;\\">" + (a.resumoExecutivo || "") + "</p>";' +
+            'if (a.qualidadeGpts && a.qualidadeGpts.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade GPTs</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeGpts.analise + "</p>";' +
+            'if (a.qualidadeBackend && a.qualidadeBackend.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade Backend</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeBackend.analise + "</p>";' +
+            'if (Array.isArray(a.diagnosticosAcionaveis) && a.diagnosticosAcionaveis.length > 0) {' +
+              'html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;text-transform:uppercase;\\">Diagnósticos acionáveis</h5>";' +
+              'a.diagnosticosAcionaveis.forEach(function(d, i) {' +
+                'var pc = d.prioridade === "critica" ? "#ef4444" : d.prioridade === "alta" ? "#f59e0b" : d.prioridade === "media" ? "#3b82f6" : "#6b7280";' +
+                'html += "<div style=\\"background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:12px;margin-bottom:10px;border-left:4px solid " + pc + ";\\">";' +
+                'html += "<div style=\\"display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;\\"><strong style=\\"font-size:13px;color:#fff;\\">#" + (i+1) + " — " + (d.problema || "-") + "</strong><span style=\\"background:" + pc + ";color:white;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;\\">" + (d.prioridade || "-") + "</span></div>";' +
+                'html += "<div style=\\"font-size:12px;color:#94a3b8;margin-bottom:4px;\\">📍 Onde: " + (d.onde || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:12px;color:#fca5a5;margin-bottom:4px;\\">⚠️ Por quê: " + (d.porqueEProblema || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:12px;color:#86efac;margin-bottom:4px;\\">✅ Correção: " + (d.comoCorrigir || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:11px;color:#6b7280;\\">🔧 Componente: " + (d.componente || "-") + "</div>";' +
+                'html += "</div>";' +
+              '});' +
+            '}' +
+            'function rl(t, items) { if (!Array.isArray(items) || !items.length) return ""; return "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">" + t + "</h5><ul style=\\"margin:0;padding-left:18px;color:#cbd5e1;font-size:13px;line-height:1.55;\\">" + items.map(function(x){return "<li>"+x+"</li>";}).join("") + "</ul>"; }' +
+            'html += rl("Padrões observados", a.padroesObservados);' +
+            'html += rl("Gargalos", a.gargalos);' +
+            'html += rl("Oportunidades de melhoria", a.oportunidadesMelhoria);' +
+            'html += rl("Plano de ação", a.planoAcao);' +
+            'if (a.observacaoSobreAmostra) html += "<p style=\\"color:#94a3b8;font-size:12px;margin-top:12px;\\">" + a.observacaoSobreAmostra + "</p>";' +
+            'rBox.innerHTML = html;' +
+          '} catch (err) {' +
+            'rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">" + (err.message || "Erro ao gerar análise.") + "</p>";' +
+          '} finally {' +
+            'if (btn) { btn.disabled = false; btn.textContent = "Perguntar ao Auditor"; }' +
+          '}' +
+        '}' +
+        '</script>' +
+        contentHtml +
       '</div></body></html>'
     );
   } catch (error) {
