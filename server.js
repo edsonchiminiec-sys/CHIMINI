@@ -12176,42 +12176,32 @@ function enforcePreSdrConsultantHardLimits({
 }
 
 function getMissingFunnelStepLabels(lead = {}) {
-  const e = lead?.etapas || {};
-  const missing = [];
-
-  if (!e.programa) {
-    missing.push("programa");
-  }
-
-  if (!e.beneficios) {
-    missing.push("benefícios");
-  }
-
-  if (!e.estoque) {
-    missing.push("estoque em comodato");
-  }
-
-  if (!e.responsabilidades) {
-    missing.push("responsabilidades");
-  }
-
-  if (!e.investimento) {
-    missing.push("investimento");
-  }
-
-if (lead?.taxaAlinhada !== true) {
-  missing.push("alinhamento claro da taxa");
-}
-   
-  if (!e.compromisso) {
-    missing.push("compromisso de atuação");
-  }
-
-  if (lead?.interesseReal !== true) {
-    missing.push("interesse real explícito");
-  }
-
-  return missing;
+    const e = lead?.etapas || {};
+    const missing = [];
+    if (!e.programa) {
+        missing.push("programa");
+    }
+    if (!e.beneficios) {
+        missing.push("benefícios");
+    }
+    if (!e.estoque) {
+        missing.push("estoque em comodato");
+    }
+    if (!e.responsabilidades) {
+        missing.push("responsabilidades");
+    }
+    if (!e.investimento) {
+        missing.push("investimento");
+    }
+    if (lead?.taxaAlinhada !== true) {
+        missing.push("alinhamento claro da taxa");
+    }
+    // 🚫 Removido do bloqueio do funil (Onda 1):
+    //   - "compromisso de atuação" — não é mais etapa obrigatória.
+    //   - "interesse real explícito" — não é mais etapa obrigatória.
+    // O funil agora libera coleta após: programa, benefícios, estoque,
+    // responsabilidades, investimento e taxa alinhada.
+    return missing;
 }
 
 function normalizeUF(value = "") {
