@@ -23810,9 +23810,8 @@ app.get("/auditoria", async (req, res) => {
           '</select>' +
           '<button type="submit">Filtrar</button>' +
           '<a class="btn" href="/auditoria' + senhaQuery + '">Limpar</a>' +
-        '</form>' +
-        contentHtml +
-      '<div style="margin-bottom:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#172554 100%);border-radius:14px;padding:20px;color:#fff;box-shadow:0 12px 34px rgba(15,23,42,0.20);border:1px solid rgba(255,255,255,0.08);">' +
+       '</form>' +
+      '<div style="margin-bottom:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#172554 100%)
           '<div style="display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:rgba(59,130,246,0.18);color:#bfdbfe;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">C-Level Auditor GPT</div>' +
           '<h3 style="margin:0 0 8px;font-size:22px;font-weight:900;">Auditor IA — Análise dos Eventos</h3>' +
           '<p style="margin:0 0 18px;color:#cbd5e1;font-size:14px;">Analisa padrões, qualidade dos GPTs, gargalos e sugestões de melhoria com base nos eventos de auditoria.</p>' +
@@ -27282,6 +27281,9 @@ tr:hover td {
       </head>
 
       <body>
+      <div style="background:#0f172a;padding:10px 28px;display:flex;gap:10px;align-items:center;">
+          <a style="display:inline-block;padding:9px 12px;background:#2563eb;color:white;text-decoration:none;border-radius:8px;font-size:14px;" href="/auditoria${senhaQuery}">🔍 Auditoria</a>
+        </div>
   <div class="dashboard-page">
     <div class="dashboard-header">
       <div class="dashboard-title">
