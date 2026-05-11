@@ -24325,9 +24325,52 @@ app.get("/auditoria", async (req, res) => {
         '<div class="topbar">' +
           '<a class="btn" href="/dashboard' + senhaQuery + '">← Voltar ao Dashboard</a>' +
           modeToggle +
-          '<a class="btn" style="background:#2563eb;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=24" download>📥 Baixar Relatório 24h</a>' +
-          '<a class="btn" style="background:#7c3aed;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=168" download>📥 Relatório 7 dias</a>' +
+          '<a id="btnRelatorio24h" class="btn" style="background:#2563eb;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=24" download>📥 Baixar Relatório 24h</a>' +
+          '<a id="btnRelatorio7d" class="btn" style="background:#7c3aed;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=168" download>📥 Relatório 7 dias</a>' +
         '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:18px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<label style="font-size:13px;font-weight:700;color:#374151;white-space:nowrap;">🎯 Filtro de lead para relatórios:</label>' +
+          '<input id="relatorioLeadFilter" type="text" style="flex:1;min-width:220px;height:34px;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;font-size:13px;font-family:monospace;" placeholder="Ex: 5554*****75 — vazio = todos os leads">' +
+          '<button type="button" onclick="document.getElementById(\'relatorioLeadFilter\').value=\'\';atualizarLinksRelatorio();" style="height:34px;padding:0 12px;border:1px solid #d1d5db;border-radius:8px;background:#f9fafb;color:#374151;font-size:12px;font-weight:600;cursor:pointer;">Limpar</button>' +
+          '<a id="btnRelatorioCompleto" class="btn" style="display:none;background:#dc2626;font-weight:800;font-size:12px;white-space:nowrap;" download>📥 Histórico COMPLETO deste lead</a>' +
+          '<span id="relatorioFiltroStatus" style="font-size:12px;color:#6b7280;font-style:italic;">Relatórios baixarão todos os leads</span>' +
+        '</div>' +
+        '<script>' +
+          'var relatorio24hBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=24") + ';' +
+          'var relatorio7dBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=168") + ';' +
+          'var relatorioCompletoBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=all") + ';' +
+          'function atualizarLinksRelatorio() {' +
+            'var input = document.getElementById("relatorioLeadFilter");' +
+            'var lead = input ? String(input.value || "").trim() : "";' +
+            'var b24 = document.getElementById("btnRelatorio24h");' +
+            'var b7d = document.getElementById("btnRelatorio7d");' +
+            'var bFull = document.getElementById("btnRelatorioCompleto");' +
+            'var status = document.getElementById("relatorioFiltroStatus");' +
+            'var suffix = lead ? ("&lead=" + encodeURIComponent(lead)) : "";' +
+            'if (b24) b24.href = relatorio24hBase + suffix;' +
+            'if (b7d) b7d.href = relatorio7dBase + suffix;' +
+            'if (bFull) {' +
+              'if (lead) {' +
+                'bFull.href = relatorioCompletoBase + "&lead=" + encodeURIComponent(lead);' +
+                'bFull.style.display = "inline-block";' +
+              '} else {' +
+                'bFull.style.display = "none";' +
+              '}' +
+            '}' +
+            'if (status) {' +
+              'status.textContent = lead ? ("Relatórios filtrarão apenas o lead: " + lead) : "Relatórios baixarão todos os leads";' +
+              'status.style.color = lead ? "#dc2626" : "#6b7280";' +
+              'status.style.fontWeight = lead ? "700" : "400";' +
+            '}' +
+          '}' +
+          'document.addEventListener("DOMContentLoaded", function() {' +
+            'var input = document.getElementById("relatorioLeadFilter");' +
+            'if (input) {' +
+              'input.addEventListener("input", atualizarLinksRelatorio);' +
+              'input.addEventListener("change", atualizarLinksRelatorio);' +
+            '}' +
+          '});' +
+        '</script>' +
         '<div class="stats">' +
           '<div class="stat-card"><small>Total de eventos</small><strong>' + totalEvents + '</strong></div>' +
           '<div class="stat-card"><small>Exibindo</small><strong>' + events.length + '</strong></div>' +
