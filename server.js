@@ -3387,6 +3387,101 @@ function iqgNormalizeSemanticIntentAfterClassifier({
   return normalized;
 }
 
+/* =========================
+   REGRA COMERCIAL — INDICAÇÃO NO PARCEIRO HOMOLOGADO
+   Benefício oficial do Programa Parceiro Homologado IQG.
+   Não confundir com Programa de Afiliados.
+========================= */
+
+function iqgNormalizeIndicationText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function iqgLeadMentionsIndicationNetwork(text = "") {
+  const t = iqgNormalizeIndicationText(text);
+
+  return Boolean(
+    /\b(indicacao|indicacoes|indicar|indico|indiquei|indicando|indicado|indicados|ganhar por indicacao|ganhar indicando|comissao por indicacao|comissao vitalicia|renda vitalicia|indicar parceiros|indicar outros parceiros|trazer parceiros|trazer outros parceiros|rede de parceiros|colegas piscineiros|outros piscineiros)\b/i.test(t)
+  );
+}
+
+function iqgLeadLooksLikePiscineiro(text = "", lead = {}) {
+  const t = iqgNormalizeIndicationText(
+    [
+      text,
+      lead?.profissao,
+      lead?.segmento,
+      lead?.ramo,
+      lead?.atividade,
+      lead?.observacoes,
+      lead?.historicoResumo
+    ].filter(Boolean).join(" ")
+  );
+
+  return Boolean(
+    /\b(piscineiro|piscineira|limpeza de piscina|manutencao de piscina|manutenção de piscina|trabalho com piscina|trabalho com piscinas|atendo piscina|atendo piscinas|cliente de piscina|clientes de piscina|tratamento de piscina|piscinas)\b/i.test(t)
+  );
+}
+
+function buildHomologadoIndicationBenefitGuidance({
+  lead = {},
+  text = "",
+  forceMentionForPiscineiro = false
+} = {}) {
+  const leadIsPiscineiro = iqgLeadLooksLikePiscineiro(text, lead);
+  const leadMentionsIndication = iqgLeadMentionsIndicationNetwork(text);
+
+  const shouldGuide =
+    leadMentionsIndication ||
+    (forceMentionForPiscineiro && leadIsPiscineiro);
+
+  if (!shouldGuide) {
+    return null;
+  }
+
+  return {
+    tipo: "beneficio_indicacao_parceiro_homologado",
+    prioridade: leadIsPiscineiro ? "alta" : "media",
+    motivo: leadIsPiscineiro
+      ? "Lead parece ser piscineiro ou atuar com piscinas; a possibilidade de faturar indicando outros parceiros pode ser muito relevante."
+      : "Lead mencionou indicação, rede, comissão por indicação ou interesse em indicar outros parceiros.",
+    orientacaoParaPreSdr:
+      [
+        "REGRA COMERCIAL OFICIAL — BENEFÍCIO DE INDICAÇÃO DO PARCEIRO HOMOLOGADO IQG.",
+        "",
+        "O Programa Parceiro Homologado possui benefício de indicação de novos parceiros.",
+        "O parceiro homologado pode indicar novos parceiros para o programa e receber 10% de comissão sobre tudo que o parceiro indicado vender.",
+        "A comissão é vitalícia enquanto o parceiro indicado estiver ativo.",
+        "A comissão é apenas sobre indicados diretos: 1 nível de indicação, simples e transparente.",
+        "Condição: o parceiro indicado deve trabalhar respeitando o valor mínimo de venda sugerido pela IQG.",
+        "Controle: relatórios semanais de liquidação enviados em PDF.",
+        "",
+        "IMPORTANTE:",
+        "Não confundir este benefício com o Programa de Afiliados.",
+        "Não dizer que é link de afiliado.",
+        "Não chamar o lead de afiliado quando ele estiver falando do Homologado.",
+        "Não transformar a conversa em Afiliados automaticamente.",
+        "Tratar como benefício adicional do Parceiro Homologado.",
+        "",
+        leadIsPiscineiro
+          ? "Como o lead parece ser piscineiro, apresentar isso como uma possibilidade forte: muitos piscineiros têm rede próxima de colegas, grande clientela e relações interpessoais no setor. Alguns se homologam, pagam a taxa e podem focar bastante em indicar outros parceiros para o sistema, faturando com a comissão de 10% sobre as vendas dos indicados."
+          : "",
+        "",
+        "Como a SDR deve falar:",
+        "Explicar de forma natural que, além da venda direta dos produtos, existe também a possibilidade de faturar indicando novos parceiros para o Programa Homologado.",
+        "Se o lead perguntar sobre indicação, responder de forma direta.",
+        "Se o lead for piscineiro, pode apresentar essa possibilidade como um benefício estratégico do programa.",
+        "Depois de explicar, continuar o fluxo normal do Homologado, sem pular taxa, responsabilidades ou pré-cadastro."
+      ].filter(Boolean).join("\n")
+  };
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -18813,6 +18908,24 @@ if (noMeansNoDoubt) {
 // O backend registra sinais, mas não responde comercialmente pelo lead.
 let backendStrategicGuidance = [];
 let dataFlowQuestionAlreadyGuided = false;
+
+     const homologadoIndicationBenefitGuidance =
+  buildHomologadoIndicationBenefitGuidance({
+    lead: currentLead || {},
+    text,
+    forceMentionForPiscineiro: true
+  });
+
+if (homologadoIndicationBenefitGuidance) {
+  backendStrategicGuidance.push(homologadoIndicationBenefitGuidance);
+
+  console.log("🤝 Benefício de indicação do Parceiro Homologado aplicado ao contexto:", {
+    user: from,
+    leadIsPiscineiro: iqgLeadLooksLikePiscineiro(text, currentLead || {}),
+    leadMentionsIndication: iqgLeadMentionsIndicationNetwork(text),
+    tipo: homologadoIndicationBenefitGuidance.tipo
+  });
+}
 
      // 🧭 REGRA COMERCIAL PRIORITÁRIA — CNPJ / empresa / ponto físico
 if (leadPerguntouSobreCnpjEmpresaOuPontoFisico(text)) {
