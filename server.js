@@ -23327,6 +23327,194 @@ return;
   }
 });
 
+/* =========================
+   DASHBOARD DE AUDITORIA — IQG
+   Visualiza eventos gravados pelo sistema de auditoria.
+========================= */
+
+app.get("/auditoria", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const senhaQuery = req.query.senha
+      ? `?senha=${encodeURIComponent(req.query.senha)}`
+      : "";
+
+    const componentFilter = req.query.component || "";
+    const severityFilter = req.query.severity || "";
+    const traceFilter = req.query.trace || "";
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+
+    const query = {};
+
+    if (componentFilter) {
+      query.component = componentFilter;
+    }
+
+    if (severityFilter) {
+      query.severity = severityFilter;
+    }
+
+    if (traceFilter) {
+      query.traceId = { $regex: traceFilter, $options: "i" };
+    }
+
+    const events = await db
+      .collection("audit_events")
+      .find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+
+    const totalEvents = await db
+      .collection("audit_events")
+      .countDocuments({});
+
+    const componentCounts = {};
+    const severityCounts = {};
+
+    for (const evt of events) {
+      componentCounts[evt.component] = (componentCounts[evt.component] || 0) + 1;
+      severityCounts[evt.severity] = (severityCounts[evt.severity] || 0) + 1;
+    }
+
+    const severityColors = {
+      low: "#16a34a",
+      medium: "#f59e0b",
+      high: "#dc2626",
+      critical: "#7c2d12"
+    };
+
+    const eventRows = events.map(evt => {
+      const sevColor = severityColors[evt.severity] || "#6b7280";
+      const payloadPreview = JSON.stringify(evt.payload || {}).slice(0, 300);
+      const traceShort = evt.traceId ? evt.traceId.slice(0, 8) : "-";
+      const timestamp = evt.timestamp
+        ? new Date(evt.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+        : "-";
+
+      return `
+        <tr>
+          <td style="font-family:monospace;font-size:11px;color:#6b7280;">${escapeHtml(traceShort)}</td>
+          <td>${escapeHtml(timestamp)}</td>
+          <td><strong>${escapeHtml(evt.component || "-")}</strong></td>
+          <td>${escapeHtml(evt.eventType || "-")}</td>
+          <td><span style="background:${sevColor};color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">${escapeHtml(evt.severity || "low")}</span></td>
+          <td>${escapeHtml(evt.userMasked || "-")}</td>
+          <td style="font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(payloadPreview)}">${escapeHtml(payloadPreview)}</td>
+          <td style="font-size:11px;color:#9ca3af;">${escapeHtml(evt.auditLevel || "-")}</td>
+        </tr>
+      `;
+    }).join("");
+
+    const componentOptions = Object.keys(componentCounts)
+      .sort()
+      .map(c => `<option value="${escapeHtml(c)}" ${componentFilter === c ? "selected" : ""}>${escapeHtml(c)} (${componentCounts[c]})</option>`)
+      .join("");
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <title>Auditoria IQG</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+          body { margin:0; font-family:Arial,sans-serif; background:#f3f4f6; color:#111827; }
+          header { background:#0f172a; color:white; padding:20px 28px; }
+          header h1 { margin:0; font-size:24px; }
+          header p { margin:6px 0 0; color:#94a3b8; font-size:14px; }
+          .container { max-width:1600px; margin:0 auto; padding:24px; }
+          .topbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+          .btn { display:inline-block; padding:9px 12px; background:#374151; color:white; text-decoration:none; border-radius:8px; font-size:14px; }
+          .stats { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+          .stat-card { background:white; border:1px solid #e5e7eb; border-radius:10px; padding:14px 18px; min-width:160px; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
+          .stat-card small { display:block; color:#6b7280; margin-bottom:4px; font-size:12px; }
+          .stat-card strong { font-size:22px; }
+          .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:white; border:1px solid #e5e7eb; padding:14px; border-radius:10px; margin-bottom:18px; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
+          .toolbar select, .toolbar input { height:36px; border:1px solid #d1d5db; border-radius:8px; padding:0 10px; font-size:13px; }
+          .toolbar button { height:36px; padding:0 14px; border:none; border-radius:8px; background:#2563eb; color:white; cursor:pointer; font-size:13px; }
+          .table-card { background:white; border:1px solid #e5e7eb; border-radius:10px; overflow-x:auto; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
+          table { width:100%; border-collapse:collapse; }
+          th { background:#f8fafc; color:#334155; font-size:12px; text-align:left; padding:10px 12px; border-bottom:1px solid #e5e7eb; white-space:nowrap; }
+          td { padding:9px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; vertical-align:middle; }
+          tr:hover td { background:#f8fafc; }
+          .empty { color:#6b7280; font-style:italic; padding:20px; text-align:center; }
+        </style>
+      </head>
+      <body>
+        <header>
+          <h1>Auditoria IQG</h1>
+          <p>Eventos estruturados do sistema de auditoria — Nível atual: ${escapeHtml(getCurrentAuditLevel())}</p>
+        </header>
+
+        <div class="container">
+          <div class="topbar">
+            <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
+          </div>
+
+          <div class="stats">
+            <div class="stat-card">
+              <small>Total de eventos</small>
+              <strong>${totalEvents}</strong>
+            </div>
+            <div class="stat-card">
+              <small>Exibindo</small>
+              <strong>${events.length}</strong>
+            </div>
+            <div class="stat-card">
+              <small>Nível ativo</small>
+              <strong>${escapeHtml(getCurrentAuditLevel())}</strong>
+            </div>
+            <div class="stat-card">
+              <small>Severidade alta+</small>
+              <strong style="color:#dc2626;">${(severityCounts.high || 0) + (severityCounts.critical || 0)}</strong>
+            </div>
+          </div>
+
+          <form class="toolbar" method="GET" action="/auditoria">
+            ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}">` : ""}
+            <select name="component">
+              <option value="">Componente: todos</option>
+              ${componentOptions}
+            </select>
+            <select name="severity">
+              <option value="">Severidade: todas</option>
+              <option value="low" ${severityFilter === "low" ? "selected" : ""}>low</option>
+              <option value="medium" ${severityFilter === "medium" ? "selected" : ""}>medium</option>
+              <option value="high" ${severityFilter === "high" ? "selected" : ""}>high</option>
+              <option value="critical" ${severityFilter === "critical" ? "selected" : ""}>critical</option>
+            </select>
+            <input type="text" name="trace" placeholder="Buscar trace_id..." value="${escapeHtml(traceFilter)}" />
+            <select name="limit">
+              <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
+              <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
+              <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
+              <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
+            </select>
+            <button type="submit">Filtrar</button>
+            <a class="btn" href="/auditoria${senhaQuery}">Limpar</a>
+          </form>
+
+          <div class="table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Trace</th>
+                  <th>Timestamp</th>
+                  <th>Componente</th>
+                  <th>Evento</th>
+                  <th>Severidade</th>
+                  <th>Lead</th>
+                  <th>Payload</th>
+                  <th>Nível</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${eventRows || `<tr><td colspan="8" class="empty">Nenhum event
+
 app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
 });
