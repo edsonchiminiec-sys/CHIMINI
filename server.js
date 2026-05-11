@@ -20779,7 +20779,14 @@ if (changedConfirmedData) {
    if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmationMsg,
+    currentLead: extractedData || {},
+    extras: { tipoSaida: "dados_mudaram_reconfirmacao" }
+  });
   return;
 }
 
@@ -20927,7 +20934,14 @@ const podeConfirmarInteresseRealAgora =
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "interesse_real_confirmado_inicio_coleta" }
+  });
   return;
 }
 
@@ -21072,7 +21086,14 @@ if (
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: affiliateMsg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "afiliado_instrucoes_enviadas", responseMode: affiliateInstructionDecision.responseMode }
+  });
   return;
 }
      
@@ -21602,7 +21623,14 @@ Pode me dizer assim:
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "confirmacao_final_negativa" }
+  });
   return;
 }
 
@@ -21675,7 +21703,14 @@ Vou deixar isso registrado no sistema da IQG para verificação interna. Essa et
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmedMsg,
+    currentLead: confirmedLead || currentLead || {},
+    extras: { tipoSaida: "confirmacao_final_positiva_crm", crmOk: crmResult?.ok === true }
+  });
   return;
 }
 
@@ -21777,7 +21812,14 @@ if (
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmationMsg,
+    currentLead: extractedData || {},
+    extras: { tipoSaida: "dados_completos_confirmacao" }
+  });
   return;
 }
    
