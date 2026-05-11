@@ -27587,16 +27587,19 @@ body {
 }
 
 /* Tabela */
+/* Tabela */
 .leads-table-card {
   background: #fff;
   border: 1px solid var(--iqg-border);
   border-radius: 10px;
   box-shadow: var(--iqg-shadow-soft);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
   width: 100%;
+  min-width: 1100px;
   border-collapse: collapse;
   background: #fff;
 }
@@ -27739,24 +27742,52 @@ tr:hover td {
 
 @media (max-width: 900px) {
   .dashboard-page {
-    padding: 18px;
+    padding: 14px;
   }
 
   .dashboard-header {
     flex-direction: column;
   }
 
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .toolbar input {
     min-width: 100%;
   }
 
+  .toolbar select {
+    width: 100%;
+  }
+
+  .leads-table-card {
+    margin-left: -14px;
+    margin-right: -14px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
   table {
     font-size: 12px;
+    min-width: 900px;
   }
 
   th,
   td {
-    padding: 8px;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+
+  td.actions {
+    white-space: normal;
+    min-width: 280px;
+  }
+
+  .print-info {
+    padding: 0 4px;
   }
 }
 
