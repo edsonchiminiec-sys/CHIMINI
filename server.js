@@ -1107,8 +1107,6 @@ function auditLog(title, payload = {}) {
    Não impacta o atendimento. Tudo é assíncrono.
 ========================= */
 
-import crypto from "crypto";
-
 // Versão atual do código para rastreabilidade.
 // Pode ser sobrescrita por uma variável de ambiente APP_VERSION no Render.
 const APP_VERSION = process.env.APP_VERSION || "iqg-sdr-v1.0.0";
