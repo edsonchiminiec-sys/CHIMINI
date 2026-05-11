@@ -9829,12 +9829,26 @@ async function transcribeAudioBuffer(buffer, filename = "audio.ogg") {
 }
 
 function detectRequestedFile(text = "") {
-  const normalizedText = text.toLowerCase();
+  const normalizedText = text.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (normalizedText.includes("contrato")) return "contrato";
-  if (normalizedText.includes("catálogo") || normalizedText.includes("catalogo")) return "catalogo";
+  if (normalizedText.includes("catalogo") || normalizedText.includes("catálogo")) return "catalogo";
+  if (normalizedText.includes("lista de produtos")) return "catalogo";
+  if (normalizedText.includes("quero ver os produtos")) return "catalogo";
+  if (normalizedText.includes("produtos disponiveis")) return "catalogo";
   if (normalizedText.includes("kit")) return "kit";
-  if (normalizedText.includes("manual") || normalizedText.includes("curso")) return "manual";
+  if (normalizedText.includes("manual")) return "manual";
+  if (normalizedText.includes("curso")) return "manual";
+  if (normalizedText.includes("treinamento")) return "manual";
+  if (normalizedText.includes("nao entendo de piscina")) return "manual";
+  if (normalizedText.includes("nao sei tratar")) return "manual";
+  if (normalizedText.includes("como tratar piscina")) return "manual";
+  if (normalizedText.includes("como tratar agua")) return "manual";
+  if (normalizedText.includes("como usar os produtos")) return "manual";
+  if (normalizedText.includes("nunca trabalhei com piscina")) return "manual";
+  if (normalizedText.includes("aprender sobre piscina")) return "manual";
   if (normalizedText.includes("folder")) return "folder";
 
   return null;
@@ -9888,7 +9902,46 @@ function hasExplicitFileRequest(text = "") {
     t.includes("me envie o material") ||
     t.includes("pode enviar o material") ||
 
+// pedidos de catálogo
+    t.includes("catalogo") ||
+    t.includes("catálogo") ||
+    t.includes("catalogo de produtos") ||
+    t.includes("catálogo de produtos") ||
+    t.includes("lista de produtos") ||
+    t.includes("quero ver os produtos") ||
+    t.includes("quais produtos") ||
+    t.includes("produtos disponiveis") ||
+    t.includes("produtos disponíveis") ||
+
+    // pedidos de contrato
+    t.includes("modelo de contrato") ||
+    t.includes("contrato") ||
+    t.includes("quero ver o contrato") ||
+    t.includes("me manda o contrato") ||
+    t.includes("tem contrato") ||
+    t.includes("clausulas") ||
+    t.includes("cláusulas") ||
+
+    // pedidos de manual/curso/treinamento
+    t.includes("manual") ||
+    t.includes("curso") ||
+    t.includes("treinamento") ||
+    t.includes("nao entendo de piscina") ||
+    t.includes("não entendo de piscina") ||
+    t.includes("nao sei tratar") ||
+    t.includes("não sei tratar") ||
+    t.includes("como usar os produtos") ||
+    t.includes("como tratar piscina") ||
+    t.includes("como tratar agua") ||
+    t.includes("como tratar água") ||
+    t.includes("nunca trabalhei com piscina") ||
+    t.includes("nao tenho experiencia") ||
+    t.includes("não tenho experiência") ||
+    t.includes("aprender sobre piscina") ||
+    t.includes("material de estudo") ||
+     
     // pedidos específicos
+    
     t.includes("me manda o folder") ||
     t.includes("me mande o folder") ||
     t.includes("quero o folder") ||
@@ -18151,18 +18204,10 @@ if (
 }
 
 function canSendBusinessFile(key, lead = {}) {
-  if (key !== "contrato") {
-    return true;
-  }
-
-  return (
-    lead?.crmEnviado === true ||
-    lead?.statusOperacional === "enviado_crm" ||
-    lead?.statusOperacional === "em_atendimento" ||
-    lead?.faseFunil === "crm" ||
-    lead?.status === "enviado_crm" ||
-    lead?.faseQualificacao === "enviado_crm"
-  );
+  // Todos os arquivos podem ser enviados a qualquer momento.
+  // O modelo de contrato é para leitura prévia.
+  // A versão oficial para assinatura é liberada pela equipe IQG após análise.
+  return true;
 }
 
 function removeFileAction(actions = [], keyToRemove = "") {
