@@ -20593,8 +20593,11 @@ Está correto?`;
 
   await sendWhatsAppMessage(from, respostaConfirmacaoCampo);
 } else {
+   
+  const freshLead = await loadLeadProfile(from);
+
   const updatedLead = {
-    ...(currentLead || {}),
+    ...(freshLead || {}),
     ...dadosConfirmadosDoCampo
   };
 
@@ -20884,13 +20887,26 @@ if (estaEmColetaOuConfirmacao) {
     motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
   });
 } else {
-  semanticIntent = await runLeadSemanticIntentClassifier({
-    lead: currentLead || {},
-    history,
-    lastUserText: text,
-    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || "",
-    auditTraceId
-  });
+  const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+
+  const [classifierResult, continuityResult] = await Promise.all([
+    runLeadSemanticIntentClassifier({
+      lead: currentLead || {},
+      history,
+      lastUserText: text,
+      lastSdrText: lastSdrTextForClassifiers,
+      auditTraceId
+    }),
+    runConversationContinuityAnalyzer({
+      lead: currentLead || {},
+      history,
+      lastUserText: text,
+      lastSdrText: lastSdrTextForClassifiers
+    })
+  ]);
+
+  semanticIntent = classifierResult;
+  var earlySemanticContinuity = continuityResult;
 
   console.log("🧠 Intenção semântica observada:", {
     user: from,
@@ -21992,7 +22008,7 @@ if (semanticIntent?.mentionsOtherProductLine === true) {
   });
 }
    
-     let semanticContinuity = await runConversationContinuityAnalyzer({
+    let semanticContinuity = earlySemanticContinuity || await runConversationContinuityAnalyzer({
   lead: currentLead || {},
   history,
   lastUserText: text,
