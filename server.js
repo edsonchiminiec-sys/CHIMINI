@@ -22367,7 +22367,12 @@ const podeIniciarColeta =
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
-  respostaLower.includes("pode me enviar seu nome completo");
+  respostaLower.includes("pode me enviar seu nome completo") ||
+  respostaLower.includes("me envie seu nome completo") ||
+  respostaLower.includes("qual seu nome completo") ||
+  respostaLower.includes("me passa seu nome completo") ||
+  respostaLower.includes("enviar seu nome completo") ||
+  respostaLower.includes("me manda seu nome completo");
 
 /*
   Importante:
@@ -22375,6 +22380,36 @@ const startedDataCollection =
   A coleta só começa quando a resposta final realmente pede o nome completo
   e quando não existe pergunta comercial aberta do lead.
 */
+
+// 🛡️ TRAVA FINAL OBRIGATÓRIA — impede coleta se investimento não foi explicado
+if (
+  startedDataCollection &&
+  !podeIniciarColeta &&
+  !coletaLiberadaPorTaxaAceita
+) {
+  const etapasPendentesParaColeta = getMissingFunnelStepLabels(currentLead || {});
+
+  console.log("🛑 TRAVA FINAL: SDR tentou pedir dados mas coleta não está liberada. Substituindo resposta:", {
+    user: from,
+    ultimaMensagemLead: text,
+    etapasPendentes: etapasPendentesParaColeta,
+    respostaOriginal: respostaFinal
+  });
+
+  const safeResponse = getSafeCurrentPhaseResponse(currentLead || {});
+  respostaFinal = safeResponse.message;
+
+  if (safeResponse.fileKey) {
+    actions.push(safeResponse.fileKey);
+  }
+
+  // Re-sincroniza actions após substituir a resposta
+  const syncAfterBlock = syncActionsFromFinalReply({
+    respostaFinal,
+    actions
+  });
+  respostaFinal = syncAfterBlock.respostaFinal;
+}
      
 if (
   startedDataCollection &&
