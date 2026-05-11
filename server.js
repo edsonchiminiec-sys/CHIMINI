@@ -23334,7 +23334,7 @@ return;
 
 /* =========================
    DASHBOARD DE AUDITORIA — IQG
-   Visualiza eventos gravados pelo sistema de auditoria.
+   Visualiza eventos agrupados por conversa (trace_id).
 ========================= */
 
 app.get("/auditoria", async (req, res) => {
@@ -23350,21 +23350,13 @@ app.get("/auditoria", async (req, res) => {
     const componentFilter = req.query.component || "";
     const severityFilter = req.query.severity || "";
     const traceFilter = req.query.trace || "";
+    const modeFilter = req.query.mode || "grouped";
     const limit = Math.min(Number(req.query.limit) || 100, 500);
 
     const query = {};
-
-    if (componentFilter) {
-      query.component = componentFilter;
-    }
-
-    if (severityFilter) {
-      query.severity = severityFilter;
-    }
-
-    if (traceFilter) {
-      query.traceId = { $regex: traceFilter, $options: "i" };
-    }
+    if (componentFilter) query.component = componentFilter;
+    if (severityFilter) query.severity = severityFilter;
+    if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
 
     const events = await db
       .collection("audit_events")
@@ -23373,13 +23365,10 @@ app.get("/auditoria", async (req, res) => {
       .limit(limit)
       .toArray();
 
-    const totalEvents = await db
-      .collection("audit_events")
-      .countDocuments({});
+    const totalEvents = await db.collection("audit_events").countDocuments({});
 
     const componentCounts = {};
     const severityCounts = {};
-
     for (const evt of events) {
       componentCounts[evt.component] = (componentCounts[evt.component] || 0) + 1;
       severityCounts[evt.severity] = (severityCounts[evt.severity] || 0) + 1;
@@ -23392,140 +23381,192 @@ app.get("/auditoria", async (req, res) => {
       critical: "#7c2d12"
     };
 
-    const eventRows = events.map(evt => {
-      const sevColor = severityColors[evt.severity] || "#6b7280";
-      const payloadPreview = JSON.stringify(evt.payload || {}).slice(0, 300);
-      const traceShort = evt.traceId ? evt.traceId.slice(0, 8) : "-";
-      const timestamp = evt.timestamp
-        ? new Date(evt.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
-        : "-";
-
-      return `
-        <tr>
-          <td style="font-family:monospace;font-size:11px;color:#6b7280;">${escapeHtml(traceShort)}</td>
-          <td>${escapeHtml(timestamp)}</td>
-          <td><strong>${escapeHtml(evt.component || "-")}</strong></td>
-          <td>${escapeHtml(evt.eventType || "-")}</td>
-          <td><span style="background:${sevColor};color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">${escapeHtml(evt.severity || "low")}</span></td>
-          <td>${escapeHtml(evt.userMasked || "-")}</td>
-          <td style="font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(payloadPreview)}">${escapeHtml(payloadPreview)}</td>
-          <td style="font-size:11px;color:#9ca3af;">${escapeHtml(evt.auditLevel || "-")}</td>
-        </tr>
-      `;
-    }).join("");
-
     const componentOptions = Object.keys(componentCounts)
       .sort()
-      .map(c => `<option value="${escapeHtml(c)}" ${componentFilter === c ? "selected" : ""}>${escapeHtml(c)} (${componentCounts[c]})</option>`)
+      .map(c => '<option value="' + escapeHtml(c) + '" ' + (componentFilter === c ? "selected" : "") + '>' + escapeHtml(c) + ' (' + componentCounts[c] + ')</option>')
       .join("");
 
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="pt-BR">
-      <head>
-        <meta charset="UTF-8" />
-        <title>Auditoria IQG</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <style>
-          body { margin:0; font-family:Arial,sans-serif; background:#f3f4f6; color:#111827; }
-          header { background:#0f172a; color:white; padding:20px 28px; }
-          header h1 { margin:0; font-size:24px; }
-          header p { margin:6px 0 0; color:#94a3b8; font-size:14px; }
-          .container { max-width:1600px; margin:0 auto; padding:24px; }
-          .topbar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
-          .btn { display:inline-block; padding:9px 12px; background:#374151; color:white; text-decoration:none; border-radius:8px; font-size:14px; }
-          .stats { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
-          .stat-card { background:white; border:1px solid #e5e7eb; border-radius:10px; padding:14px 18px; min-width:160px; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
-          .stat-card small { display:block; color:#6b7280; margin-bottom:4px; font-size:12px; }
-          .stat-card strong { font-size:22px; }
-          .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:white; border:1px solid #e5e7eb; padding:14px; border-radius:10px; margin-bottom:18px; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
-          .toolbar select, .toolbar input { height:36px; border:1px solid #d1d5db; border-radius:8px; padding:0 10px; font-size:13px; }
-          .toolbar button { height:36px; padding:0 14px; border:none; border-radius:8px; background:#2563eb; color:white; cursor:pointer; font-size:13px; }
-          .table-card { background:white; border:1px solid #e5e7eb; border-radius:10px; overflow-x:auto; box-shadow:0 2px 8px rgba(0,0,0,0.04); }
-          table { width:100%; border-collapse:collapse; }
-          th { background:#f8fafc; color:#334155; font-size:12px; text-align:left; padding:10px 12px; border-bottom:1px solid #e5e7eb; white-space:nowrap; }
-          td { padding:9px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; vertical-align:middle; }
-          tr:hover td { background:#f8fafc; }
-          .empty { color:#6b7280; font-style:italic; padding:20px; text-align:center; }
-        </style>
-      </head>
-      <body>
-        <header>
-          <h1>Auditoria IQG</h1>
-          <p>Eventos estruturados do sistema de auditoria — Nível atual: ${escapeHtml(getCurrentAuditLevel())}</p>
-        </header>
+    let contentHtml = "";
 
-        <div class="container">
-          <div class="topbar">
-            <a class="btn" href="/dashboard${senhaQuery}">← Voltar ao Dashboard</a>
-          </div>
+    if (modeFilter === "flat") {
+      const rows = events.map(evt => {
+        const sevColor = severityColors[evt.severity] || "#6b7280";
+        const payloadPreview = JSON.stringify(evt.payload || {}).slice(0, 300);
+        const traceShort = evt.traceId ? evt.traceId.slice(0, 8) : "-";
+        const timestamp = evt.timestamp
+          ? new Date(evt.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
 
-          <div class="stats">
-            <div class="stat-card">
-              <small>Total de eventos</small>
-              <strong>${totalEvents}</strong>
-            </div>
-            <div class="stat-card">
-              <small>Exibindo</small>
-              <strong>${events.length}</strong>
-            </div>
-            <div class="stat-card">
-              <small>Nível ativo</small>
-              <strong>${escapeHtml(getCurrentAuditLevel())}</strong>
-            </div>
-            <div class="stat-card">
-              <small>Severidade alta+</small>
-              <strong style="color:#dc2626;">${(severityCounts.high || 0) + (severityCounts.critical || 0)}</strong>
-            </div>
-          </div>
+        return '<tr>' +
+          '<td style="font-family:monospace;font-size:11px;color:#6b7280;">' + escapeHtml(traceShort) + '</td>' +
+          '<td>' + escapeHtml(timestamp) + '</td>' +
+          '<td><strong>' + escapeHtml(evt.component || "-") + '</strong></td>' +
+          '<td>' + escapeHtml(evt.eventType || "-") + '</td>' +
+          '<td><span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(evt.severity || "low") + '</span></td>' +
+          '<td>' + escapeHtml(evt.userMasked || "-") + '</td>' +
+          '<td style="font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(payloadPreview) + '">' + escapeHtml(payloadPreview) + '</td>' +
+          '<td style="font-size:11px;color:#9ca3af;">' + escapeHtml(evt.auditLevel || "-") + '</td>' +
+          '</tr>';
+      }).join("");
 
-          <form class="toolbar" method="GET" action="/auditoria">
-            ${req.query.senha ? `<input type="hidden" name="senha" value="${escapeHtml(req.query.senha)}">` : ""}
-            <select name="component">
-              <option value="">Componente: todos</option>
-              ${componentOptions}
-            </select>
-            <select name="severity">
-              <option value="">Severidade: todas</option>
-              <option value="low" ${severityFilter === "low" ? "selected" : ""}>low</option>
-              <option value="medium" ${severityFilter === "medium" ? "selected" : ""}>medium</option>
-              <option value="high" ${severityFilter === "high" ? "selected" : ""}>high</option>
-              <option value="critical" ${severityFilter === "critical" ? "selected" : ""}>critical</option>
-            </select>
-            <input type="text" name="trace" placeholder="Buscar trace_id..." value="${escapeHtml(traceFilter)}" />
-            <select name="limit">
-              <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-              <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-              <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-              <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-            </select>
-            <button type="submit">Filtrar</button>
-            <a class="btn" href="/auditoria${senhaQuery}">Limpar</a>
-          </form>
+      contentHtml = '<div class="table-card"><table>' +
+        '<thead><tr><th>Trace</th><th>Timestamp</th><th>Componente</th><th>Evento</th><th>Severidade</th><th>Lead</th><th>Payload</th><th>Nível</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="8" class="empty">Nenhum evento encontrado.</td></tr>') + '</tbody>' +
+        '</table></div>';
+    } else {
+      const grouped = {};
+      for (const evt of events) {
+        const key = evt.traceId || "sem_trace";
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(evt);
+      }
 
-          <div class="table-card">
-            <table>
-              <thead>
-                <tr>
-                  <th>Trace</th>
-                  <th>Timestamp</th>
-                  <th>Componente</th>
-                  <th>Evento</th>
-                  <th>Severidade</th>
-                  <th>Lead</th>
-                  <th>Payload</th>
-                  <th>Nível</th>
-                </tr>
-              </thead>
-              <tbody>
-               ${eventRows || '<tr><td colspan="8" class="empty">Nenhum evento encontrado.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+      for (const key of Object.keys(grouped)) {
+        grouped[key].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      }
+
+      const sortedTraces = Object.keys(grouped).sort((a, b) => {
+        const lastA = grouped[a][grouped[a].length - 1];
+        const lastB = grouped[b][grouped[b].length - 1];
+        return new Date(lastB.timestamp) - new Date(lastA.timestamp);
+      });
+
+      const cards = sortedTraces.map(traceId => {
+        const traceEvents = grouped[traceId];
+        const first = traceEvents[0];
+        const last = traceEvents[traceEvents.length - 1];
+        const traceShort = traceId !== "sem_trace" ? traceId.slice(0, 12) : "sem trace";
+        const leadMasked = first.userMasked || "-";
+        const textPreview = first.payload?.textPreview || first.payload?.ultimaMensagemLead || "-";
+        const startTime = first.timestamp
+          ? new Date(first.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+
+        const maxSeverity = traceEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low");
+
+        const sevColor = severityColors[maxSeverity] || "#6b7280";
+
+        const stepIcons = {
+          webhook: "📩",
+          gpt_semantic_intent: "🧠",
+          gpt_semantic_continuity: "📜",
+          gpt_pre_sdr_consultant: "🎯",
+          gpt_sdr: "💬",
+          gpt_supervisor: "👁️",
+          gpt_classifier: "📊",
+          gpt_data_flow_router: "🔀",
+          gpt_route_mix_guard: "🛡️"
+        };
+
+        const timeline = traceEvents.map(evt => {
+          const icon = stepIcons[evt.component] || "⚙️";
+          const evtTime = evt.timestamp
+            ? new Date(evt.timestamp).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" })
+            : "-";
+          const evtSevColor = severityColors[evt.severity] || "#6b7280";
+          const payloadStr = JSON.stringify(evt.payload || {}).slice(0, 250);
+
+          return '<div style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<div style="font-size:20px;flex:0 0 30px;text-align:center;">' + icon + '</div>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                '<strong style="font-size:13px;">' + escapeHtml(evt.component) + '</strong>' +
+                '<span style="font-size:11px;color:#6b7280;">' + escapeHtml(evt.eventType) + '</span>' +
+                '<span style="background:' + evtSevColor + ';color:white;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;">' + escapeHtml(evt.severity) + '</span>' +
+                '<span style="font-size:11px;color:#9ca3af;">' + escapeHtml(evtTime) + '</span>' +
+              '</div>' +
+              '<div style="font-size:11px;color:#6b7280;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(payloadStr) + '">' + escapeHtml(payloadStr) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join("");
+
+        return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">' +
+            '<div>' +
+              '<span style="font-family:monospace;font-size:12px;color:#6b7280;margin-right:10px;">trace:' + escapeHtml(traceShort) + '</span>' +
+              '<span style="font-size:13px;font-weight:700;">' + escapeHtml(leadMasked) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;margin-left:10px;">' + escapeHtml(startTime) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(maxSeverity) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + traceEvents.length + ' eventos</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:13px;color:#374151;margin-bottom:12px;padding:8px 12px;background:#f0fdf4;border-radius:8px;border-left:4px solid #16a34a;">' +
+            '💬 ' + escapeHtml(String(textPreview).slice(0, 150)) +
+          '</div>' +
+          timeline +
+        '</div>';
+      }).join("");
+
+      contentHtml = cards || '<p class="empty">Nenhum evento encontrado.</p>';
+    }
+
+    const modeToggle = modeFilter === "flat"
+      ? '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=grouped">Agrupar por conversa</a>'
+      : '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=flat">Ver lista plana</a>';
+
+    res.send('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Auditoria IQG</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>' +
+      'body{margin:0;font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;}' +
+      'header{background:#0f172a;color:white;padding:20px 28px;}' +
+      'header h1{margin:0;font-size:24px;}' +
+      'header p{margin:6px 0 0;color:#94a3b8;font-size:14px;}' +
+      '.container{max-width:1600px;margin:0 auto;padding:24px;}' +
+      '.topbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;}' +
+      '.btn{display:inline-block;padding:9px 12px;background:#374151;color:white;text-decoration:none;border-radius:8px;font-size:14px;}' +
+      '.stats{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;}' +
+      '.stat-card{background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;min-width:160px;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      '.stat-card small{display:block;color:#6b7280;margin-bottom:4px;font-size:12px;}' +
+      '.stat-card strong{font-size:22px;}' +
+      '.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:white;border:1px solid #e5e7eb;padding:14px;border-radius:10px;margin-bottom:18px;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      '.toolbar select,.toolbar input{height:36px;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;font-size:13px;}' +
+      '.toolbar button{height:36px;padding:0 14px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:13px;}' +
+      '.table-card{background:white;border:1px solid #e5e7eb;border-radius:10px;overflow-x:auto;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      'table{width:100%;border-collapse:collapse;}' +
+      'th{background:#f8fafc;color:#334155;font-size:12px;text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;white-space:nowrap;}' +
+      'td{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;vertical-align:middle;}' +
+      'tr:hover td{background:#f8fafc;}' +
+      '.empty{color:#6b7280;font-style:italic;padding:20px;text-align:center;}' +
+      '</style></head><body>' +
+      '<header><h1>Auditoria IQG</h1><p>Eventos estruturados — Nível atual: ' + escapeHtml(getCurrentAuditLevel()) + '</p></header>' +
+      '<div class="container">' +
+        '<div class="topbar">' +
+          '<a class="btn" href="/dashboard' + senhaQuery + '">← Voltar ao Dashboard</a>' +
+          modeToggle +
+        '</div>' +
+        '<div class="stats">' +
+          '<div class="stat-card"><small>Total de eventos</small><strong>' + totalEvents + '</strong></div>' +
+          '<div class="stat-card"><small>Exibindo</small><strong>' + events.length + '</strong></div>' +
+          '<div class="stat-card"><small>Nível ativo</small><strong>' + escapeHtml(getCurrentAuditLevel()) + '</strong></div>' +
+          '<div class="stat-card"><small>Conversas</small><strong>' + (modeFilter !== "flat" ? Object.keys(events.reduce((acc, e) => { acc[e.traceId || "x"] = 1; return acc; }, {})).length : "-") + '</strong></div>' +
+          '<div class="stat-card"><small>Severidade alta+</small><strong style="color:#dc2626;">' + ((severityCounts.high || 0) + (severityCounts.critical || 0)) + '</strong></div>' +
+        '</div>' +
+        '<form class="toolbar" method="GET" action="/auditoria">' +
+          (req.query.senha ? '<input type="hidden" name="senha" value="' + escapeHtml(req.query.senha) + '">' : '') +
+          '<input type="hidden" name="mode" value="' + escapeHtml(modeFilter) + '">' +
+          '<select name="component"><option value="">Componente: todos</option>' + componentOptions + '</select>' +
+          '<select name="severity"><option value="">Severidade: todas</option>' +
+            '<option value="low"' + (severityFilter === "low" ? " selected" : "") + '>low</option>' +
+            '<option value="medium"' + (severityFilter === "medium" ? " selected" : "") + '>medium</option>' +
+            '<option value="high"' + (severityFilter === "high" ? " selected" : "") + '>high</option>' +
+            '<option value="critical"' + (severityFilter === "critical" ? " selected" : "") + '>critical</option>' +
+          '</select>' +
+          '<input type="text" name="trace" placeholder="Buscar trace_id..." value="' + escapeHtml(traceFilter) + '">' +
+          '<select name="limit">' +
+            '<option value="50"' + (limit === 50 ? " selected" : "") + '>50</option>' +
+            '<option value="100"' + (limit === 100 ? " selected" : "") + '>100</option>' +
+            '<option value="200"' + (limit === 200 ? " selected" : "") + '>200</option>' +
+            '<option value="500"' + (limit === 500 ? " selected" : "") + '>500</option>' +
+          '</select>' +
+          '<button type="submit">Filtrar</button>' +
+          '<a class="btn" href="/auditoria' + senhaQuery + '">Limpar</a>' +
+        '</form>' +
+        contentHtml +
+      '</div></body></html>'
+    );
   } catch (error) {
     console.error("Erro no dashboard de auditoria:", error);
     res.status(500).send("Erro ao carregar auditoria.");
