@@ -3293,8 +3293,16 @@ function iqgTextDeclaresUnderstandingOfStep(text = "", step = "") {
   }
 
   if (step === "investimento") {
-    return /\b(taxa|investimento|valor|adesao|adesão)\b/i.test(t);
-  }
+        /*
+            Onda 2 / Bug H soft:
+            Lead só "declara entendimento de investimento" se mencionar
+            valor ou termo específico da taxa.
+            Palavras vagas como "valor", "investimento" sozinhas não bastam
+            porque o lead pode estar PERGUNTANDO, não declarando entendimento.
+            Exige menção explícita ao R$ ou à taxa de adesão.
+        */
+        return /\b(1990|1\.990|199|5000|5\.000|r\$|taxa de adesao|taxa de adesão|adesao|adesão|10x|parcelado)\b/i.test(t);
+    }
 
   return false;
 }
@@ -13016,55 +13024,41 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
-  const etapasObrigatoriasConduzidas =
-    etapas.programa === true &&
-    etapas.beneficios === true &&
-    etapas.estoque === true &&
-    etapas.responsabilidades === true &&
-    etapas.investimento === true;
-
-  const taxaAlinhada =
-    lead?.taxaAlinhada === true;
-
-  const compromissoValidado =
-    etapas.compromisso === true;
-
-  const interesseRealConfirmado =
-    lead?.interesseReal === true;
-
-  const objecaoTaxaResolvida =
-    lead?.taxaObjectionResolved === true ||
-    lead?.taxaAceitaAposObjecao === true ||
-    Boolean(lead?.taxaAceitaEm) ||
-    hasTaxAcceptedDecisionToCollect(lead) ||
-    (
-      lead?.taxaAlinhada === true &&
-      lead?.interesseReal === true &&
-      etapas.compromisso === true
+  /*
+       Onda 2 — coleta libera com base no funil real (6 etapas),
+       sem exigir compromisso ou interesseReal.
+    */
+    const etapasObrigatoriasConduzidas =
+        etapas.programa === true &&
+        etapas.beneficios === true &&
+        etapas.estoque === true &&
+        etapas.responsabilidades === true &&
+        etapas.investimento === true;
+    const taxaAlinhada =
+        lead?.taxaAlinhada === true;
+    const objecaoTaxaResolvida =
+        lead?.taxaObjectionResolved === true ||
+        lead?.taxaAceitaAposObjecao === true ||
+        Boolean(lead?.taxaAceitaEm) ||
+        hasTaxAcceptedDecisionToCollect(lead) ||
+        lead?.taxaAlinhada === true;
+    const semObjecaoTaxaAtiva =
+        lead?.sinalObjecaoTaxa !== true ||
+        objecaoTaxaResolvida === true;
+    const contagemObjecaoNaoBloqueia =
+        Number(lead?.taxaObjectionCount || 0) <= 1 ||
+        objecaoTaxaResolvida === true;
+    const semObjecaoAtiva =
+        semObjecaoTaxaAtiva &&
+        lead?.sinalObjecaoEstoque !== true &&
+        lead?.sinalObjecaoRisco !== true &&
+        lead?.bloqueioComercialAtivo !== true &&
+        contagemObjecaoNaoBloqueia;
+    return Boolean(
+        etapasObrigatoriasConduzidas &&
+        taxaAlinhada &&
+        semObjecaoAtiva
     );
-
-  const semObjecaoTaxaAtiva =
-    lead?.sinalObjecaoTaxa !== true ||
-    objecaoTaxaResolvida === true;
-
-  const contagemObjecaoNaoBloqueia =
-    Number(lead?.taxaObjectionCount || 0) <= 1 ||
-    objecaoTaxaResolvida === true;
-
-  const semObjecaoAtiva =
-    semObjecaoTaxaAtiva &&
-    lead?.sinalObjecaoEstoque !== true &&
-    lead?.sinalObjecaoRisco !== true &&
-    lead?.bloqueioComercialAtivo !== true &&
-    contagemObjecaoNaoBloqueia;
-
-  return Boolean(
-    etapasObrigatoriasConduzidas &&
-    taxaAlinhada &&
-    compromissoValidado &&
-    interesseRealConfirmado &&
-    semObjecaoAtiva
-  );
 }
 
 function canAskForRealInterest(lead = {}) {
@@ -13217,17 +13211,27 @@ Só reforçando: essa etapa ainda não é aprovação automática e não envolve
 }
 
 function getCurrentFunnelStage(lead = {}) {
-  const e = lead.etapas || {};
-
-  if (!e.programa) return 1;
-  if (!e.beneficios) return 2;
-  if (!e.estoque) return 3;
-  if (!e.responsabilidades) return 4;
-  if (!e.investimento) return 5;
-  if (!e.compromisso) return 6;
-  if (lead.interesseReal !== true) return 7;
-
-  return 8; // coleta
+    const e = lead.etapas || {};
+    /*
+       Onda 2 — funil simplificado (6 etapas reais + coleta).
+       Removidos do cálculo: compromisso e interesseReal,
+       porque não são mais bloqueadores do funil (Onda 1).
+       Etapas:
+         1 = programa pendente
+         2 = benefícios pendente
+         3 = estoque/comodato pendente
+         4 = responsabilidades pendente
+         5 = investimento pendente
+         6 = alinhamento da taxa pendente
+         7 = coleta liberada (todas as 5 + taxaAlinhada=true)
+    */
+    if (!e.programa) return 1;
+    if (!e.beneficios) return 2;
+    if (!e.estoque) return 3;
+    if (!e.responsabilidades) return 4;
+    if (!e.investimento) return 5;
+    if (lead?.taxaAlinhada !== true) return 6;
+    return 7; // coleta liberada
 }
 
 function normalizeCommercialText(text = "") {
