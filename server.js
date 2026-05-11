@@ -24703,12 +24703,32 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
 
     await connectMongo();
 
-    const hoursBack = Math.min(Number(req.query.horas) || 24, 168);
-    const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    const horasParam = String(req.query.horas || "").trim().toLowerCase();
     const traceFilter = req.query.trace || "";
     const leadFilter = req.query.lead || "";
 
-    const query = { timestamp: { $gte: cutoff } };
+    /*
+      Suporte ao modo "histórico completo do lead":
+      - Se horas=all (ou "tudo" / "completo") E houver leadFilter,
+        ignora o filtro de tempo e busca TODOS os eventos do lead.
+      - Caso contrário, comporta-se como antes (default 24h, máx 168h).
+      O modo "all" só é permitido com leadFilter preenchido, para evitar
+      relatórios gigantes do sistema inteiro.
+    */
+    const wantsFullHistory =
+      ["all", "tudo", "completo", "full"].includes(horasParam) &&
+      Boolean(leadFilter);
+
+    const hoursBack = wantsFullHistory
+      ? null
+      : Math.min(Number(req.query.horas) || 24, 168);
+
+    const cutoff = wantsFullHistory
+      ? null
+      : new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+
+    const query = {};
+    if (!wantsFullHistory) query.timestamp = { $gte: cutoff };
     if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
     if (leadFilter) query.userMasked = { $regex: leadFilter, $options: "i" };
 
@@ -24716,7 +24736,7 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
       .collection("audit_events")
       .find(query)
       .sort({ timestamp: 1 })
-      .limit(2000)
+      .limit(wantsFullHistory ? 5000 : 2000)
       .toArray();
 
     const grouped = {};
@@ -24832,16 +24852,21 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
     const relatorio = {
       metadados: {
         geradoEm: new Date().toISOString(),
-        periodoAnalisado: `últimas ${hoursBack} horas`,
-        dataInicio: cutoff.toISOString(),
+        periodoAnalisado: wantsFullHistory
+          ? `HISTÓRICO COMPLETO do lead ${leadFilter} (sem limite de tempo)`
+          : `últimas ${hoursBack} horas`,
+        dataInicio: wantsFullHistory
+          ? (events[0]?.timestamp || null)
+          : cutoff.toISOString(),
         dataFim: new Date().toISOString(),
         totalEventos: events.length,
         totalConversas: conversas.length,
         totalLeads: leadsUnicos.length,
         auditLevelAtivo: getCurrentAuditLevel(),
         appVersion: process.env.APP_VERSION || "iqg-sdr-v1.0.0",
+        modoRelatorio: wantsFullHistory ? "historico_completo_lead" : "janela_temporal",
         filtrosAplicados: {
-          horas: hoursBack,
+          horas: wantsFullHistory ? "all" : hoursBack,
           trace: traceFilter || null,
           lead: leadFilter || null
         }
