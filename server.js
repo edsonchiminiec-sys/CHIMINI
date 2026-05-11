@@ -13480,6 +13480,9 @@ function classifyTaxPhaseDecision({
 
   const weakButContextualAcceptance =
     taxDecisionMessageIsShortPositive(text) &&
+    !taxDecisionMessageIsQuestionAboutTax(text) &&
+    !taxDecisionMessageIsPriceObjection(text) &&
+    !/\?/.test(String(lastUserText || "").trim()) &&
     taxExplained &&
     valueAnchored &&
     (
@@ -14415,8 +14418,8 @@ function enforceFunnelDiscipline({
 
   const pediuDadosCedo =
     pedeDadosPessoais &&
-    !podeColetarDados;
-
+    (!podeColetarDados || leadTemPerguntaOuObjecao);
+   
   const visaoGeralInicialHomologadoSegura =
     isSafeInitialHomologadoOverviewReply({
       respostaFinal,
