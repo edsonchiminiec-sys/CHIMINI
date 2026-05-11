@@ -23380,6 +23380,46 @@ auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
   actions
 });
 
+// 🔎 AUDITORIA — Grava resposta final da SDR + estado do lead + decisões
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.BACKEND_ORCHESTRATOR,
+  eventType: AUDIT_EVENT_TYPES.REQUEST_COMPLETED,
+  payload: {
+    respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
+    actions: syncedFinalReply.actions || actions || [],
+    sdrReviewFindingsCount: sdrReviewFindings.length,
+    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => ({
+      tipo: f.tipo,
+      prioridade: f.prioridade
+    })),
+    estadoLead: {
+      status: currentLead?.status || "-",
+      faseQualificacao: currentLead?.faseQualificacao || "-",
+      faseFunil: currentLead?.faseFunil || "-",
+      temperaturaComercial: currentLead?.temperaturaComercial || "-",
+      rotaComercial: currentLead?.rotaComercial || "-",
+      interesseReal: currentLead?.interesseReal === true,
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0),
+      etapas: currentLead?.etapas || {}
+    },
+    turnPolicy: {
+      modo: turnPolicy?.modo || "-",
+      ofertaPermitida: turnPolicy?.ofertaPermitida || "-",
+      podeFalarTaxa: turnPolicy?.podeFalarTaxa === true,
+      podePedirDados: turnPolicy?.podePedirDados === true,
+      podeFalarAfiliado: turnPolicy?.podeFalarAfiliado === true
+    },
+    podeIniciarColeta: podeIniciarColeta === true,
+    startedDataCollection: startedDataCollection === true,
+    coletaLiberadaPorTaxaAceita: coletaLiberadaPorTaxaAceita === true
+  },
+  requiredLevel: "STANDARD",
+  userPhone: from,
+  severity: sdrReviewFindings.length > 0 ? "medium" : "low"
+});
+     
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
      
@@ -24161,6 +24201,7 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
       const classifierEvt = traceEvents.find(e => e.component === "gpt_semantic_intent");
       const historianEvt = traceEvents.find(e => e.component === "gpt_semantic_continuity");
       const preSdrEvt = traceEvents.find(e => e.component === "gpt_pre_sdr_consultant");
+       const orchestratorEvt = traceEvents.find(e => e.component === "backend_orchestrator");
 
       conversas.push({
         traceId,
@@ -24198,6 +24239,17 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
           reason: classifierEvt.payload?.reason || "-",
           payloadCompleto: classifierEvt.payload,
           timestamp: classifierEvt.timestamp
+        } : null,
+         respostaFinalSdr: orchestratorEvt?.payload?.respostaFinalSdr || null,
+        estadoLead: orchestratorEvt?.payload?.estadoLead || null,
+        turnPolicy: orchestratorEvt?.payload?.turnPolicy || null,
+        decisoesBackend: orchestratorEvt ? {
+          podeIniciarColeta: orchestratorEvt.payload?.podeIniciarColeta,
+          startedDataCollection: orchestratorEvt.payload?.startedDataCollection,
+          coletaLiberadaPorTaxaAceita: orchestratorEvt.payload?.coletaLiberadaPorTaxaAceita,
+          sdrReviewFindingsCount: orchestratorEvt.payload?.sdrReviewFindingsCount || 0,
+          sdrReviewFindings: orchestratorEvt.payload?.sdrReviewFindings || [],
+          actions: orchestratorEvt.payload?.actions || []
         } : null,
 
         historiadorSemantico: historianEvt ? {
