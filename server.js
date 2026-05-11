@@ -3846,8 +3846,10 @@ async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
   lastUserText = "",
-  lastSdrText = ""
+  lastSdrText = "",
+  auditTraceId = null
 } = {}) {
+   
   const fallback = {
     greetingOnly: false,
     asksQuestion: false,
@@ -4440,7 +4442,7 @@ const semanticIntentResult = iqgNormalizeSemanticIntentAfterClassifier({
 });
 
 await recordAuditEvent({
-  traceId: null,
+  traceId: auditTraceId,
   component: AUDIT_COMPONENTS.GPT_SEMANTIC_INTENT,
   eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
   payload: {
@@ -20454,7 +20456,8 @@ if (estaEmColetaOuConfirmacao) {
     lead: currentLead || {},
     history,
     lastUserText: text,
-    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
+    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || "",
+    auditTraceId
   });
 
   console.log("🧠 Intenção semântica observada:", {
