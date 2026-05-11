@@ -4400,6 +4400,27 @@ const semanticIntentResult = iqgNormalizeSemanticIntentAfterClassifier({
   lead
 });
 
+await recordAuditEvent({
+  traceId: null,
+  component: AUDIT_COMPONENTS.GPT_SEMANTIC_INTENT,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    confidence: semanticIntentResult?.confidence || "baixa",
+    wantsAffiliate: semanticIntentResult?.wantsAffiliate === true,
+    wantsHomologado: semanticIntentResult?.wantsHomologado === true,
+    blockingObjection: semanticIntentResult?.blockingObjection === true,
+    priceObjection: semanticIntentResult?.priceObjection === true,
+    asksQuestion: semanticIntentResult?.asksQuestion === true,
+    greetingOnly: semanticIntentResult?.greetingOnly === true,
+    reason: semanticIntentResult?.reason || ""
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
+     
 auditLog("Resposta do Classificador Semantico", {
   ultimaMensagemLead: lastUserText || "",
   ultimaRespostaSdr: lastSdrText || "",
