@@ -1101,6 +1101,206 @@ function auditLog(title, payload = {}) {
   }
 }
 
+/* =========================
+   SISTEMA CENTRAL DE AUDITORIA — IQG
+   Grava eventos estruturados no MongoDB para análise posterior.
+   Não impacta o atendimento. Tudo é assíncrono.
+========================= */
+
+const APP_VERSION = process.env.APP_VERSION || "iqg-sdr-v1.0.0";
+
+const AUDIT_COMPONENTS = {
+  WEBHOOK: "webhook",
+  GPT_SDR: "gpt_sdr",
+  GPT_PRE_SDR: "gpt_pre_sdr_consultant",
+  GPT_POS_SDR: "gpt_pos_sdr_consultant",
+  GPT_SUPERVISOR: "gpt_supervisor",
+  GPT_CLASSIFIER: "gpt_classifier",
+  GPT_SEMANTIC_INTENT: "gpt_semantic_intent",
+  GPT_SEMANTIC_CONTINUITY: "gpt_semantic_continuity",
+  GPT_DATA_FLOW_ROUTER: "gpt_data_flow_router",
+  GPT_ROUTE_MIX_GUARD: "gpt_route_mix_guard",
+  GPT_REGENERATE_SDR: "gpt_regenerate_sdr",
+  GPT_HUMAN_BRIEFING: "gpt_human_briefing",
+  GPT_CLEVEL: "gpt_clevel",
+  BACKEND_ORCHESTRATOR: "backend_orchestrator",
+  TURN_POLICY: "turn_policy",
+  COMMERCIAL_ROUTE: "commercial_route",
+  DATA_COLLECTION: "data_collection",
+  CRM_INTEGRATION: "crm_integration",
+  FILE_DELIVERY: "file_delivery",
+  WHATSAPP_INTEGRATION: "whatsapp_integration",
+  HARD_LIMIT_ENFORCER: "hard_limit_enforcer",
+  FOLLOWUP_SCHEDULER: "followup_scheduler"
+};
+
+const AUDIT_EVENT_TYPES = {
+  REQUEST_RECEIVED: "request_received",
+  REQUEST_COMPLETED: "request_completed",
+  REQUEST_FAILED: "request_failed",
+  GPT_CALL_STARTED: "gpt_call_started",
+  GPT_CALL_SUCCESS: "gpt_call_success",
+  GPT_CALL_ERROR: "gpt_call_error",
+  DECISION_MADE: "decision_made",
+  HARD_LIMIT_TRIGGERED: "hard_limit_triggered",
+  GUARDRAIL_TRIGGERED: "guardrail_triggered",
+  LEAD_STATE_CHANGED: "lead_state_changed",
+  DATA_EXTRACTED: "data_extracted",
+  CRM_SENT: "crm_sent",
+  CRM_FAILED: "crm_failed",
+  FILE_SENT: "file_sent",
+  FILE_FAILED: "file_failed",
+  ALERT_TRIGGERED: "alert_triggered"
+};
+
+function generateTraceId() {
+  return crypto.randomUUID();
+}
+
+function generateEventId() {
+  return crypto.randomUUID();
+}
+
+function sanitizeAuditPayload(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  try {
+    const cloned = JSON.parse(JSON.stringify(payload));
+
+    function walk(obj) {
+      if (!obj || typeof obj !== "object") return;
+
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        const lowerKey = String(key).toLowerCase();
+
+        if (lowerKey === "cpf" && typeof value === "string") {
+          obj[key] = maskCPF(value);
+        } else if (
+          (lowerKey === "telefone" ||
+           lowerKey === "telefonewhatsapp" ||
+           lowerKey === "user" ||
+           lowerKey === "phone") &&
+          typeof value === "string"
+        ) {
+          obj[key] = maskPhone(value);
+        } else if (
+          lowerKey.includes("password") ||
+          lowerKey.includes("token") ||
+          lowerKey.includes("apikey") ||
+          lowerKey.includes("api_key") ||
+          lowerKey.includes("secret")
+        ) {
+          obj[key] = "[REDACTED]";
+        } else if (typeof value === "object") {
+          walk(value);
+        }
+      }
+    }
+
+    walk(cloned);
+    return cloned;
+  } catch (error) {
+    return { sanitize_error: error.message };
+  }
+}
+
+function estimateTokens(text = "") {
+  const t = String(text || "");
+  if (!t) return 0;
+  return Math.ceil(t.length / 4);
+}
+
+async function recordAuditEvent({
+  traceId = null,
+  component = "unknown",
+  eventType = "unknown",
+  payload = {},
+  requiredLevel = "STANDARD",
+  parentEventId = null,
+  userPhone = "",
+  severity = "low"
+} = {}) {
+  if (!shouldAuditAtLevel(requiredLevel)) {
+    return null;
+  }
+
+  try {
+    await connectMongo();
+
+    const event = {
+      _id: generateEventId(),
+      traceId: traceId || generateTraceId(),
+      parentEventId: parentEventId || null,
+      timestamp: new Date(),
+      component,
+      eventType,
+      severity,
+      auditLevel: getCurrentAuditLevel(),
+      appVersion: APP_VERSION,
+      userMasked: userPhone ? maskPhone(userPhone) : "",
+      payload: sanitizeAuditPayload(payload),
+      createdAt: new Date()
+    };
+
+    db.collection("audit_events")
+      .insertOne(event)
+      .catch(error => {
+        console.error("⚠️ Falha ao gravar evento de auditoria (não-crítico):", error.message);
+      });
+
+    if (shouldAuditAtLevel("DEEP")) {
+      try {
+        console.log(
+          `📊 [${component}/${eventType}] trace=${event.traceId.slice(0, 8)}`,
+          JSON.stringify(event.payload).slice(0, 500)
+        );
+      } catch (e) {
+        // Ignora falha de log
+      }
+    }
+
+    return event._id;
+  } catch (error) {
+    console.error("⚠️ Erro no recordAuditEvent (não-crítico):", error.message);
+    return null;
+  }
+}
+
+async function recordAuditError({
+  traceId = null,
+  component = "unknown",
+  eventType = "request_failed",
+  error = null,
+  payload = {},
+  userPhone = ""
+} = {}) {
+  if (!isAuditEnabled()) {
+    return null;
+  }
+
+  const errorPayload = {
+    ...payload,
+    error: {
+      message: error?.message || String(error),
+      stack: error?.stack ? String(error.stack).slice(0, 2000) : "",
+      name: error?.name || "Error"
+    }
+  };
+
+  return recordAuditEvent({
+    traceId,
+    component,
+    eventType,
+    payload: errorPayload,
+    requiredLevel: "BASIC",
+    severity: "high",
+    userPhone
+  });
+}
+
 function buildDefaultSupervisorAnalysis() {
   return {
     houveErroSdr: false,
