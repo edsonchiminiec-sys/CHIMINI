@@ -4358,23 +4358,48 @@ function buildTurnPolicy({
 } = {}) {
   /*
     ETAPA 16.3A — Política do Turno mínima.
-
-    Explicação simples:
-    Esta função NÃO é um novo GPT.
-    Ela NÃO escreve resposta.
-    Ela NÃO substitui o Pré-SDR.
-
-    Ela só define limites objetivos da rodada atual:
+    Define limites objetivos da rodada atual:
     - pode falar Afiliado?
     - pode mandar link?
     - pode falar taxa?
     - pode pedir dados?
     - pode salvar Homologado como oferta escolhida?
     - pode marcar benefícios/estoque?
-
     A estratégia comercial continua sendo do Pré-SDR.
   */
 
+  /*
+    PROTEÇÃO POS-CRM — não reabrir coleta para lead já cadastrado.
+    Se o lead já foi enviado ao CRM, a política do turno NÃO pode
+    pedir dados, falar de taxa, oferecer afiliado nem voltar para
+    o funil comercial. Ele é um lead em atendimento pós-venda.
+  */
+  const leadEstaPosCrm =
+    lead?.crmEnviado === true ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm";
+
+  if (leadEstaPosCrm) {
+    return {
+      modo: "pos_crm_atendimento",
+      ofertaPermitida: "nenhuma_no_momento",
+      podeFalarAfiliado: false,
+      podeMandarLinkAfiliado: false,
+      podeCompararProgramas: false,
+      podeFalarTaxa: false,
+      podePedirDados: false,
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "atendimento_pos_crm",
+      proximaMelhorAcao:
+        "Responder de forma consultiva e curta a manifestação atual do lead. Não reiniciar o funil. Não pedir dados novamente. Se o lead perguntar sobre próximos passos, orientar que a equipe comercial fará contato.",
+      cuidadoPrincipal:
+        "Lead já está pós-CRM. NÃO pedir nome, CPF, telefone, cidade ou estado. NÃO repetir taxa, benefícios, estoque ou responsabilidades. NÃO oferecer afiliado. NÃO prometer aprovação, contrato ou pagamento.",
+      motivo: "Lead já foi enviado ao CRM. Política do turno em modo atendimento pós-venda."
+    };
+  }
+   
   const t = normalizeTurnPolicyText(text);
 
   const coletaAtiva = isLeadInActiveCollectionForTurnPolicy(lead || {});
