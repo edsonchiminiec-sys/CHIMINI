@@ -2252,6 +2252,14 @@ A IQG possui dois caminhos comerciais:
 - O pagamento só ocorre após análise interna e assinatura do contrato.
 - O resultado depende da atuação do parceiro nas vendas.
 
+REGRA SOBRE FRETE E ENVIO — PARCEIRO HOMOLOGADO:
+- O primeiro envio (kit inicial) tem frete custeado pela IQG. O parceiro não paga frete para receber o kit.
+- Nas reposições posteriores, os produtos continuam sendo cedidos em comodato (sem compra), mas o frete das reposições é custeado pelo parceiro.
+- Se o lead perguntar sobre frete, envio, entrega ou custo de reposição, o Pré-SDR deve orientar a SDR a explicar essa distinção com clareza.
+- NÃO orientar a SDR a dizer que frete é sempre grátis.
+- NÃO orientar a SDR a dizer que a IQG paga todos os fretes de reposição.
+- Orientar a SDR a separar: produto = comodato (sem compra); frete da reposição = por conta do parceiro.
+
 BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
 - O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
 - Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
@@ -8746,6 +8754,35 @@ Se o lead aceitar o PDF do kit, envie:
 
 Se o lead perguntar se o estoque sempre será em comodato, responda que sim.
 
+REGRA CRÍTICA SOBRE PREÇO DE PRODUTOS INDIVIDUAIS (FASE DE ESTOQUE):
+
+Quando o lead perguntar o preço, valor ou quanto custa cada produto do lote:
+- NUNCA listar preço de produto individual.
+- NUNCA usar placeholder como "R$ XX,XX", "R$ --" ou valores fictícios.
+- NUNCA inventar tabela de preços na resposta.
+- NUNCA dizer "os preços estão na faixa de" seguido de valores inventados.
+
+A resposta correta é:
+1. Explicar que os preços variam constantemente e são atualizados com frequência pela IQG.
+2. As tabelas oficiais de preço serão sempre atualizadas e enviadas ao parceiro após a efetivação da parceria.
+3. Para ter uma ideia dos preços atuais, indicar o e-commerce oficial: https://www.loja.industriaquimicagaucha.com.br/
+4. Reforçar que a IQG tem compromisso com preços comercialmente competitivos e qualidade acima do mercado.
+5. Tranquilizar o parceiro dizendo que a IQG busca sempre oferecer condições que permitam ao parceiro ser competitivo e crescer junto com a indústria.
+
+Exemplo correto:
+"Os preços dos produtos variam com frequência e a IQG trabalha com atualizações constantes. A tabela oficial de preços para parceiro é enviada após a efetivação da parceria 😊
+
+Para ter uma boa ideia dos preços atuais, você pode consultar nosso e-commerce:
+https://www.loja.industriaquimicagaucha.com.br/
+
+E pode ficar tranquilo: a IQG tem compromisso com preços competitivos e qualidade acima do mercado, justamente para que o parceiro consiga atuar de forma forte comercialmente."
+
+Exemplo ERRADO (nunca responder assim):
+"IQG Clarificante 1L: R$ XX,XX"
+"Os preços estão na faixa de R$ 15 a R$ 90"
+"O valor sugerido do Clarificante é R$ 29,90"
+
+
 REGRA OBRIGATÓRIA SOBRE COMODATO E REPOSIÇÃO:
 
 O estoque do Parceiro Homologado IQG sempre será cedido em comodato.
@@ -8764,6 +8801,32 @@ Quanto mais o parceiro vender e demonstrar boa atuação, maior poderá ser o es
 
 Para volumes maiores, a IA deve dizer que isso é tratado diretamente com a equipe IQG conforme evolução do parceiro dentro do programa.
 
+REGRA OBRIGATÓRIA SOBRE FRETE E ENVIO:
+
+O primeiro envio (lote/kit inicial) tem o frete custeado pela IQG.
+O parceiro não paga frete para receber o kit inicial.
+
+As reposições posteriores: os produtos continuam sendo cedidos em comodato (o parceiro não compra os produtos), mas o frete das reposições é custeado pelo parceiro.
+
+A SDR deve explicar isso com clareza sempre que o lead perguntar sobre frete, envio, entrega, transporte ou custo de reposição.
+
+Regras obrigatórias:
+- NÃO dizer que o frete é sempre grátis.
+- NÃO dizer que a IQG paga todos os fretes em todas as reposições.
+- NÃO dizer que não existe custo de envio nas reposições.
+- NÃO dizer que o parceiro paga pelos produtos das reposições (os produtos são sempre comodato).
+- SEMPRE separar claramente: produto = comodato (sem compra); frete da reposição = por conta do parceiro.
+
+Exemplo correto quando o lead perguntar sobre frete:
+"O envio do lote inicial é por conta da IQG, então você não paga frete para receber o kit 😊 Nas reposições seguintes, os produtos continuam sendo cedidos em comodato, ou seja, você não compra o estoque. Mas o frete de envio das reposições fica por conta do parceiro."
+
+Exemplo correto quando o lead perguntar se paga pelo envio da reposição:
+"Os produtos das reposições continuam sendo em comodato, então você não compra o estoque. Mas o frete de envio das reposições é custeado pelo parceiro. Só o primeiro envio do kit inicial tem frete por conta da IQG."
+
+Exemplo ERRADO (nunca responder assim):
+"Você não paga pelo envio da reposição do estoque."
+"A IQG se responsabiliza pelo envio das reposições."
+"Você não precisará pagar o frete do envio das mercadorias, tanto no recebimento do lote inicial quanto na reposição."
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 5 — COMPROMETIMENTO (morno)
@@ -23240,6 +23303,44 @@ auditLog("Problemas encontrados pelas travas antes do envio", {
 if (sdrReviewFindings.length > 0) {
   const primeiraRespostaSdr = respostaFinal;
 
+  /*
+    🛡️ CORREÇÃO FALHA 3:
+    Passa os dados que o backend ACABOU de extrair da mensagem atual
+    para que o GPT regenerador NÃO peça de novo um dado que o lead
+    acabou de enviar (ex: nome, CPF, telefone, cidade, estado).
+  */
+  const dadosExtraidosNesteTurno = {
+    nome: extractedData?.nome || currentLead?.nome || null,
+    cpf: extractedData?.cpf || currentLead?.cpf || null,
+    telefone: extractedData?.telefone || currentLead?.telefone || null,
+    cidade: extractedData?.cidade || currentLead?.cidade || null,
+    estado: extractedData?.estado || currentLead?.estado || null
+  };
+
+  const dadosJaPreenchidos = Object.entries(dadosExtraidosNesteTurno)
+    .filter(([_, v]) => v)
+    .map(([k, _]) => k);
+
+  const guardFindingsComDados = [
+    ...sdrReviewFindings,
+    ...(dadosJaPreenchidos.length > 0
+      ? [{
+          tipo: "dados_ja_recebidos_neste_turno",
+          prioridade: "critica",
+          orientacao: [
+            `O lead já informou ou já possui estes dados preenchidos: ${dadosJaPreenchidos.join(", ")}.`,
+            dadosExtraidosNesteTurno.nome ? `Nome já recebido: "${dadosExtraidosNesteTurno.nome}". NÃO pedir nome de novo.` : "",
+            dadosExtraidosNesteTurno.cpf ? `CPF já recebido. NÃO pedir CPF de novo.` : "",
+            dadosExtraidosNesteTurno.telefone ? `Telefone já recebido. NÃO pedir telefone de novo.` : "",
+            dadosExtraidosNesteTurno.cidade ? `Cidade já recebida. NÃO pedir cidade de novo.` : "",
+            dadosExtraidosNesteTurno.estado ? `Estado já recebido. NÃO pedir estado de novo.` : "",
+            "Se a coleta estiver liberada, pedir apenas o PRÓXIMO campo que ainda está faltando.",
+            "Se todos os campos já estiverem preenchidos, seguir para confirmação dos dados."
+          ].filter(Boolean).join("\n")
+        }]
+      : [])
+  ];
+
   respostaFinal = await regenerateSdrReplyWithGuardGuidance({
   currentLead: {
     ...(currentLead || {}),
@@ -23250,7 +23351,7 @@ if (sdrReviewFindings.length > 0) {
   primeiraRespostaSdr,
   preSdrConsultantAdvice: preSdrConsultantAdvice || {},
   preSdrConsultantContext,
-  guardFindings: sdrReviewFindings
+  guardFindings: guardFindingsComDados
 });
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
@@ -23444,6 +23545,120 @@ respostaFinal = sanitizeWhatsAppText(syncedFinalReply.respostaFinal);
 const respostaAntesDaBarreiraFinalLeak = respostaFinal;
 
 respostaFinal = enforceNoInternalLeakBeforeSend(respostaFinal);
+
+/*
+  🛡️ BARREIRA FINAL ANTI-PLACEHOLDER DE PREÇO
+  Detecta "R$ XX", "XX,XX", valores fictícios ou listas de preço inventadas.
+  Se encontrar, substitui por resposta segura sobre o e-commerce.
+*/
+const placeholderPrecoDetectado =
+  /R\$\s*XX/i.test(respostaFinal) ||
+  /R\$\s*--/i.test(respostaFinal) ||
+  /:\s*R\$\s*XX/i.test(respostaFinal) ||
+  /XX[,.]XX/i.test(respostaFinal) ||
+  /valor\s+a\s+definir/i.test(respostaFinal) ||
+  /preco\s+a\s+definir/i.test(respostaFinal) ||
+  /preço\s+a\s+definir/i.test(respostaFinal);
+
+/*
+  🛡️ BARREIRA FINAL ANTI-REPETIÇÃO DE DADO JÁ COLETADO
+  Se o lead já informou nome (ou CPF, telefone, cidade, estado)
+  e a resposta final ainda está pedindo esse dado de novo,
+  o backend substitui por pedido do próximo campo faltante.
+*/
+const camposJaPreenchidosDoLead = {
+  nome: Boolean(String(currentLead?.nome || extractedData?.nome || "").trim()),
+  cpf: Boolean(String(currentLead?.cpf || extractedData?.cpf || "").trim()),
+  telefone: Boolean(String(currentLead?.telefone || extractedData?.telefone || "").trim()),
+  cidade: Boolean(String(currentLead?.cidade || extractedData?.cidade || "").trim()),
+  estado: Boolean(String(currentLead?.estado || extractedData?.estado || "").trim())
+};
+
+const respostaLowerBarreira = String(respostaFinal || "").toLowerCase();
+
+const respostaPedeNomeMasJaTem =
+  camposJaPreenchidosDoLead.nome &&
+  (
+    respostaLowerBarreira.includes("nome completo") ||
+    respostaLowerBarreira.includes("me envie seu nome") ||
+    respostaLowerBarreira.includes("me passa seu nome") ||
+    respostaLowerBarreira.includes("me manda seu nome") ||
+    respostaLowerBarreira.includes("qual seu nome")
+  );
+
+const respostaPedeCpfMasJaTem =
+  camposJaPreenchidosDoLead.cpf &&
+  (
+    respostaLowerBarreira.includes("seu cpf") ||
+    respostaLowerBarreira.includes("me envie seu cpf") ||
+    respostaLowerBarreira.includes("me passa seu cpf") ||
+    respostaLowerBarreira.includes("me manda seu cpf")
+  );
+
+const respostaPedeTelefoneMasJaTem =
+  camposJaPreenchidosDoLead.telefone &&
+  (
+    respostaLowerBarreira.includes("telefone com ddd") ||
+    respostaLowerBarreira.includes("seu telefone") ||
+    respostaLowerBarreira.includes("número com ddd")
+  );
+
+const respostaPedeCidadeMasJaTem =
+  camposJaPreenchidosDoLead.cidade &&
+  (
+    respostaLowerBarreira.includes("qual sua cidade") ||
+    respostaLowerBarreira.includes("sua cidade")
+  );
+
+const respostaPedeEstadoMasJaTem =
+  camposJaPreenchidosDoLead.estado &&
+  (
+    respostaLowerBarreira.includes("qual seu estado") ||
+    respostaLowerBarreira.includes("seu estado")
+  );
+
+const algumDadoRepetidoNaResposta =
+  respostaPedeNomeMasJaTem ||
+  respostaPedeCpfMasJaTem ||
+  respostaPedeTelefoneMasJaTem ||
+  respostaPedeCidadeMasJaTem ||
+  respostaPedeEstadoMasJaTem;
+
+if (algumDadoRepetidoNaResposta) {
+  const dadoRepetido =
+    respostaPedeNomeMasJaTem ? "nome" :
+    respostaPedeCpfMasJaTem ? "cpf" :
+    respostaPedeTelefoneMasJaTem ? "telefone" :
+    respostaPedeCidadeMasJaTem ? "cidade" :
+    "estado";
+
+  console.warn("🛡️ BARREIRA ANTI-REPETIÇÃO DE DADO: resposta pedia dado que o lead já informou. Corrigida antes do envio:", {
+    user: from,
+    dadoRepetido,
+    nomePreenchido: camposJaPreenchidosDoLead.nome,
+    cpfPreenchido: camposJaPreenchidosDoLead.cpf,
+    telefonePreenchido: camposJaPreenchidosDoLead.telefone,
+    cidadePreenchida: camposJaPreenchidosDoLead.cidade,
+    estadoPreenchido: camposJaPreenchidosDoLead.estado,
+    respostaBloqueada: String(respostaFinal).slice(0, 200)
+  });
+
+  const mergedParaBarreira = {
+    ...(currentLead || {}),
+    ...(extractedData || {})
+  };
+
+  const camposFaltantesBarreira = getMissingLeadFields(mergedParaBarreira);
+
+  if (camposFaltantesBarreira.length > 0) {
+    const proximoCampoReal = camposFaltantesBarreira[0];
+    respostaFinal = `Perfeito 😊\n\n${getMissingFieldQuestion(proximoCampoReal)}`;
+  } else if (!mergedParaBarreira.dadosConfirmadosPeloLead) {
+    respostaFinal = buildLeadConfirmationMessage(mergedParaBarreira);
+  } else {
+    respostaFinal = "Perfeito 😊 Seus dados já estão completos. Vamos seguir com a análise!";
+  }
+}
 
 if (respostaFinal !== respostaAntesDaBarreiraFinalLeak) {
   console.warn("🛡️ Barreira final removeu possível vazamento interno antes do WhatsApp:", {
