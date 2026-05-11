@@ -23513,7 +23513,19 @@ app.get("/auditoria", async (req, res) => {
                 </tr>
               </thead>
               <tbody>
-                ${eventRows || `<tr><td colspan="8" class="empty">Nenhum event
+               ${eventRows || '<tr><td colspan="8" class="empty">Nenhum evento encontrado.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Erro no dashboard de auditoria:", error);
+    res.status(500).send("Erro ao carregar auditoria.");
+  }
+});
 
 app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
