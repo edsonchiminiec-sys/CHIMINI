@@ -2000,6 +2000,28 @@ A IQG possui dois caminhos comerciais:
 - O pagamento só ocorre após análise interna e assinatura do contrato.
 - O resultado depende da atuação do parceiro nas vendas.
 
+BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
+- O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
+- Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
+- Apenas 1 nível de indicação (sem multinível, sem pirâmide).
+- Condição: o parceiro indicado precisa respeitar o valor mínimo de venda sugerido pela IQG.
+- Controle: relatórios semanais de liquidação enviados em PDF ao parceiro indicador.
+- Em breve: acompanhamento em tempo real via aplicativo.
+
+PERFIL QUE MAIS SE BENEFICIA:
+Piscineiros e profissionais com forte rede no setor. Existem parceiros homologados
+que pagam a taxa de adesão, optam por NÃO receber o lote em comodato, e faturam
+exclusivamente indicando colegas para o programa. É um modelo legítimo e estratégico.
+Quando o lead for piscineiro, apresentar essa possibilidade proativamente como
+benefício estratégico do programa.
+
+REGRA ANTI-MISTURA (CRÍTICA):
+- Este benefício pertence APENAS ao Programa Parceiro Homologado.
+- NUNCA chamar de "link de afiliado", "Programa de Afiliados" ou "indicar pelo link".
+- NUNCA migrar o lead para Afiliados quando ele perguntar sobre indicação.
+- Se o lead estiver na rota Afiliados e perguntar sobre essa renda, explicar
+  que este benefício específico é do Programa Homologado.
+
 2. Programa de Afiliados IQG
 - Caminho separado.
 - O lead divulga produtos por link.
@@ -2098,6 +2120,7 @@ Use apenas estes valores para ofertaMaisAdequada:
 - "ambos"
 - "nenhuma_no_momento"
 - "nao_analisado"
+
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 MOMENTO IDEAL HUMANO
@@ -5563,6 +5586,14 @@ A IQG possui dois caminhos comerciais:
 Afiliado não é perda.
 Afiliado é rota alternativa quando fizer sentido.
 
+TEMA ADICIONAL CONHECIDO — RENDA VITALÍCIA POR INDICAÇÃO:
+O Programa Parceiro Homologado oferece 10% de comissão vitalícia sobre vendas
+dos parceiros indicados (1 nível, condição: indicado respeitar valor mínimo
+de venda sugerido). Esse benefício NÃO existe no Programa de Afiliados.
+Se o lead perguntar sobre indicação, comissão por indicação, renda vitalícia,
+ou indicar colegas, o tema é VÁLIDO e dentro do escopo do Homologado.
+NÃO classificar como "fora de escopo". NÃO confundir com Programa de Afiliados.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 PERFIS COMPORTAMENTAIS POSSÍVEIS
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -6078,6 +6109,14 @@ A IQG possui dois caminhos comerciais:
 
 Afiliado não é perda.
 Afiliado é rota alternativa quando fizer sentido.
+
+TEMA ADICIONAL CONHECIDO — RENDA VITALÍCIA POR INDICAÇÃO:
+O Programa Parceiro Homologado oferece 10% de comissão vitalícia sobre vendas
+dos parceiros indicados (1 nível, condição: indicado respeitar valor mínimo
+de venda sugerido). Esse benefício NÃO existe no Programa de Afiliados.
+Se o lead perguntar sobre indicação, comissão por indicação, renda vitalícia,
+ou indicar colegas, o tema é VÁLIDO e dentro do escopo do Homologado.
+NÃO classificar como "fora de escopo". NÃO confundir com Programa de Afiliados.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRAS DE AUDITORIA
@@ -8138,6 +8177,28 @@ Nesta fase, é obrigatório:
 1. Explicar os principais benefícios de forma prática
 2. Conectar benefício com realidade do lead
 3. Enviar o folder do programa
+
+BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
+- O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
+- Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
+- Apenas 1 nível de indicação (sem multinível, sem pirâmide).
+- Condição: o parceiro indicado precisa respeitar o valor mínimo de venda sugerido pela IQG.
+- Controle: relatórios semanais de liquidação enviados em PDF ao parceiro indicador.
+- Em breve: acompanhamento em tempo real via aplicativo.
+
+PERFIL QUE MAIS SE BENEFICIA:
+Piscineiros e profissionais com forte rede no setor. Existem parceiros homologados
+que pagam a taxa de adesão, optam por NÃO receber o lote em comodato, e faturam
+exclusivamente indicando colegas para o programa. É um modelo legítimo e estratégico.
+Quando o lead for piscineiro, apresentar essa possibilidade proativamente como
+benefício estratégico do programa.
+
+REGRA ANTI-MISTURA (CRÍTICA):
+- Este benefício pertence APENAS ao Programa Parceiro Homologado.
+- NUNCA chamar de "link de afiliado", "Programa de Afiliados" ou "indicar pelo link".
+- NUNCA migrar o lead para Afiliados quando ele perguntar sobre indicação.
+- Se o lead estiver na rota Afiliados e perguntar sobre essa renda, explicar
+  que este benefício específico é do Programa Homologado.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 💬 EXPLICAÇÃO BASE
@@ -10325,6 +10386,82 @@ function isValidCPF(value = "") {
   if (digit2 >= 10) digit2 = 0;
 
   return digit2 === Number(cpf[10]);
+}
+
+/* =========================
+   REGRA COMERCIAL — INDICAÇÃO NO PARCEIRO HOMOLOGADO
+   Benefício oficial do Programa Parceiro Homologado IQG.
+   Não confundir com Programa de Afiliados.
+   ========================= */
+
+function iqgNormalizeIndicationText(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function iqgLeadMentionsIndicationNetwork(text = "") {
+  const t = iqgNormalizeIndicationText(text);
+  if (!t) return false;
+  return /\b(indicacao|indicacoes|indicar|indico|indiquei|indicando|indicado|indicados|ganhar por indicacao|ganhar indicando|comissao por indicacao|comissao vitalicia|renda vitalicia|indicar parceiros|indicar outros parceiros|trazer parceiros|trazer outros parceiros|rede de parceiros|colegas piscineiros|outros piscineiros)\b/.test(t);
+}
+
+function iqgLeadLooksLikePiscineiro(text = "", lead = {}) {
+  const t = iqgNormalizeIndicationText(
+    [
+      text,
+      lead?.profissao,
+      lead?.segmento,
+      lead?.ramo,
+      lead?.atividade,
+      lead?.observacoes,
+      lead?.historicoResumo
+    ].filter(Boolean).join(" ")
+  );
+  if (!t) return false;
+  return /\b(piscineiro|piscineira|piscineiros|piscina|piscinas|limpeza de piscina|manutencao de piscina|tratamento de piscina|atendo piscina|atendo piscinas|cliente de piscina|clientes de piscina|trabalho com piscina|trabalho com piscinas)\b/.test(t);
+}
+
+function buildHomologadoIndicationBenefitGuidance({
+  lead = {},
+  text = "",
+  forceMentionForPiscineiro = true
+} = {}) {
+  const leadIsPiscineiro = iqgLeadLooksLikePiscineiro(text, lead);
+  const leadMentionsIndication = iqgLeadMentionsIndicationNetwork(text);
+
+  const shouldGuide =
+    leadMentionsIndication ||
+    (forceMentionForPiscineiro && leadIsPiscineiro);
+
+  if (!shouldGuide) return null;
+
+  return {
+    tipo: "beneficio_indicacao_parceiro_homologado",
+    prioridade: leadIsPiscineiro ? "alta" : "media",
+    detectorPiscineiro: leadIsPiscineiro,
+    detectorMencaoIndicacao: leadMentionsIndication,
+    motivo: leadIsPiscineiro
+      ? "Lead atua com piscinas; renda por indicação é forte alavanca comercial."
+      : "Lead mencionou indicação, rede ou comissão.",
+    orientacaoParaPreSdr: [
+      "REALCE CONTEXTUAL — BENEFÍCIO DE INDICAÇÃO DO HOMOLOGADO.",
+      "",
+      "O lead tocou no assunto de indicação OU é piscineiro com perfil de rede.",
+      "Reforce o benefício de 10% vitalício sobre o que os indicados venderem.",
+      "Comissão válida enquanto o indicado estiver ativo. Apenas 1 nível.",
+      "Condição: indicado precisa respeitar o valor mínimo de venda sugerido.",
+      "NÃO migrar para Afiliados. NÃO chamar de link de afiliado.",
+      leadIsPiscineiro
+        ? "Como o lead atua com piscinas: apresentar como possibilidade real — muitos piscineiros se homologam, optam por NÃO pegar lote em comodato e faturam apenas indicando colegas."
+        : "Responder à pergunta de forma direta e seguir o fluxo do Homologado.",
+      "Após explicar, retomar o funil de onde estava (taxa, responsabilidades, pré-cadastro)."
+    ].filter(Boolean).join("\n")
+  };
 }
 
 function formatPhone(value = "") {
@@ -21425,6 +21562,20 @@ if (Array.isArray(backendStrategicGuidance)) {
       turnPolicy?.cuidadoPrincipal || ""
     ].filter(Boolean).join("\n"),
     detalhes: turnPolicy
+  });
+}
+
+// 🔔 Realce contextual: benefício de indicação (renda vitalícia) do Homologado
+const indicacaoGuidance = buildHomologadoIndicationBenefitGuidance({
+  lead: currentLead,
+  text: textoDoLead,
+  forceMentionForPiscineiro: true
+});
+if (indicacaoGuidance) {
+  console.log("🔔 Realce de indicação ativado:", {
+    prioridade: indicacaoGuidance.prioridade,
+    piscineiro: indicacaoGuidance.detectorPiscineiro,
+    mencaoIndicacao: indicacaoGuidance.detectorMencaoIndicacao
   });
 }
    
