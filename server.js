@@ -3739,6 +3739,121 @@ function iqgNormalizeSemanticIntentAfterClassifier({
     ].filter(Boolean).join(" ");
   }
 
+   /*
+    Caso 5 — Onda 3 / Bug #1:
+    Detectar priceObjection em frases INDIRETAS de desconfiança ou
+    resistência financeira que o Classificador Semântico costuma
+    deixar passar.
+
+    Três grupos de gatilhos:
+      (A) Desconfiança financeira ("pegadinha", "bom demais pra ser
+          verdade", "como assim investimento", "tem caroço", etc.)
+      (B) Caro direto ("tá caro", "salgado", "fora do orçamento", etc.)
+      (C) Reclamação retroativa ("nem me falou da taxa", "não me
+          avisou do investimento", etc.)
+
+    Se qualquer gatilho disparar, forçamos priceObjection=true e
+    elevamos a confiança para 'alta' nesse campo, para acionar as
+    travas de objeção de taxa do backend.
+  */
+  const priceObjectionIndirectPatterns = [
+    // (A) Desconfiança financeira / cheiro de "pegadinha"
+    /\bpegadinha[s]?\b/i,
+    /\bpegadinho[s]?\b/i,
+    /\bcaroc[oõ][s]?\b/i,
+    /\bgato\s+escondido\b/i,
+    /\bcoisa\s+escondida\b/i,
+    /\bbom\s+dem(ais|as)\s+(pra|para|pro)\s+ser\s+verdade\b/i,
+    /\bbom\s+dem(ais|as)\s+pra\s+ser\s+real\b/i,
+    /\bperfeito\s+dem(ais|as)\b/i,
+    /\bfacil\s+dem(ais|as)\b/i,
+    /\bf[aá]cil\s+dem(ais|as)\b/i,
+    /\bsuspeito\b/i,
+    /\bdesconfio\b/i,
+    /\bdesconfiad[oa]\b/i,
+    /\bgolpe\b/i,
+    /\benganaç[aã]o\b/i,
+    /\benganacao\b/i,
+    /\bfurada\b/i,
+    /\bcilada\b/i,
+    /\bcomo\s+assim\s+(investimento|taxa|valor|pagar|pagamento|adesao|adesão|mensalidade)\b/i,
+    /\bque\s+(investimento|taxa|valor|pagamento|adesao|adesão|mensalidade)\s+(é\s+ess[ea]|e\s+ess[ea])\b/i,
+    /\bque\s+(investimento|taxa|valor|pagamento|adesao|adesão|mensalidade)\b\s*[\?\.!]?\s*$/i,
+    /\bque\s+hist[oó]ria\s+(é|e)\s+ess[ea]\s+de\s+(investimento|taxa|valor|pagar|pagamento|adesao|adesão)\b/i,
+    /\bo\s+que\s+(é|e)\s+ess[ea]\s+(investimento|taxa|valor|pagamento|adesao|adesão)\b/i,
+    /\b(é|e)\s+pago\b/i,
+    /\btem\s+que\s+pagar\b/i,
+    /\bvou\s+ter\s+que\s+pagar\b/i,
+    /\bprecisa\s+pagar\b/i,
+    /\bpaga\s+alguma\s+coisa\b/i,
+    /\bpaga\s+algo\b/i,
+    /\btem\s+custo\b/i,
+    /\btem\s+algum\s+custo\b/i,
+    /\bvem\s+custo\b/i,
+    /\bcobra\s+algo\b/i,
+    /\bcobra\s+alguma\s+coisa\b/i,
+    /\bsabia\s+que\s+tinha\b/i,
+    /\beu\s+sabia\b/i,
+    /\bj[aá]\s+sabia\b/i,
+    /\bn[aã]o\s+(é|e)\s+de\s+gra[çc]a\b/i,
+    /\bn[aã]o\s+(é|e)\s+gratis\b/i,
+    /\bn[aã]o\s+(é|e)\s+gr[aá]tis\b/i,
+
+    // (B) Caro direto
+    /\bt[aá]\s+caro\b/i,
+    /\best[aá]\s+caro\b/i,
+    /\bmuito\s+caro\b/i,
+    /\bbem\s+caro\b/i,
+    /\bcaro\s+dem(ais|as)\b/i,
+    /\bsalgad[oa]\b/i,
+    /\bpuxad[oa]\b/i,
+    /\bpesad[oa](\s+pra|\s+para|\s+pro)?\s+(meu\s+bolso|minha\s+conta|mim)\b/i,
+    /\bn[aã]o\s+tenho\s+(esse|esta|essa|tudo\s+isso|tanto)\b/i,
+    /\bn[aã]o\s+tenho\s+(esse|essa)\s+(grana|valor|dinheiro|quantia)\b/i,
+    /\bn[aã]o\s+tenho\s+como\s+pagar\b/i,
+    /\bn[aã]o\s+tenho\s+condi[çc][oõ]es\b/i,
+    /\bsem\s+condi[çc][oõ]es\b/i,
+    /\bfora\s+do\s+(meu\s+)?or[çc]amento\b/i,
+    /\bn[aã]o\s+cabe\s+no\s+(bolso|or[çc]amento)\b/i,
+    /\bn[aã]o\s+entra\s+no\s+(bolso|or[çc]amento)\b/i,
+    /\bapertad[oa](\s+de\s+grana|\s+financeiramente)?\b/i,
+    /\bsem\s+grana\b/i,
+    /\bsem\s+dinheiro\b/i,
+    /\bestou\s+sem\s+(grana|dinheiro|condi[çc][oõ]es)\b/i,
+    /\bt[oô]\s+sem\s+(grana|dinheiro|condi[çc][oõ]es)\b/i,
+    /\bduro\b/i,
+    /\bquebrad[oa]\b/i,
+    /\bmes\s+(t[aá]|est[aá])\s+(dificil|díficil|complicad[oa]|apertad[oa])\b/i,
+    /\bm[eê]s\s+apertad[oa]\b/i,
+    /\bn[aã]o\s+da\s+(pra|para|pro)\s+pagar\b/i,
+    /\bn[aã]o\s+d[aá]\s+(pra|para|pro)\s+pagar\b/i,
+    /\bn[aã]o\s+tenho\s+esse\s+(dinheiro|valor)\s+(sobrando|agora)\b/i,
+    /\bdinheiro\s+(curto|contado|apertado)\b/i,
+    /\bor[çc]amento\s+(curto|apertado|baixo)\b/i,
+
+    // (C) Reclamação retroativa
+    /\b(nem|n[aã]o)\s+me\s+(falou|disse|avisou|informou|contou|comentou|explicou|mencionou)\s+(de|da|do|sobre)\s+(investimento|taxa|valor|pagamento|adesao|adesão|custo|mensalidade|pre[çc]o)\b/i,
+    /\b(nem|n[aã]o)\s+(falou|disse|avisou|informou|contou|comentou|explicou|mencionou)\s+(de|da|do|sobre)\s+(investimento|taxa|valor|pagamento|adesao|adesão|custo|mensalidade|pre[çc]o)\b/i,
+    /\bn[aã]o\s+sabia\s+que\s+(tinha|era|precisava|teria|ia\s+ter)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bn[aã]o\s+(falaram|disseram|avisaram|comentaram)\s+(de|da|do|sobre)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bn[aã]o\s+foi\s+(falado|dito|avisado|mencionado|comentado)\s+(de|da|do|sobre|nada\s+de)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bpensei\s+que\s+(era|fosse)\s+(gratis|gr[aá]tis|de\s+gra[çc]a|sem\s+custo)\b/i,
+    /\bachei\s+que\s+(era|fosse)\s+(gratis|gr[aá]tis|de\s+gra[çc]a|sem\s+custo)\b/i
+  ];
+
+  const detectedIndirectPriceObjection = priceObjectionIndirectPatterns.some(
+    (rx) => rx.test(text)
+  );
+
+  if (detectedIndirectPriceObjection && normalized.priceObjection !== true) {
+    normalized.priceObjection = true;
+    normalized.confidence = "alta";
+    normalized.reason = [
+      normalized.reason || "",
+      "Correção backend (Caso 5): detectada objeção de preço/taxa em frase indireta (desconfiança financeira, 'caro' direto ou reclamação retroativa). priceObjection forçado para true."
+    ].filter(Boolean).join(" ");
+  }
+
   /*
     Segurança:
     Se por algum motivo tudo ficou vazio, preserva fallback.
