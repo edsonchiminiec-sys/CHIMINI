@@ -1052,6 +1052,44 @@ async function cleanupStaleOperationalMemory({
   return cleanedLead || lead;
 }
 
+/* =========================
+    DIVERGENCE LOG — observabilidade IA vs travas
+    Loga quando uma trava determinística sobrescreve a saída da IA.
+    Sai o "bug invisível": agora dá pra ver no Render qual enforce
+    mudou o quê, em qual lead, em qual turno.
+========================= */
+function logAiVsEnforceDivergence({
+  agente = "",
+  user = "",
+  ultimaMensagemLead = "",
+  iaDisse = null,
+  sistemaUsou = null,
+  camposObservados = []
+} = {}) {
+  if (!iaDisse || !sistemaUsou) return;
+  const divergencias = [];
+  for (const campo of camposObservados) {
+    const valorIa = iaDisse?.[campo];
+    const valorSistema = sistemaUsou?.[campo];
+    const iaStr = JSON.stringify(valorIa);
+    const sistemaStr = JSON.stringify(valorSistema);
+    if (iaStr !== sistemaStr) {
+      divergencias.push({
+        campo,
+        iaDisse: valorIa,
+        sistemaUsou: valorSistema
+      });
+    }
+  }
+  if (divergencias.length === 0) return;
+  console.log(`🔬 DIVERGÊNCIA IA vs TRAVA [${agente}]:`, {
+    user: maskPhone(user || ""),
+    ultimaMensagemLead: String(ultimaMensagemLead || "").slice(0, 120),
+    totalDivergencias: divergencias.length,
+    divergencias
+  });
+}
+
 function auditLog(title, payload = {}) {
   if (!DEBUG_AUDIT) return;
 
@@ -6671,14 +6709,13 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
         motivo: "Sem pedido humano, sem risco humano real e sem erro operacional crítico."
       });
     }
-     runClassifierAfterSupervisor({
-      user,
-      lead,
-      history,
-      lastUserText,
-      lastSdrText,
-      supervisorAnalysis
-    });
+     // DESATIVADO — Classificador pós-SDR não influencia próxima resposta.
+// Era ~$0.001/turno só para atualizar campo no dashboard.
+// Se quiser reativar, basta restaurar o bloco original.
+console.log("ℹ️ Classificador pós-SDR desativado para reduzir custo LLM:", {
+  user: from,
+  motivo: "nao_influencia_proxima_resposta"
+});
 
     console.log("✅ Supervisor analisou conversa:", {
       user,
@@ -21781,6 +21818,29 @@ A versão oficial para assinatura só é liberada depois da análise cadastral d
 Antes disso, eu consigo te orientar sobre as regras principais do programa, responsabilidades, investimento e próximos passos, mas sem antecipar assinatura ou envio de contrato oficial.
 
 Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
+}
+
+// GUARDRAIL POS-CRM — última proteção antes do envio.
+// Se o lead já está no CRM e a SDR tentou pedir dado pessoal,
+// bloqueia e substitui por resposta consultiva curta.
+const leadEstaPosCrmGuard =
+  currentLead?.crmEnviado === true ||
+  currentLead?.status === "enviado_crm" ||
+  currentLead?.faseQualificacao === "enviado_crm" ||
+  currentLead?.statusOperacional === "enviado_crm" ||
+  currentLead?.faseFunil === "crm";
+const respostaTentouPedirDado =
+  /\b(seu nome completo|me envie seu nome|me passa o cpf|seu cpf|seu telefone|sua cidade|qual seu estado|pode me enviar seu nome)\b/i
+    .test(resposta || "");
+if (leadEstaPosCrmGuard && respostaTentouPedirDado) {
+  console.log("🛡️ GUARDRAIL POS-CRM bloqueou pedido de dados:", {
+    user: from,
+    ultimaMensagemLead: text,
+    respostaBloqueada: String(resposta || "").slice(0, 200)
+  });
+  const nomePrimeiro = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+  const prefixoNome = nomePrimeiro ? `${nomePrimeiro}, ` : "";
+  resposta = `${prefixoNome}seus dados já estão com a equipe comercial da IQG. Se precisar de qualquer informação ou tiver alguma dúvida, me conta aqui que te ajudo no que for possível.`;
 }
      
     const respostaLower = String(resposta || "").toLowerCase();
