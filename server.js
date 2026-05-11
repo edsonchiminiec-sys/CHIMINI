@@ -1269,6 +1269,66 @@ async function recordAuditEvent({
   }
 }
 
+async function recordRequestCompleted({
+  traceId = null,
+  userPhone = "",
+  mensagemLead = "",
+  respostaFinal = "",
+  currentLead = {},
+  actions = [],
+  sdrReviewFindings = [],
+  turnPolicy = {},
+  extras = {}
+} = {}) {
+  try {
+    await recordAuditEvent({
+      traceId,
+      component: AUDIT_COMPONENTS.BACKEND_ORCHESTRATOR,
+      eventType: AUDIT_EVENT_TYPES.REQUEST_COMPLETED,
+      payload: {
+        respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
+        actions: Array.isArray(actions) ? actions : [],
+        sdrReviewFindingsCount: Array.isArray(sdrReviewFindings) ? sdrReviewFindings.length : 0,
+        sdrReviewFindings: Array.isArray(sdrReviewFindings)
+          ? sdrReviewFindings.slice(0, 5).map(f => ({
+              tipo: f.tipo,
+              prioridade: f.prioridade
+            }))
+          : [],
+        estadoLead: {
+          status: currentLead?.status || "-",
+          faseQualificacao: currentLead?.faseQualificacao || "-",
+          faseFunil: currentLead?.faseFunil || "-",
+          temperaturaComercial: currentLead?.temperaturaComercial || "-",
+          rotaComercial: currentLead?.rotaComercial || "-",
+          interesseReal: currentLead?.interesseReal === true,
+          taxaAlinhada: currentLead?.taxaAlinhada === true,
+          taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0),
+          etapas: currentLead?.etapas || {},
+          nome: currentLead?.nome ? "[PREENCHIDO]" : "",
+          cpf: currentLead?.cpf ? "[PREENCHIDO]" : "",
+          telefone: currentLead?.telefone ? "[PREENCHIDO]" : "",
+          cidade: currentLead?.cidade || "",
+          estado: currentLead?.estado || ""
+        },
+        turnPolicy: turnPolicy ? {
+          modo: turnPolicy.modo || "-",
+          ofertaPermitida: turnPolicy.ofertaPermitida || "-",
+          podeFalarTaxa: turnPolicy.podeFalarTaxa === true,
+          podePedirDados: turnPolicy.podePedirDados === true,
+          podeFalarAfiliado: turnPolicy.podeFalarAfiliado === true
+        } : null,
+        ...extras
+      },
+      requiredLevel: "STANDARD",
+      userPhone,
+      severity: (Array.isArray(sdrReviewFindings) && sdrReviewFindings.length > 0) ? "medium" : "low"
+    });
+  } catch (error) {
+    console.error("⚠️ Falha ao gravar request_completed (não-crítico):", error.message);
+  }
+}
+
 async function recordAuditError({
   traceId = null,
   component = "unknown",
@@ -19917,7 +19977,15 @@ const msg = `Sem problema 😊 Qual é ${labels[explicitCorrection.campoParaCorr
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "correcao_explicita_campo", campoParaCorrigir: explicitCorrection.campoParaCorrigir }
+  });
+   
   return;
 }
 
@@ -20077,7 +20145,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_nome" }
+      });
       return;
     }
 
@@ -20096,7 +20171,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_cidade_estado", campo }
+      });
       return;
     }
 
@@ -20112,7 +20194,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_uf" }
+      });
       return;
     }
 
@@ -20147,7 +20236,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
-
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: msg,
+      currentLead: dadosAtualizados || {},
+      extras: { tipoSaida: "dado_corrigido_confirmacao_final", campoCorrigido: campo }
+    });
     return;
   }
 }
@@ -20377,7 +20473,14 @@ Está correto?`;
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "confirmacao_campo_pendente", campo: field, valor: value }
+  });
   return;
 }
      
@@ -20562,7 +20665,14 @@ respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
-
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: respostaConfirmacaoCampo,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "confirmacao_campo_positiva", campo }
+    });
     return;
   }
 
@@ -20591,7 +20701,22 @@ respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
-
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: msg,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "confirmacao_campo_negativa", campo }
+    });
+     await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: msg,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "confirmacao_campo_negativa", campo }
+    });
     return;
   }
 
@@ -20613,7 +20738,14 @@ Pode responder sim ou não.`;
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: respostaReconfirmacao,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "reconfirmacao_campo", campo }
+  });
   return;
 }   
 
