@@ -6709,14 +6709,14 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
         motivo: "Sem pedido humano, sem risco humano real e sem erro operacional crítico."
       });
     }
-     // DESATIVADO — Classificador pós-SDR não influencia próxima resposta.
-// Era ~$0.001/turno só para atualizar campo no dashboard.
-// Se quiser reativar, basta restaurar o bloco original.
-console.log("ℹ️ Classificador pós-SDR desativado para reduzir custo LLM:", {
-  user: from,
-  motivo: "nao_influencia_proxima_resposta"
-});
-
+    // DESATIVADO — Classificador pós-SDR não influencia próxima resposta.
+    // Era ~$0.001/turno só para atualizar campo no dashboard.
+    // Se quiser reativar, basta restaurar o bloco original.
+    console.log("ℹ️ Classificador pós-SDR desativado para reduzir custo LLM:", {
+      user,
+      motivo: "nao_influencia_proxima_resposta"
+    });
+     
     console.log("✅ Supervisor analisou conversa:", {
       user,
       riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
@@ -21306,7 +21306,18 @@ var turnPolicy = buildTurnPolicy({
   commercialRouteDecision
 });
 
-if (hasTaxAcceptedDecisionToCollect(currentLead || {}) && canStartDataCollection(currentLead || {})) {
+const leadEstaPosCrmParaTaxa =
+  currentLead?.crmEnviado === true ||
+  currentLead?.status === "enviado_crm" ||
+  currentLead?.faseQualificacao === "enviado_crm" ||
+  currentLead?.statusOperacional === "enviado_crm" ||
+  currentLead?.faseFunil === "crm";
+
+if (
+  !leadEstaPosCrmParaTaxa &&
+  hasTaxAcceptedDecisionToCollect(currentLead || {}) &&
+  canStartDataCollection(currentLead || {})
+) {
   turnPolicy = {
     ...(turnPolicy || {}),
     modo: "coleta_dados_liberada",
@@ -21343,6 +21354,12 @@ if (hasTaxAcceptedDecisionToCollect(currentLead || {}) && canStartDataCollection
     ultimaDecisaoBackend: currentLead?.ultimaDecisaoBackend?.tipo || "",
     faseFunil: currentLead?.faseFunil || "",
     etapas: currentLead?.etapas || {}
+  });
+} else if (leadEstaPosCrmParaTaxa) {
+  console.log("🛡️ Sobrescrita pós-taxa bloqueada: lead já está pós-CRM.", {
+    user: from,
+    faseFunil: currentLead?.faseFunil || "",
+    crmEnviado: currentLead?.crmEnviado === true
   });
 }
    
