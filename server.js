@@ -23351,6 +23351,7 @@ app.get("/auditoria", async (req, res) => {
     const severityFilter = req.query.severity || "";
     const traceFilter = req.query.trace || "";
     const modeFilter = req.query.mode || "grouped";
+    const leadFilter = req.query.lead || "";
     const limit = Math.min(Number(req.query.limit) || 100, 500);
 
     const query = {};
