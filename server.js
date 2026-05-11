@@ -15715,6 +15715,120 @@ function iqgBuildCollectionStatePatch({
   };
 }
 
+/* =========================
+   COLETA — MERGE DO MONGO + MENSAGEM ATUAL
+   Calcula campos faltantes usando o que já está salvo no lead
+   junto com o que foi extraído da mensagem atual.
+========================= */
+
+function iqgPickFilledLeadFields(data = {}) {
+  const result = {};
+
+  for (const field of REQUIRED_LEAD_FIELDS) {
+    const value = data?.[field];
+
+    if (value !== undefined && value !== null && String(value).trim()) {
+      result[field] = value;
+    }
+  }
+
+  return result;
+}
+
+function iqgNormalizeLeadFieldsForStorage(data = {}) {
+  const picked = iqgPickFilledLeadFields(data);
+  const result = { ...picked };
+
+  if (result.cpf) {
+    result.cpf = formatCPF(result.cpf);
+  }
+
+  if (result.telefone) {
+    result.telefone = formatPhone(result.telefone);
+  }
+
+  if (result.estado) {
+    result.estado = normalizeUF(result.estado);
+  }
+
+  if (result.cidade && result.estado) {
+    result.cidadeEstado = `${result.cidade}/${normalizeUF(result.estado)}`;
+  }
+
+  return result;
+}
+
+function iqgBuildMergedLeadDataForCollection({
+  currentLead = {},
+  extractedData = {}
+} = {}) {
+  const normalizedExtractedData =
+    iqgNormalizeLeadFieldsForStorage(extractedData || {});
+
+  const mergedLeadData = {
+    ...(currentLead || {}),
+    ...normalizedExtractedData
+  };
+
+  if (mergedLeadData.cidade && mergedLeadData.estado) {
+    mergedLeadData.cidadeEstado =
+      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
+  }
+
+  const missingFieldsAfterMerge = getMissingLeadFields(mergedLeadData);
+
+  return {
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge,
+    nextMissingField: missingFieldsAfterMerge[0] || null,
+    hasNewRequiredLeadData: Object.keys(normalizedExtractedData).some(key =>
+      REQUIRED_LEAD_FIELDS.includes(key)
+    )
+  };
+}
+
+function iqgBuildCollectionStatePatch({
+  currentLead = {},
+  extractedData = {}
+} = {}) {
+  const {
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge,
+    nextMissingField,
+    hasNewRequiredLeadData
+  } = iqgBuildMergedLeadDataForCollection({
+    currentLead,
+    extractedData
+  });
+
+  const patch = {
+    ...normalizedExtractedData,
+    dadosConfirmadosPeloLead: false,
+    aguardandoConfirmacao: false,
+    faseQualificacao: "dados_parciais",
+    status: "dados_parciais",
+    campoEsperado: nextMissingField,
+    campoPendente: null,
+    valorPendente: null
+  };
+
+  if (mergedLeadData.cidade && mergedLeadData.estado) {
+    patch.cidadeEstado =
+      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
+  }
+
+  return {
+    patch,
+    normalizedExtractedData,
+    mergedLeadData,
+    missingFieldsAfterMerge,
+    nextMissingField,
+    hasNewRequiredLeadData
+  };
+}
+
 function buildLeadConfirmationMessage(data = {}) {
   return `Perfeito, só para eu confirmar se entendi tudo certinho:
 
@@ -19789,6 +19903,47 @@ const estaEmColetaOuConfirmacao =
   currentLead?.faseFunil === "confirmacao_dados" ||
   currentLead?.aguardandoConfirmacaoCampo === true ||
   currentLead?.aguardandoConfirmacao === true;
+
+     // 🧭 AUTO-CORREÇÃO DA COLETA:
+// Se o lead está em dados parciais, mas campoEsperado ficou vazio,
+// o backend recalcula o próximo campo faltante real.
+// Isso evita a SDR voltar para nome/CPF errado ou ficar perdida.
+if (
+  estaEmColetaOuConfirmacao &&
+  !currentLead?.campoEsperado &&
+  !currentLead?.campoPendente &&
+  currentLead?.aguardandoConfirmacaoCampo !== true &&
+  currentLead?.aguardandoConfirmacao !== true
+) {
+  const missingFieldsCurrentLead = getMissingLeadFields(currentLead || {});
+  const nextCampoEsperadoCurrentLead = missingFieldsCurrentLead[0] || null;
+
+  if (nextCampoEsperadoCurrentLead) {
+    await saveLeadProfile(from, {
+      campoEsperado: nextCampoEsperadoCurrentLead,
+      faseQualificacao: currentLead?.faseQualificacao || "dados_parciais",
+      status: currentLead?.status || "dados_parciais",
+      ultimaDecisaoBackend: buildBackendDecision({
+        tipo: "auto_correcao_campo_esperado_vazio",
+        motivo: "Lead estava em coleta/dados parciais sem campoEsperado. Backend recalculou próximo campo faltante real.",
+        acao: "retomar_coleta_no_proximo_campo",
+        mensagemLead: text,
+        detalhes: {
+          camposFaltantes: missingFieldsCurrentLead,
+          proximoCampoEsperado: nextCampoEsperadoCurrentLead
+        }
+      })
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🧭 Campo esperado da coleta recalculado automaticamente:", {
+      user: from,
+      proximoCampoEsperado: nextCampoEsperadoCurrentLead,
+      camposFaltantes: missingFieldsCurrentLead
+    });
+  }
+}
 
 let semanticIntent = null;
 
