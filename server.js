@@ -23635,6 +23635,8 @@ app.get("/auditoria", async (req, res) => {
         '<div class="topbar">' +
           '<a class="btn" href="/dashboard' + senhaQuery + '">← Voltar ao Dashboard</a>' +
           modeToggle +
+          '<a class="btn" style="background:#2563eb;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=24" download>📥 Baixar Relatório 24h</a>' +
+          '<a class="btn" style="background:#7c3aed;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=168" download>📥 Relatório 7 dias</a>' +
         '</div>' +
         '<div class="stats">' +
           '<div class="stat-card"><small>Total de eventos</small><strong>' + totalEvents + '</strong></div>' +
@@ -23965,6 +23967,187 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       ok: false,
       error: "Erro ao gerar análise do C-Level Auditor."
     });
+  }
+});
+
+/* =========================
+   RELATÓRIO TÉCNICO DE AUDITORIA — DOWNLOAD
+   Gera arquivo JSON completo para análise externa.
+========================= */
+
+app.get("/auditoria/relatorio-tecnico", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const hoursBack = Math.min(Number(req.query.horas) || 24, 168);
+    const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+    const traceFilter = req.query.trace || "";
+    const leadFilter = req.query.lead || "";
+
+    const query = { timestamp: { $gte: cutoff } };
+    if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
+    if (leadFilter) query.userMasked = { $regex: leadFilter, $options: "i" };
+
+    const events = await db
+      .collection("audit_events")
+      .find(query)
+      .sort({ timestamp: 1 })
+      .limit(2000)
+      .toArray();
+
+    const grouped = {};
+    for (const evt of events) {
+      const key = evt.traceId || "sem_trace_" + evt._id;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(evt);
+    }
+
+    const conversas = [];
+
+    for (const [traceId, traceEvents] of Object.entries(grouped)) {
+      traceEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      const first = traceEvents[0];
+      const last = traceEvents[traceEvents.length - 1];
+
+      const webhookEvt = traceEvents.find(e => e.component === "webhook");
+      const classifierEvt = traceEvents.find(e => e.component === "gpt_semantic_intent");
+      const historianEvt = traceEvents.find(e => e.component === "gpt_semantic_continuity");
+      const preSdrEvt = traceEvents.find(e => e.component === "gpt_pre_sdr_consultant");
+
+      conversas.push({
+        traceId,
+        leadMasked: first.userMasked || "-",
+        timestampInicio: first.timestamp,
+        timestampFim: last.timestamp,
+        totalEventos: traceEvents.length,
+        severidadeMaxima: traceEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low"),
+
+        mensagemLead: webhookEvt?.payload?.textPreview
+          || classifierEvt?.payload?.ultimaMensagemLead
+          || "-",
+
+        webhook: webhookEvt ? {
+          messageType: webhookEvt.payload?.messageType || "-",
+          hasText: webhookEvt.payload?.hasText,
+          hasAudio: webhookEvt.payload?.hasAudio,
+          textPreview: webhookEvt.payload?.textPreview || "-",
+          timestamp: webhookEvt.timestamp
+        } : null,
+
+        classificadorSemantico: classifierEvt ? {
+          modelo: classifierEvt.payload?.model || "-",
+          ultimaMensagemLead: classifierEvt.payload?.ultimaMensagemLead || "-",
+          confidence: classifierEvt.payload?.confidence || "-",
+          wantsAffiliate: classifierEvt.payload?.wantsAffiliate,
+          wantsHomologado: classifierEvt.payload?.wantsHomologado,
+          blockingObjection: classifierEvt.payload?.blockingObjection,
+          priceObjection: classifierEvt.payload?.priceObjection,
+          asksQuestion: classifierEvt.payload?.asksQuestion,
+          greetingOnly: classifierEvt.payload?.greetingOnly,
+          reason: classifierEvt.payload?.reason || "-",
+          payloadCompleto: classifierEvt.payload,
+          timestamp: classifierEvt.timestamp
+        } : null,
+
+        historiadorSemantico: historianEvt ? {
+          modelo: historianEvt.payload?.model || "-",
+          ultimaMensagemLead: historianEvt.payload?.ultimaMensagemLead || "-",
+          leadEntendeuUltimaExplicacao: historianEvt.payload?.leadEntendeuUltimaExplicacao,
+          leadQuerAvancar: historianEvt.payload?.leadQuerAvancar,
+          leadCriticouRepeticao: historianEvt.payload?.leadCriticouRepeticao,
+          naoRepetirUltimoTema: historianEvt.payload?.naoRepetirUltimoTema,
+          proximaAcaoSemantica: historianEvt.payload?.proximaAcaoSemantica || "-",
+          confidence: historianEvt.payload?.confidence || "-",
+          reason: historianEvt.payload?.reason || "-",
+          payloadCompleto: historianEvt.payload,
+          timestamp: historianEvt.timestamp
+        } : null,
+
+        consultorPreSdr: preSdrEvt ? {
+          modelo: preSdrEvt.payload?.model || "-",
+          ultimaMensagemLead: preSdrEvt.payload?.ultimaMensagemLead || "-",
+          estrategiaRecomendada: preSdrEvt.payload?.estrategiaRecomendada || "-",
+          proximaMelhorAcao: preSdrEvt.payload?.proximaMelhorAcao || "-",
+          ofertaMaisAdequada: preSdrEvt.payload?.ofertaMaisAdequada || "-",
+          prioridadeComercial: preSdrEvt.payload?.prioridadeComercial || "-",
+          momentoIdealHumano: preSdrEvt.payload?.momentoIdealHumano || "-",
+          cuidadoPrincipal: preSdrEvt.payload?.cuidadoPrincipal || "-",
+          payloadCompleto: preSdrEvt.payload,
+          timestamp: preSdrEvt.timestamp
+        } : null,
+
+        todosEventos: traceEvents.map(evt => ({
+          component: evt.component,
+          eventType: evt.eventType,
+          severity: evt.severity,
+          auditLevel: evt.auditLevel,
+          timestamp: evt.timestamp,
+          payload: evt.payload
+        }))
+      });
+    }
+
+    const leadsUnicos = [...new Set(events.map(e => e.userMasked).filter(Boolean))];
+
+    const relatorio = {
+      metadados: {
+        geradoEm: new Date().toISOString(),
+        periodoAnalisado: `últimas ${hoursBack} horas`,
+        dataInicio: cutoff.toISOString(),
+        dataFim: new Date().toISOString(),
+        totalEventos: events.length,
+        totalConversas: conversas.length,
+        totalLeads: leadsUnicos.length,
+        auditLevelAtivo: getCurrentAuditLevel(),
+        appVersion: process.env.APP_VERSION || "iqg-sdr-v1.0.0",
+        filtrosAplicados: {
+          horas: hoursBack,
+          trace: traceFilter || null,
+          lead: leadFilter || null
+        }
+      },
+
+      resumoGeral: {
+        eventosPorComponente: events.reduce((acc, e) => {
+          acc[e.component] = (acc[e.component] || 0) + 1;
+          return acc;
+        }, {}),
+        eventosPorSeveridade: events.reduce((acc, e) => {
+          acc[e.severity] = (acc[e.severity] || 0) + 1;
+          return acc;
+        }, {}),
+        eventosPorTipo: events.reduce((acc, e) => {
+          acc[e.eventType] = (acc[e.eventType] || 0) + 1;
+          return acc;
+        }, {}),
+        leadsAtendidos: leadsUnicos
+      },
+
+      conversas,
+
+      instrucaoParaAnalise: [
+        "Este relatório contém todos os eventos de auditoria agrupados por conversa (traceId).",
+        "Cada conversa mostra: mensagem do lead, resposta de cada GPT com payload completo, e a sequência cronológica de todos os eventos.",
+        "Use este arquivo para identificar: classificações incorretas, repetições, coletas prematuras, rotas erradas, objeções mal tratadas, travas excessivas ou insuficientes.",
+        "Para cada problema encontrado, indique: o que aconteceu, onde no código (qual função/prompt), por que é problema, como corrigir e a prioridade.",
+        "As funções principais do sistema são: runLeadSemanticIntentClassifier, runConversationContinuityAnalyzer, runConsultantAssistant, buildTurnPolicy, enforceFunnelDiscipline, classifyTaxPhaseDecision, runFinalRouteMixGuard."
+      ]
+    };
+
+    const filename = `auditoria-tecnica-${new Date().toISOString().slice(0, 10)}.json`;
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(relatorio, null, 2));
+  } catch (error) {
+    console.error("Erro ao gerar relatório técnico:", error);
+    res.status(500).send("Erro ao gerar relatório técnico.");
   }
 });
 
