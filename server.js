@@ -18944,6 +18944,25 @@ const whatsappProfileName = contact?.profile?.name || "";
     const from = message.from;
 const state = getState(from);
 
+// 🔎 AUDITORIA — trace_id para agrupar todos os eventos desta mensagem
+const auditTraceId = generateTraceId();
+
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.WEBHOOK,
+  eventType: AUDIT_EVENT_TYPES.REQUEST_RECEIVED,
+  payload: {
+    messageId: message.id || null,
+    messageType: message.type || "unknown",
+    hasText: Boolean(message.text?.body),
+    hasAudio: Boolean(message.audio?.id),
+    textPreview: message.text?.body ? String(message.text.body).slice(0, 100) : null
+  },
+  requiredLevel: "BASIC",
+  userPhone: from,
+  severity: "low"
+});
+
 let leadBeforeProcessing = await loadLeadProfile(from);
 
      console.log("🔎 Lead antes do processamento:", {
