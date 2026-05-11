@@ -18891,6 +18891,44 @@ if (leadPerguntouSobreCnpjEmpresaOuPontoFisico(text)) {
     ultimaMensagemLead: text
   });
 }
+
+     // 🧠 NÃO REPETIR ETAPAS JÁ ENTENDIDAS — proteção anti-loop conversacional.
+// Lê do histórico quais etapas (programa, beneficios, estoque, responsabilidades,
+// investimento, compromisso) o lead já disse explicitamente ter entendido.
+// Empurra essa lista para o backendStrategicGuidance, para o Pré-SDR orientar
+// a SDR a NÃO repetir explicação dessas etapas.
+try {
+  const etapasJaEntendidasPeloLead = iqgGetExplicitUnderstoodFunnelStepsFromLead({
+    lead: currentLead || {},
+    history
+  });
+  if (Array.isArray(etapasJaEntendidasPeloLead) && etapasJaEntendidasPeloLead.length > 0) {
+    backendStrategicGuidance.push({
+      tipo: "etapas_ja_entendidas_pelo_lead",
+      prioridade: "alta",
+      motivo: "Lead já confirmou explicitamente entendimento das etapas listadas.",
+      orientacaoParaPreSdr:
+        [
+          `Etapas que o lead JÁ confirmou ter entendido: ${etapasJaEntendidasPeloLead.join(", ")}.`,
+          "A SDR NÃO deve repetir explicação dessas etapas.",
+          "A SDR NÃO deve perguntar 'quer que eu explique sobre X?' para essas etapas.",
+          "Se a SDR achar que precisa avançar, deve ir DIRETO para a próxima etapa pendente, sem reintroduzir tema antigo.",
+          "Se TODAS as etapas comerciais já foram entendidas e o lead pediu para seguir, conduzir naturalmente para o próximo passo objetivo (pré-análise, taxa, ou coleta), respeitando a Política do Turno.",
+          "Se o lead falar 'podemos seguir', 'pode prosseguir', 'manda ver', tratar como sinal de avanço — NÃO repetir explicação anterior só para 'fechar' etapa."
+        ].join("\n"),
+      detalhes: {
+        etapasEntendidas: etapasJaEntendidasPeloLead
+      }
+    });
+    console.log("🧠 Etapas já entendidas pelo lead enviadas ao Pré-SDR:", {
+      user: from,
+      ultimaMensagemLead: text,
+      etapasEntendidas: etapasJaEntendidasPeloLead
+    });
+  }
+} catch (errorEtapasEntendidas) {
+  console.error("⚠️ Falha ao calcular etapas já entendidas, mas atendimento continua:", errorEtapasEntendidas.message);
+}
      
 // 🧠 ROTEADOR SEMÂNTICO DA COLETA / CONFIRMAÇÃO
 // Objetivo:
