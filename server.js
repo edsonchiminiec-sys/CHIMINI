@@ -27592,15 +27592,23 @@ const humanoHtml = humanoAtivo
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
       <td>${formatDate(lead.updatedAt)}</td>
-            <td>${humanoHtml}</td>
+      <td style="text-align:center">${lead.etapas?.programa ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.taxaAlinhada ? '✅' : '—'}</td>
+      <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '—'}</td>
+      <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '—'}</td>
+      <td>${humanoHtml}</td>
       <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
         <span class="action-divider"></span>
         <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
         <a class="btn" href="/conversation/${user}${senhaQuery}">Mensagem</a>
         <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
-        <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
-        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
+        <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}" onclick="return confirm('Confirma FECHAR este lead? O bot será bloqueado.')">Fechar</a>
+        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}" onclick="return confirm('Confirma marcar como PERDIDO? O bot será bloqueado.')">Perder</a>
       </td>
     </tr>
   `;
@@ -28344,7 +28352,7 @@ body {
 
 table {
   width: 100%;
-  min-width: 1100px;
+  min-width: 1600px;
   border-collapse: collapse;
   background: #fff;
 }
@@ -28517,7 +28525,7 @@ tr:hover td {
 
   table {
     font-size: 12px;
-    min-width: 900px;
+    min-width: 1400px;
   }
 
   th,
@@ -28878,12 +28886,20 @@ tr:hover td {
     <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
     <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
     <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
+    <th>Prog</th>
+    <th>Benef</th>
+    <th>Estoq</th>
+    <th>Resp</th>
+    <th>Invest</th>
+    <th>Taxa</th>
+    <th>Comp</th>
+    <th>Afil</th>
     <th>Humano</th>
     <th>Ação</th>
   </tr>
 </thead>
             <tbody>
-                       ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
+                       ${rows || `<tr><td colspan="16">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
 </div>
