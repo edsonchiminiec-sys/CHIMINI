@@ -10715,7 +10715,7 @@ function isInvalidLooseNameCandidate(value = "") {
   "quero avancar",
   "vamos para",
   "vamos pro",
-  "seguir em frente"
+  "seguir em frente",
   ];
 
   if (invalidExact.includes(normalized)) {
