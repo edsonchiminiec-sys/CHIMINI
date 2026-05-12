@@ -20851,37 +20851,33 @@ await recordRequestCompleted({
       currentLead: currentLead || {},
       extras: { tipoSaida: "confirmacao_campo_negativa", campo }
     });
+   return;
+  } else {
+    const labels = {
+      nome: "nome",
+      cpf: "CPF",
+      telefone: "telefone",
+      cidade: "cidade",
+      estado: "estado"
+    };
+    const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?\n\nPode responder sim ou não.`;
+
+    await sendWhatsAppMessage(from, respostaReconfirmacao);
+    await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+    await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: respostaReconfirmacao,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "reconfirmacao_campo", campo }
+    });
     return;
-  }
-
-} else {
-  const labels = {
-  nome: "nome",
-  cpf: "CPF",
-  telefone: "telefone",
-  cidade: "cidade",
-  estado: "estado"
-};
-const respostaReconfirmacao = `Só para confirmar:
-
-Pode responder sim ou não.`;
-
-  await sendWhatsAppMessage(from, respostaReconfirmacao);
-   await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
-
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
-await recordRequestCompleted({
-    traceId: auditTraceId,
-    userPhone: from,
-    mensagemLead: text,
-    respostaFinal: respostaReconfirmacao,
-    currentLead: currentLead || {},
-    extras: { tipoSaida: "reconfirmacao_campo", campo }
-  });
-  return;
-  } // fecha o else (reconfirmação genérica + confirmação negativa + confirmação positiva)
+  } // fecha o else (reconfirmação genérica)
 } // fecha o if aguardandoConfirmacaoCampo
    
 const changedConfirmedData =
