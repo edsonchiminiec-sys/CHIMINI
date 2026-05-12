@@ -10673,8 +10673,10 @@ if (palavrasTextoOriginal > 6) {
 }
 
 return false;
+}
 
 function isInvalidLocationCandidate(value = "") {
+   
   const raw = String(value || "").trim();
 
   if (!raw) {
