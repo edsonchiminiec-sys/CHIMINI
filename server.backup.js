@@ -3,6 +3,7 @@ import fetch from "node-fetch";
 import FormData from "form-data";
 import dotenv from "dotenv";
 import { MongoClient } from "mongodb";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -266,7 +267,51 @@ async function updateLeadStatus(user, status) {
     atualizadoPeloDashboard: true
   };
 
-  if (status === "em_atendimento") {
+ if (status === "em_atendimento") {
+    // Toggle: se já está em atendimento humano, reverter
+    if (
+      currentLead?.humanoAssumiu === true ||
+      currentLead?.atendimentoHumanoAtivo === true ||
+      currentLead?.status === "em_atendimento"
+    ) {
+      const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
+      const faseAnterior = currentLead?.faseAnteriorDashboard || "morno";
+
+      await db.collection("leads").updateOne(
+        { user },
+        {
+          $set: {
+            ...dashboardPatch,
+            status: statusAnterior,
+            faseQualificacao: faseAnterior,
+            statusOperacional: "ativo",
+            humanoAssumiu: false,
+            atendimentoHumanoAtivo: false,
+            botBloqueadoPorHumano: false,
+            liberadoDoAtendimentoHumanoEm: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log("✅ Dashboard reverteu atendimento humano:", {
+        user,
+        para: statusAnterior
+      });
+
+      return;
+    }
+
+    // Salvar status anterior para poder reverter
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          statusAnteriorDashboard: currentLead?.status || "morno",
+          faseAnteriorDashboard: currentLead?.faseQualificacao || "morno",
+        }
+      }
+    );
     const lifecycleData = getLeadLifecycleFields({
       ...(currentLead || {}),
       status: "em_atendimento",
@@ -354,17 +399,71 @@ async function updateLeadStatus(user, status) {
   }
 
   /*
-    Para qualquer outro status vindo do dashboard:
-    - não muda status;
-    - não muda faseQualificacao;
-    - não muda faseFunil;
-    - não muda temperaturaComercial;
-    - não muda rotaComercial;
-    - não muda interesseReal;
-    - não muda interesseAfiliado.
-
-    Fica apenas como marcação visual/humana.
+  Para status "fechado" e "perdido":
+  - muda status real para que o dashboard reflita a ação
+  - bloqueia o bot para não reabrir conversa
+  - libera atendimento humano se estava ativo
   */
+  if (status === "fechado" || status === "perdido") {
+    // Toggle: se já está neste status, reverter para o anterior
+    if (currentLead?.status === status) {
+      const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
+      const faseAnterior = currentLead?.faseAnteriorDashboard || "morno";
+
+      await db.collection("leads").updateOne(
+        { user },
+        {
+          $set: {
+            ...dashboardPatch,
+            status: statusAnterior,
+            faseQualificacao: faseAnterior,
+            statusOperacional: "ativo",
+            humanoAssumiu: false,
+            atendimentoHumanoAtivo: false,
+            botBloqueadoPorHumano: false,
+            liberadoDoAtendimentoHumanoEm: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log("✅ Dashboard reverteu status:", {
+        user,
+        de: status,
+        para: statusAnterior
+      });
+
+      return;
+    }
+
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          ...dashboardPatch,
+          statusAnteriorDashboard: currentLead?.status || "morno",
+          faseAnteriorDashboard: currentLead?.faseQualificacao || "morno",
+          status: status,
+          faseQualificacao: status,
+          statusOperacional: status,
+          faseFunil: "encerrado",
+          humanoAssumiu: false,
+          atendimentoHumanoAtivo: false,
+          botBloqueadoPorHumano: true,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    console.log("✅ Dashboard marcou lead como " + status + ":", {
+      user,
+      statusAnterior: currentLead?.status
+    });
+
+    return;
+  }
+
+  // Para qualquer outro status visual
   await db.collection("leads").updateOne(
     { user },
     {
@@ -375,6 +474,10 @@ async function updateLeadStatus(user, status) {
     }
   );
 
+  console.log("📊 Dashboard atualizou status visual:", {
+    user,
+    statusDashboard: status
+  });
   console.log("🏷️ Dashboard atualizou status visual sem interferir na IA:", {
     user,
     statusDashboard: status,
@@ -1052,6 +1155,44 @@ async function cleanupStaleOperationalMemory({
   return cleanedLead || lead;
 }
 
+/* =========================
+    DIVERGENCE LOG — observabilidade IA vs travas
+    Loga quando uma trava determinística sobrescreve a saída da IA.
+    Sai o "bug invisível": agora dá pra ver no Render qual enforce
+    mudou o quê, em qual lead, em qual turno.
+========================= */
+function logAiVsEnforceDivergence({
+  agente = "",
+  user = "",
+  ultimaMensagemLead = "",
+  iaDisse = null,
+  sistemaUsou = null,
+  camposObservados = []
+} = {}) {
+  if (!iaDisse || !sistemaUsou) return;
+  const divergencias = [];
+  for (const campo of camposObservados) {
+    const valorIa = iaDisse?.[campo];
+    const valorSistema = sistemaUsou?.[campo];
+    const iaStr = JSON.stringify(valorIa);
+    const sistemaStr = JSON.stringify(valorSistema);
+    if (iaStr !== sistemaStr) {
+      divergencias.push({
+        campo,
+        iaDisse: valorIa,
+        sistemaUsou: valorSistema
+      });
+    }
+  }
+  if (divergencias.length === 0) return;
+  console.log(`🔬 DIVERGÊNCIA IA vs TRAVA [${agente}]:`, {
+    user: maskPhone(user || ""),
+    ultimaMensagemLead: String(ultimaMensagemLead || "").slice(0, 120),
+    totalDivergencias: divergencias.length,
+    divergencias
+  });
+}
+
 function auditLog(title, payload = {}) {
   if (!DEBUG_AUDIT) return;
 
@@ -1060,6 +1201,266 @@ function auditLog(title, payload = {}) {
   } catch (error) {
     console.log(`🔎 AUDIT — ${title}:`, payload);
   }
+}
+
+/* =========================
+   SISTEMA CENTRAL DE AUDITORIA — IQG
+   Grava eventos estruturados no MongoDB para análise posterior.
+   Não impacta o atendimento. Tudo é assíncrono.
+========================= */
+
+const APP_VERSION = process.env.APP_VERSION || "iqg-sdr-v1.0.0";
+
+const AUDIT_COMPONENTS = {
+  WEBHOOK: "webhook",
+  GPT_SDR: "gpt_sdr",
+  GPT_PRE_SDR: "gpt_pre_sdr_consultant",
+  GPT_POS_SDR: "gpt_pos_sdr_consultant",
+  GPT_SUPERVISOR: "gpt_supervisor",
+  GPT_CLASSIFIER: "gpt_classifier",
+  GPT_SEMANTIC_INTENT: "gpt_semantic_intent",
+  GPT_SEMANTIC_CONTINUITY: "gpt_semantic_continuity",
+  GPT_DATA_FLOW_ROUTER: "gpt_data_flow_router",
+  GPT_ROUTE_MIX_GUARD: "gpt_route_mix_guard",
+  GPT_REGENERATE_SDR: "gpt_regenerate_sdr",
+  GPT_HUMAN_BRIEFING: "gpt_human_briefing",
+  GPT_CLEVEL: "gpt_clevel",
+  BACKEND_ORCHESTRATOR: "backend_orchestrator",
+  TURN_POLICY: "turn_policy",
+  COMMERCIAL_ROUTE: "commercial_route",
+  DATA_COLLECTION: "data_collection",
+  CRM_INTEGRATION: "crm_integration",
+  FILE_DELIVERY: "file_delivery",
+  WHATSAPP_INTEGRATION: "whatsapp_integration",
+  HARD_LIMIT_ENFORCER: "hard_limit_enforcer",
+  FOLLOWUP_SCHEDULER: "followup_scheduler"
+};
+
+const AUDIT_EVENT_TYPES = {
+  REQUEST_RECEIVED: "request_received",
+  REQUEST_COMPLETED: "request_completed",
+  REQUEST_FAILED: "request_failed",
+  GPT_CALL_STARTED: "gpt_call_started",
+  GPT_CALL_SUCCESS: "gpt_call_success",
+  GPT_CALL_ERROR: "gpt_call_error",
+  DECISION_MADE: "decision_made",
+  HARD_LIMIT_TRIGGERED: "hard_limit_triggered",
+  GUARDRAIL_TRIGGERED: "guardrail_triggered",
+  LEAD_STATE_CHANGED: "lead_state_changed",
+  DATA_EXTRACTED: "data_extracted",
+  CRM_SENT: "crm_sent",
+  CRM_FAILED: "crm_failed",
+  FILE_SENT: "file_sent",
+  FILE_FAILED: "file_failed",
+  ALERT_TRIGGERED: "alert_triggered"
+};
+
+function generateTraceId() {
+  return crypto.randomUUID();
+}
+
+function generateEventId() {
+  return crypto.randomUUID();
+}
+
+function sanitizeAuditPayload(payload = {}) {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  try {
+    const cloned = JSON.parse(JSON.stringify(payload));
+
+    function walk(obj) {
+      if (!obj || typeof obj !== "object") return;
+
+      for (const key of Object.keys(obj)) {
+        const value = obj[key];
+        const lowerKey = String(key).toLowerCase();
+
+        if (lowerKey === "cpf" && typeof value === "string") {
+          obj[key] = maskCPF(value);
+        } else if (
+          (lowerKey === "telefone" ||
+           lowerKey === "telefonewhatsapp" ||
+           lowerKey === "user" ||
+           lowerKey === "phone") &&
+          typeof value === "string"
+        ) {
+          obj[key] = maskPhone(value);
+        } else if (
+          lowerKey.includes("password") ||
+          lowerKey.includes("token") ||
+          lowerKey.includes("apikey") ||
+          lowerKey.includes("api_key") ||
+          lowerKey.includes("secret")
+        ) {
+          obj[key] = "[REDACTED]";
+        } else if (typeof value === "object") {
+          walk(value);
+        }
+      }
+    }
+
+    walk(cloned);
+    return cloned;
+  } catch (error) {
+    return { sanitize_error: error.message };
+  }
+}
+
+function estimateTokens(text = "") {
+  const t = String(text || "");
+  if (!t) return 0;
+  return Math.ceil(t.length / 4);
+}
+
+async function recordAuditEvent({
+  traceId = null,
+  component = "unknown",
+  eventType = "unknown",
+  payload = {},
+  requiredLevel = "STANDARD",
+  parentEventId = null,
+  userPhone = "",
+  severity = "low"
+} = {}) {
+  if (!shouldAuditAtLevel(requiredLevel)) {
+    return null;
+  }
+
+  try {
+    await connectMongo();
+
+    const event = {
+      _id: generateEventId(),
+      traceId: traceId || generateTraceId(),
+      parentEventId: parentEventId || null,
+      timestamp: new Date(),
+      component,
+      eventType,
+      severity,
+      auditLevel: getCurrentAuditLevel(),
+      appVersion: APP_VERSION,
+      userMasked: userPhone ? maskPhone(userPhone) : "",
+      payload: sanitizeAuditPayload(payload),
+      createdAt: new Date()
+    };
+
+    db.collection("audit_events")
+      .insertOne(event)
+      .catch(error => {
+        console.error("⚠️ Falha ao gravar evento de auditoria (não-crítico):", error.message);
+      });
+
+    if (shouldAuditAtLevel("DEEP")) {
+      try {
+        console.log(
+          `📊 [${component}/${eventType}] trace=${event.traceId.slice(0, 8)}`,
+          JSON.stringify(event.payload).slice(0, 500)
+        );
+      } catch (e) {
+        // Ignora falha de log
+      }
+    }
+
+    return event._id;
+  } catch (error) {
+    console.error("⚠️ Erro no recordAuditEvent (não-crítico):", error.message);
+    return null;
+  }
+}
+
+async function recordRequestCompleted({
+  traceId = null,
+  userPhone = "",
+  mensagemLead = "",
+  respostaFinal = "",
+  currentLead = {},
+  actions = [],
+  sdrReviewFindings = [],
+  turnPolicy = {},
+  extras = {}
+} = {}) {
+  try {
+    await recordAuditEvent({
+      traceId,
+      component: AUDIT_COMPONENTS.BACKEND_ORCHESTRATOR,
+      eventType: AUDIT_EVENT_TYPES.REQUEST_COMPLETED,
+      payload: {
+        respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
+        actions: Array.isArray(actions) ? actions : [],
+        sdrReviewFindingsCount: Array.isArray(sdrReviewFindings) ? sdrReviewFindings.length : 0,
+        sdrReviewFindings: Array.isArray(sdrReviewFindings)
+          ? sdrReviewFindings.slice(0, 5).map(f => ({
+              tipo: f.tipo,
+              prioridade: f.prioridade
+            }))
+          : [],
+        estadoLead: {
+          status: currentLead?.status || "-",
+          faseQualificacao: currentLead?.faseQualificacao || "-",
+          faseFunil: currentLead?.faseFunil || "-",
+          temperaturaComercial: currentLead?.temperaturaComercial || "-",
+          rotaComercial: currentLead?.rotaComercial || "-",
+          interesseReal: currentLead?.interesseReal === true,
+          taxaAlinhada: currentLead?.taxaAlinhada === true,
+          taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0),
+          etapas: currentLead?.etapas || {},
+          nome: currentLead?.nome ? "[PREENCHIDO]" : "",
+          cpf: currentLead?.cpf ? "[PREENCHIDO]" : "",
+          telefone: currentLead?.telefone ? "[PREENCHIDO]" : "",
+          cidade: currentLead?.cidade || "",
+          estado: currentLead?.estado || ""
+        },
+        turnPolicy: turnPolicy ? {
+          modo: turnPolicy.modo || "-",
+          ofertaPermitida: turnPolicy.ofertaPermitida || "-",
+          podeFalarTaxa: turnPolicy.podeFalarTaxa === true,
+          podePedirDados: turnPolicy.podePedirDados === true,
+          podeFalarAfiliado: turnPolicy.podeFalarAfiliado === true
+        } : null,
+        ...extras
+      },
+      requiredLevel: "STANDARD",
+      userPhone,
+      severity: (Array.isArray(sdrReviewFindings) && sdrReviewFindings.length > 0) ? "medium" : "low"
+    });
+  } catch (error) {
+    console.error("⚠️ Falha ao gravar request_completed (não-crítico):", error.message);
+  }
+}
+
+async function recordAuditError({
+  traceId = null,
+  component = "unknown",
+  eventType = "request_failed",
+  error = null,
+  payload = {},
+  userPhone = ""
+} = {}) {
+  if (!isAuditEnabled()) {
+    return null;
+  }
+
+  const errorPayload = {
+    ...payload,
+    error: {
+      message: error?.message || String(error),
+      stack: error?.stack ? String(error.stack).slice(0, 2000) : "",
+      name: error?.name || "Error"
+    }
+  };
+
+  return recordAuditEvent({
+    traceId,
+    component,
+    eventType,
+    payload: errorPayload,
+    requiredLevel: "BASIC",
+    severity: "high",
+    userPhone
+  });
 }
 
 function buildDefaultSupervisorAnalysis() {
@@ -1282,11 +1683,62 @@ function getLeadLifecycleFields(data = {}) {
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "iqg_token_123";
 const CONSULTANT_PHONE = process.env.CONSULTANT_PHONE;
 
-// 🔎 MODO AUDITORIA DOS GPTS
-// Ligue no Render colocando DEBUG_AUDIT=true.
-// Desligue colocando DEBUG_AUDIT=false.
-// Isto NÃO muda o atendimento. Só mostra logs melhores.
-const DEBUG_AUDIT = String(process.env.DEBUG_AUDIT || "false").toLowerCase() === "true";
+// 🔎 SISTEMA DE AUDITORIA IQG — CONTROLE LIGA/DESLIGA COM NÍVEIS
+//
+// Para controlar pelo Render, crie a variável de ambiente AUDIT_LEVEL
+// com um destes valores:
+//
+// OFF       → auditoria desligada (zero custo, zero log extra)
+// BASIC     → só eventos críticos e erros
+// STANDARD  → eventos + decisões dos GPTs (recomendado para produção)
+// DEEP      → tudo: prompts, respostas, tokens, latências, contexto
+// FORENSIC  → DEEP + snapshots de estado a cada passo (use só para investigar)
+//
+// Compatibilidade: se você não criar AUDIT_LEVEL no Render mas tiver
+// DEBUG_AUDIT=true, o sistema entra automaticamente em modo STANDARD.
+
+const AUDIT_LEVELS = {
+  OFF: 0,
+  BASIC: 1,
+  STANDARD: 2,
+  DEEP: 3,
+  FORENSIC: 4
+};
+
+function getCurrentAuditLevel() {
+  // Lê dinamicamente a cada chamada, permitindo mudar no Render sem redeploy
+  // (basta restart do serviço).
+  const rawLevel = String(process.env.AUDIT_LEVEL || "").toUpperCase().trim();
+
+  if (rawLevel && AUDIT_LEVELS[rawLevel] !== undefined) {
+    return rawLevel;
+  }
+
+  // Compatibilidade com o sistema antigo:
+  const legacyDebugAudit = String(process.env.DEBUG_AUDIT || "false").toLowerCase() === "true";
+
+  if (legacyDebugAudit) {
+    return "STANDARD";
+  }
+
+  return "OFF";
+}
+
+function isAuditEnabled() {
+  return getCurrentAuditLevel() !== "OFF";
+}
+
+function shouldAuditAtLevel(requiredLevel) {
+  const currentLevel = getCurrentAuditLevel();
+  const currentValue = AUDIT_LEVELS[currentLevel] || 0;
+  const requiredValue = AUDIT_LEVELS[requiredLevel] || 0;
+
+  return currentValue >= requiredValue;
+}
+
+// Mantém a constante antiga para compatibilidade com o código já existente.
+// O auditLog antigo continuará funcionando até a Etapa 4.
+const DEBUG_AUDIT = isAuditEnabled();
 
 const BUSINESS_START_HOUR = 8;
 const BUSINESS_END_HOUR = 18;
@@ -1301,7 +1753,8 @@ const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_MESSAGES = 5000;
 
 // 🔥 BUFFER PERSISTENTE NO MONGO PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
-const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem
+const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem (funil)
+const TYPING_DEBOUNCE_MS_COLETA = 5000; // espera 5s durante coleta de dados
 const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
 /* =========================
    STATE
@@ -1367,6 +1820,20 @@ async function collectBufferedText(from, text, messageId) {
 
   const bufferId = from;
 
+   // Durante confirmação de campo, não agrupar — processar imediatamente
+  // para evitar misturar correção de dado com pergunta
+  const leadForBuffer = await db.collection("leads").findOne({ user: from });
+  if (
+    leadForBuffer?.aguardandoConfirmacaoCampo === true ||
+    leadForBuffer?.aguardandoConfirmacao === true
+  ) {
+    return {
+      shouldContinue: true,
+      text: cleanText,
+      messageIds: messageId ? [messageId] : []
+    };
+  }
+
   const pushData = {
   messages: cleanText
 };
@@ -1392,7 +1859,17 @@ await db.collection("incoming_message_buffers").updateOne(
   { upsert: true }
 );
    
-  await delay(TYPING_DEBOUNCE_MS);
+  // Durante coleta de dados, usar debounce mais curto
+  // para não fazer o lead esperar 12s por respostas curtas como "Sim", CPF, telefone
+  const leadProfile = await db.collection("leads").findOne({ user: from });
+  const estaEmColeta = [
+    "coletando_dados", "dados_parciais", "aguardando_dados",
+    "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+    "corrigir_dado", "corrigir_dado_final", "aguardando_valor_correcao_final"
+  ].includes(leadProfile?.faseQualificacao);
+
+  const debounceMs = estaEmColeta ? TYPING_DEBOUNCE_MS_COLETA : TYPING_DEBOUNCE_MS;
+  await delay(debounceMs);
 
   const buffer = await db.collection("incoming_message_buffers").findOne({
     _id: bufferId
@@ -1408,7 +1885,7 @@ await db.collection("incoming_message_buffers").updateOne(
   const quietFor = Date.now() - Number(buffer.lastAtMs || 0);
   const totalWait = Date.now() - Number(buffer.startedAtMs || 0);
 
-  if (quietFor < TYPING_DEBOUNCE_MS && totalWait < MAX_TYPING_WAIT_MS) {
+ if (quietFor < debounceMs && totalWait < MAX_TYPING_WAIT_MS) {
     return {
       shouldContinue: false,
       text: ""
@@ -1830,6 +2307,15 @@ Lead:
 Orientação correta:
 "Responder que há catálogo/material dos produtos e orientar envio se disponível. Não pedir CPF. Não tratar a frase como nome."
 
+REGRA CRÍTICA — FOLDER E KIT PODEM SER ENVIADOS:
+
+Quando o lead pedir folder, kit, material ou catálogo de forma direta:
+- NÃO dizer que não pode enviar
+- NÃO dizer que o material não está disponível neste momento
+- Folder e kit DEVEM ser enviados quando pedidos, desde que o lead esteja no Programa Parceiro Homologado
+- A SDR deve incluir [ACTION:SEND_FOLDER] para folder e catálago e [ACTION:SEND_KIT] para kit
+- Dizer que "não pode enviar folder" é um erro grave de condução
+
 6. Se memoriaConversacional.ultimaInteracao.temasMensagemAtualLead tiver temas:
 - usar esses temas para priorizar a resposta;
 - se houver mais de um tema, orientar resposta organizada em uma única mensagem;
@@ -1962,6 +2448,36 @@ A IQG possui dois caminhos comerciais:
 - O pagamento só ocorre após análise interna e assinatura do contrato.
 - O resultado depende da atuação do parceiro nas vendas.
 
+REGRA SOBRE FRETE E ENVIO — PARCEIRO HOMOLOGADO:
+- O primeiro envio (kit inicial) tem frete custeado pela IQG. O parceiro não paga frete para receber o kit.
+- Nas reposições posteriores, os produtos continuam sendo cedidos em comodato (sem compra), mas o frete das reposições é custeado pelo parceiro.
+- Se o lead perguntar sobre frete, envio, entrega ou custo de reposição, o Pré-SDR deve orientar a SDR a explicar essa distinção com clareza.
+- NÃO orientar a SDR a dizer que frete é sempre grátis.
+- NÃO orientar a SDR a dizer que a IQG paga todos os fretes de reposição.
+- Orientar a SDR a separar: produto = comodato (sem compra); frete da reposição = por conta do parceiro.
+
+BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
+- O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
+- Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
+- Apenas 1 nível de indicação (sem multinível, sem pirâmide).
+- Condição: o parceiro indicado precisa respeitar o valor mínimo de venda sugerido pela IQG.
+- Controle: relatórios semanais de liquidação enviados em PDF ao parceiro indicador.
+- Em breve: acompanhamento em tempo real via aplicativo.
+
+PERFIL QUE MAIS SE BENEFICIA:
+Piscineiros e profissionais com forte rede no setor. Existem parceiros homologados
+que pagam a taxa de adesão, optam por NÃO receber o lote em comodato, e faturam
+exclusivamente indicando colegas para o programa. É um modelo legítimo e estratégico.
+Quando o lead for piscineiro, apresentar essa possibilidade proativamente como
+benefício estratégico do programa.
+
+REGRA ANTI-MISTURA (CRÍTICA):
+- Este benefício pertence APENAS ao Programa Parceiro Homologado.
+- NUNCA chamar de "link de afiliado", "Programa de Afiliados" ou "indicar pelo link".
+- NUNCA migrar o lead para Afiliados quando ele perguntar sobre indicação.
+- Se o lead estiver na rota Afiliados e perguntar sobre essa renda, explicar
+  que este benefício específico é do Programa Homologado.
+
 2. Programa de Afiliados IQG
 - Caminho separado.
 - O lead divulga produtos por link.
@@ -2060,6 +2576,7 @@ Use apenas estes valores para ofertaMaisAdequada:
 - "ambos"
 - "nenhuma_no_momento"
 - "nao_analisado"
+
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 MOMENTO IDEAL HUMANO
@@ -2239,7 +2756,8 @@ async function runConsultantAssistant({
   classification = {},
   semanticIntent = null,
   commercialRouteDecision = null,
-  backendStrategicGuidance = []
+  backendStrategicGuidance = [],
+  auditTraceId = null
 } = {}) {
   const recentHistory = Array.isArray(history)
     ? history.slice(-12).map(message => ({
@@ -2348,6 +2866,25 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
   const rawText = data.choices?.[0]?.message?.content || "";
 const parsedConsultantAdvice = parseConsultantAdviceJson(rawText);
 
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.GPT_PRE_SDR,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_CONSULTANT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    estrategiaRecomendada: parsedConsultantAdvice?.estrategiaRecomendada || "nao_analisado",
+    proximaMelhorAcao: String(parsedConsultantAdvice?.proximaMelhorAcao || "").slice(0, 200),
+    ofertaMaisAdequada: parsedConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
+    prioridadeComercial: parsedConsultantAdvice?.prioridadeComercial || "nao_analisado",
+    momentoIdealHumano: parsedConsultantAdvice?.momentoIdealHumano || "nao_analisado",
+    cuidadoPrincipal: String(parsedConsultantAdvice?.cuidadoPrincipal || "").slice(0, 200)
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
+   
 auditLog("Resposta do Consultor Pre-SDR", {
   ultimaMensagemLead: lastUserText || "",
   rawText,
@@ -3009,6 +3546,26 @@ Se houver objeção, use:
   reason: parsed?.reason || ""
 };
 
+     await recordAuditEvent({
+  traceId: null,
+  component: AUDIT_COMPONENTS.GPT_SEMANTIC_CONTINUITY,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    leadEntendeuUltimaExplicacao: semanticContinuityResult?.leadEntendeuUltimaExplicacao === true,
+    leadQuerAvancar: semanticContinuityResult?.leadQuerAvancar === true,
+    leadCriticouRepeticao: semanticContinuityResult?.leadCriticouRepeticao === true,
+    naoRepetirUltimoTema: semanticContinuityResult?.naoRepetirUltimoTema === true,
+    proximaAcaoSemantica: semanticContinuityResult?.proximaAcaoSemantica || "nao_analisado",
+    confidence: semanticContinuityResult?.confidence || "baixa",
+    reason: semanticContinuityResult?.reason || ""
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
+
 auditLog("Resposta do Historiador Semantico", {
   ultimaMensagemLead: lastUserText || "",
   ultimaRespostaSdr: lastSdrText || "",
@@ -3255,8 +3812,16 @@ function iqgTextDeclaresUnderstandingOfStep(text = "", step = "") {
   }
 
   if (step === "investimento") {
-    return /\b(taxa|investimento|valor|adesao|adesão)\b/i.test(t);
-  }
+        /*
+            Onda 2 / Bug H soft:
+            Lead só "declara entendimento de investimento" se mencionar
+            valor ou termo específico da taxa.
+            Palavras vagas como "valor", "investimento" sozinhas não bastam
+            porque o lead pode estar PERGUNTANDO, não declarando entendimento.
+            Exige menção explícita ao R$ ou à taxa de adesão.
+        */
+        return /\b(1990|1\.990|199|5000|5\.000|r\$|taxa de adesao|taxa de adesão|adesao|adesão|10x|parcelado)\b/i.test(t);
+    }
 
   return false;
 }
@@ -3378,6 +3943,121 @@ function iqgNormalizeSemanticIntentAfterClassifier({
     ].filter(Boolean).join(" ");
   }
 
+   /*
+    Caso 5 — Onda 3 / Bug #1:
+    Detectar priceObjection em frases INDIRETAS de desconfiança ou
+    resistência financeira que o Classificador Semântico costuma
+    deixar passar.
+
+    Três grupos de gatilhos:
+      (A) Desconfiança financeira ("pegadinha", "bom demais pra ser
+          verdade", "como assim investimento", "tem caroço", etc.)
+      (B) Caro direto ("tá caro", "salgado", "fora do orçamento", etc.)
+      (C) Reclamação retroativa ("nem me falou da taxa", "não me
+          avisou do investimento", etc.)
+
+    Se qualquer gatilho disparar, forçamos priceObjection=true e
+    elevamos a confiança para 'alta' nesse campo, para acionar as
+    travas de objeção de taxa do backend.
+  */
+  const priceObjectionIndirectPatterns = [
+    // (A) Desconfiança financeira / cheiro de "pegadinha"
+    /\bpegadinha[s]?\b/i,
+    /\bpegadinho[s]?\b/i,
+    /\bcaroc[oõ][s]?\b/i,
+    /\bgato\s+escondido\b/i,
+    /\bcoisa\s+escondida\b/i,
+    /\bbom\s+dem(ais|as)\s+(pra|para|pro)\s+ser\s+verdade\b/i,
+    /\bbom\s+dem(ais|as)\s+pra\s+ser\s+real\b/i,
+    /\bperfeito\s+dem(ais|as)\b/i,
+    /\bfacil\s+dem(ais|as)\b/i,
+    /\bf[aá]cil\s+dem(ais|as)\b/i,
+    /\bsuspeito\b/i,
+    /\bdesconfio\b/i,
+    /\bdesconfiad[oa]\b/i,
+    /\bgolpe\b/i,
+    /\benganaç[aã]o\b/i,
+    /\benganacao\b/i,
+    /\bfurada\b/i,
+    /\bcilada\b/i,
+    /\bcomo\s+assim\s+(investimento|taxa|valor|pagar|pagamento|adesao|adesão|mensalidade)\b/i,
+    /\bque\s+(investimento|taxa|valor|pagamento|adesao|adesão|mensalidade)\s+(é\s+ess[ea]|e\s+ess[ea])\b/i,
+    /\bque\s+(investimento|taxa|valor|pagamento|adesao|adesão|mensalidade)\b\s*[\?\.!]?\s*$/i,
+    /\bque\s+hist[oó]ria\s+(é|e)\s+ess[ea]\s+de\s+(investimento|taxa|valor|pagar|pagamento|adesao|adesão)\b/i,
+    /\bo\s+que\s+(é|e)\s+ess[ea]\s+(investimento|taxa|valor|pagamento|adesao|adesão)\b/i,
+    /\b(é|e)\s+pago\b/i,
+    /\btem\s+que\s+pagar\b/i,
+    /\bvou\s+ter\s+que\s+pagar\b/i,
+    /\bprecisa\s+pagar\b/i,
+    /\bpaga\s+alguma\s+coisa\b/i,
+    /\bpaga\s+algo\b/i,
+    /\btem\s+custo\b/i,
+    /\btem\s+algum\s+custo\b/i,
+    /\bvem\s+custo\b/i,
+    /\bcobra\s+algo\b/i,
+    /\bcobra\s+alguma\s+coisa\b/i,
+    /\bsabia\s+que\s+tinha\b/i,
+    /\beu\s+sabia\b/i,
+    /\bj[aá]\s+sabia\b/i,
+    /\bn[aã]o\s+(é|e)\s+de\s+gra[çc]a\b/i,
+    /\bn[aã]o\s+(é|e)\s+gratis\b/i,
+    /\bn[aã]o\s+(é|e)\s+gr[aá]tis\b/i,
+
+    // (B) Caro direto
+    /\bt[aá]\s+caro\b/i,
+    /\best[aá]\s+caro\b/i,
+    /\bmuito\s+caro\b/i,
+    /\bbem\s+caro\b/i,
+    /\bcaro\s+dem(ais|as)\b/i,
+    /\bsalgad[oa]\b/i,
+    /\bpuxad[oa]\b/i,
+    /\bpesad[oa](\s+pra|\s+para|\s+pro)?\s+(meu\s+bolso|minha\s+conta|mim)\b/i,
+    /\bn[aã]o\s+tenho\s+(esse|esta|essa|tudo\s+isso|tanto)\b/i,
+    /\bn[aã]o\s+tenho\s+(esse|essa)\s+(grana|valor|dinheiro|quantia)\b/i,
+    /\bn[aã]o\s+tenho\s+como\s+pagar\b/i,
+    /\bn[aã]o\s+tenho\s+condi[çc][oõ]es\b/i,
+    /\bsem\s+condi[çc][oõ]es\b/i,
+    /\bfora\s+do\s+(meu\s+)?or[çc]amento\b/i,
+    /\bn[aã]o\s+cabe\s+no\s+(bolso|or[çc]amento)\b/i,
+    /\bn[aã]o\s+entra\s+no\s+(bolso|or[çc]amento)\b/i,
+    /\bapertad[oa](\s+de\s+grana|\s+financeiramente)?\b/i,
+    /\bsem\s+grana\b/i,
+    /\bsem\s+dinheiro\b/i,
+    /\bestou\s+sem\s+(grana|dinheiro|condi[çc][oõ]es)\b/i,
+    /\bt[oô]\s+sem\s+(grana|dinheiro|condi[çc][oõ]es)\b/i,
+    /\bduro\b/i,
+    /\bquebrad[oa]\b/i,
+    /\bmes\s+(t[aá]|est[aá])\s+(dificil|díficil|complicad[oa]|apertad[oa])\b/i,
+    /\bm[eê]s\s+apertad[oa]\b/i,
+    /\bn[aã]o\s+da\s+(pra|para|pro)\s+pagar\b/i,
+    /\bn[aã]o\s+d[aá]\s+(pra|para|pro)\s+pagar\b/i,
+    /\bn[aã]o\s+tenho\s+esse\s+(dinheiro|valor)\s+(sobrando|agora)\b/i,
+    /\bdinheiro\s+(curto|contado|apertado)\b/i,
+    /\bor[çc]amento\s+(curto|apertado|baixo)\b/i,
+
+    // (C) Reclamação retroativa
+    /\b(nem|n[aã]o)\s+me\s+(falou|disse|avisou|informou|contou|comentou|explicou|mencionou)\s+(de|da|do|sobre)\s+(investimento|taxa|valor|pagamento|adesao|adesão|custo|mensalidade|pre[çc]o)\b/i,
+    /\b(nem|n[aã]o)\s+(falou|disse|avisou|informou|contou|comentou|explicou|mencionou)\s+(de|da|do|sobre)\s+(investimento|taxa|valor|pagamento|adesao|adesão|custo|mensalidade|pre[çc]o)\b/i,
+    /\bn[aã]o\s+sabia\s+que\s+(tinha|era|precisava|teria|ia\s+ter)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bn[aã]o\s+(falaram|disseram|avisaram|comentaram)\s+(de|da|do|sobre)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bn[aã]o\s+foi\s+(falado|dito|avisado|mencionado|comentado)\s+(de|da|do|sobre|nada\s+de)\s+(taxa|investimento|pagamento|custo|valor)\b/i,
+    /\bpensei\s+que\s+(era|fosse)\s+(gratis|gr[aá]tis|de\s+gra[çc]a|sem\s+custo)\b/i,
+    /\bachei\s+que\s+(era|fosse)\s+(gratis|gr[aá]tis|de\s+gra[çc]a|sem\s+custo)\b/i
+  ];
+
+  const detectedIndirectPriceObjection = priceObjectionIndirectPatterns.some(
+    (rx) => rx.test(text)
+  );
+
+  if (detectedIndirectPriceObjection && normalized.priceObjection !== true) {
+    normalized.priceObjection = true;
+    normalized.confidence = "alta";
+    normalized.reason = [
+      normalized.reason || "",
+      "Correção backend (Caso 5): detectada objeção de preço/taxa em frase indireta (desconfiança financeira, 'caro' direto ou reclamação retroativa). priceObjection forçado para true."
+    ].filter(Boolean).join(" ");
+  }
+
   /*
     Segurança:
     Se por algum motivo tudo ficou vazio, preserva fallback.
@@ -3486,8 +4166,10 @@ async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
   lastUserText = "",
-  lastSdrText = ""
+  lastSdrText = "",
+  auditTraceId = null
 } = {}) {
+   
   const fallback = {
     greetingOnly: false,
     asksQuestion: false,
@@ -4079,6 +4761,27 @@ const semanticIntentResult = iqgNormalizeSemanticIntentAfterClassifier({
   lead
 });
 
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.GPT_SEMANTIC_INTENT,
+  eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
+  payload: {
+    model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+    ultimaMensagemLead: lastUserText || "",
+    confidence: semanticIntentResult?.confidence || "baixa",
+    wantsAffiliate: semanticIntentResult?.wantsAffiliate === true,
+    wantsHomologado: semanticIntentResult?.wantsHomologado === true,
+    blockingObjection: semanticIntentResult?.blockingObjection === true,
+    priceObjection: semanticIntentResult?.priceObjection === true,
+    asksQuestion: semanticIntentResult?.asksQuestion === true,
+    greetingOnly: semanticIntentResult?.greetingOnly === true,
+    reason: semanticIntentResult?.reason || ""
+  },
+  requiredLevel: "STANDARD",
+  userPhone: lead?.user || "",
+  severity: "low"
+});
+     
 auditLog("Resposta do Classificador Semantico", {
   ultimaMensagemLead: lastUserText || "",
   ultimaRespostaSdr: lastSdrText || "",
@@ -4358,23 +5061,48 @@ function buildTurnPolicy({
 } = {}) {
   /*
     ETAPA 16.3A — Política do Turno mínima.
-
-    Explicação simples:
-    Esta função NÃO é um novo GPT.
-    Ela NÃO escreve resposta.
-    Ela NÃO substitui o Pré-SDR.
-
-    Ela só define limites objetivos da rodada atual:
+    Define limites objetivos da rodada atual:
     - pode falar Afiliado?
     - pode mandar link?
     - pode falar taxa?
     - pode pedir dados?
     - pode salvar Homologado como oferta escolhida?
     - pode marcar benefícios/estoque?
-
     A estratégia comercial continua sendo do Pré-SDR.
   */
 
+  /*
+    PROTEÇÃO POS-CRM — não reabrir coleta para lead já cadastrado.
+    Se o lead já foi enviado ao CRM, a política do turno NÃO pode
+    pedir dados, falar de taxa, oferecer afiliado nem voltar para
+    o funil comercial. Ele é um lead em atendimento pós-venda.
+  */
+  const leadEstaPosCrm =
+    lead?.crmEnviado === true ||
+    lead?.status === "enviado_crm" ||
+    lead?.faseQualificacao === "enviado_crm" ||
+    lead?.statusOperacional === "enviado_crm" ||
+    lead?.faseFunil === "crm";
+
+  if (leadEstaPosCrm) {
+    return {
+      modo: "pos_crm_atendimento",
+      ofertaPermitida: "nenhuma_no_momento",
+      podeFalarAfiliado: false,
+      podeMandarLinkAfiliado: false,
+      podeCompararProgramas: false,
+      podeFalarTaxa: false,
+      podePedirDados: false,
+      podeMarcarBeneficiosEstoque: false,
+      estrategiaObrigatoria: "atendimento_pos_crm",
+      proximaMelhorAcao:
+        "Responder de forma consultiva e curta a manifestação atual do lead. Não reiniciar o funil. Não pedir dados novamente. Se o lead perguntar sobre próximos passos, orientar que a equipe comercial fará contato.",
+      cuidadoPrincipal:
+        "Lead já está pós-CRM. NÃO pedir nome, CPF, telefone, cidade ou estado. NÃO repetir taxa, benefícios, estoque ou responsabilidades. NÃO oferecer afiliado. NÃO prometer aprovação, contrato ou pagamento.",
+      motivo: "Lead já foi enviado ao CRM. Política do turno em modo atendimento pós-venda."
+    };
+  }
+   
   const t = normalizeTurnPolicyText(text);
 
   const coletaAtiva = isLeadInActiveCollectionForTurnPolicy(lead || {});
@@ -5178,21 +5906,10 @@ const currentTextLooksCommercialQuestion =
     Não basta lead perguntar sobre estoque, kit, catálogo ou reposição.
   */
   const lastReplyActuallyExplainedInvestment =
-    /\b(taxa|adesao|adesão|investimento|r\$|1990|1\.990|10x|parcelado|cartao|cartão|pix|pagamento)\b/i.test(lastSdrText || "") ||
-    semanticListIncludesAny(lastSdrTopics, [
-      "investimento",
-      "taxa",
-      "adesao",
-      "adesão",
-      "pagamento",
-      "parcelamento"
-    ]);
+  /\b(taxa|adesao|adesão|investimento|r\$|1990|1\.990|10x|parcelado|cartao|cartão|pix|pagamento)\b/i.test(lastSdrText || "") &&
+  /\b(r\$\s*1[\.,]?990|taxa de ades[aã]o|taxa de implanta[cç][aã]o|nao e compra de mercadoria|não é compra de mercadoria|nao e caucao|não é caução|lote inicial.*r\$\s*5)\b/i.test(lastSdrText || "");
 
-  const historyHasInvestmentContext =
-    /\b(taxa de adesao|taxa de adesão|r\$ ?1\.?990|1990|1\.990|investimento|10x de r\$ ?199|parcelado|pagamento apos analise|pagamento após análise)\b/i.test(recentHistoryText);
-
-  const canEvaluateInvestmentUnderstanding =
-    lastReplyActuallyExplainedInvestment || historyHasInvestmentContext;
+const canEvaluateInvestmentUnderstanding = lastReplyActuallyExplainedInvestment;
 
   /*
     Para confirmar compromisso, precisa ter contexto real de compromisso,
@@ -5249,18 +5966,27 @@ const currentTextLooksCommercialQuestion =
       classifierSawRealInterest
     );
 
-  if (shouldConfirmInvestment && updatedEtapas.investimento !== true) {
-    updatedEtapas.investimento = true;
-    reasons.push("investimento_confirmado_por_contexto_real_de_taxa");
-  }
+  // Investimento só pode ser marcado se a última resposta da SDR
+// mencionou o VALOR REAL da taxa (R$ 1.990, 10x de 199, etc.)
+// Apenas mencionar "investimento" de passagem NÃO é suficiente
+const lastSdrMencionouValorReal =
+  /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199|10\s*parcelas?\s*de?\s*199)\b/i.test(lastSdrText || "");
 
-  if (shouldConfirmInvestment && lead?.taxaAlinhada !== true) {
-    patch.taxaAlinhada = true;
-    patch.taxaModoConversao = false;
-    patch.sinalObjecaoTaxa = false;
-    reasons.push("taxa_alinhada_por_contexto_real_de_investimento");
-  }
+const shouldConfirmInvestmentComValor =
+  shouldConfirmInvestment && lastSdrMencionouValorReal;
 
+if (shouldConfirmInvestmentComValor && updatedEtapas.investimento !== true) {
+  updatedEtapas.investimento = true;
+  reasons.push("investimento_confirmado_por_contexto_real_de_taxa_com_valor");
+}
+
+if (shouldConfirmInvestmentComValor && lead?.taxaAlinhada !== true) {
+  patch.taxaAlinhada = true;
+  patch.taxaModoConversao = false;
+  patch.sinalObjecaoTaxa = false;
+  reasons.push("taxa_alinhada_por_contexto_real_de_investimento_com_valor");
+}
+   
   /*
     2. Consolidar compromisso.
     Só consolida se houve contexto real de responsabilidades/compromisso.
@@ -5491,6 +6217,14 @@ A IQG possui dois caminhos comerciais:
 
 Afiliado não é perda.
 Afiliado é rota alternativa quando fizer sentido.
+
+TEMA ADICIONAL CONHECIDO — RENDA VITALÍCIA POR INDICAÇÃO:
+O Programa Parceiro Homologado oferece 10% de comissão vitalícia sobre vendas
+dos parceiros indicados (1 nível, condição: indicado respeitar valor mínimo
+de venda sugerido). Esse benefício NÃO existe no Programa de Afiliados.
+Se o lead perguntar sobre indicação, comissão por indicação, renda vitalícia,
+ou indicar colegas, o tema é VÁLIDO e dentro do escopo do Homologado.
+NÃO classificar como "fora de escopo". NÃO confundir com Programa de Afiliados.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 PERFIS COMPORTAMENTAIS POSSÍVEIS
@@ -6007,6 +6741,14 @@ A IQG possui dois caminhos comerciais:
 
 Afiliado não é perda.
 Afiliado é rota alternativa quando fizer sentido.
+
+TEMA ADICIONAL CONHECIDO — RENDA VITALÍCIA POR INDICAÇÃO:
+O Programa Parceiro Homologado oferece 10% de comissão vitalícia sobre vendas
+dos parceiros indicados (1 nível, condição: indicado respeitar valor mínimo
+de venda sugerido). Esse benefício NÃO existe no Programa de Afiliados.
+Se o lead perguntar sobre indicação, comissão por indicação, renda vitalícia,
+ou indicar colegas, o tema é VÁLIDO e dentro do escopo do Homologado.
+NÃO classificar como "fora de escopo". NÃO confundir com Programa de Afiliados.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRAS DE AUDITORIA
@@ -6646,15 +7388,14 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
         motivo: "Sem pedido humano, sem risco humano real e sem erro operacional crítico."
       });
     }
-     runClassifierAfterSupervisor({
+    // DESATIVADO — Classificador pós-SDR não influencia próxima resposta.
+    // Era ~$0.001/turno só para atualizar campo no dashboard.
+    // Se quiser reativar, basta restaurar o bloco original.
+    console.log("ℹ️ Classificador pós-SDR desativado para reduzir custo LLM:", {
       user,
-      lead,
-      history,
-      lastUserText,
-      lastSdrText,
-      supervisorAnalysis
+      motivo: "nao_influencia_proxima_resposta"
     });
-
+     
     console.log("✅ Supervisor analisou conversa:", {
       user,
       riscoPerda: supervisorAnalysis?.riscoPerda || "nao_analisado",
@@ -8069,6 +8810,28 @@ Nesta fase, é obrigatório:
 2. Conectar benefício com realidade do lead
 3. Enviar o folder do programa
 
+BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
+- O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
+- Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
+- Apenas 1 nível de indicação (sem multinível, sem pirâmide).
+- Condição: o parceiro indicado precisa respeitar o valor mínimo de venda sugerido pela IQG.
+- Controle: relatórios semanais de liquidação enviados em PDF ao parceiro indicador.
+- Em breve: acompanhamento em tempo real via aplicativo.
+
+PERFIL QUE MAIS SE BENEFICIA:
+Piscineiros e profissionais com forte rede no setor. Existem parceiros homologados
+que pagam a taxa de adesão, optam por NÃO receber o lote em comodato, e faturam
+exclusivamente indicando colegas para o programa. É um modelo legítimo e estratégico.
+Quando o lead for piscineiro, apresentar essa possibilidade proativamente como
+benefício estratégico do programa.
+
+REGRA ANTI-MISTURA (CRÍTICA):
+- Este benefício pertence APENAS ao Programa Parceiro Homologado.
+- NUNCA chamar de "link de afiliado", "Programa de Afiliados" ou "indicar pelo link".
+- NUNCA migrar o lead para Afiliados quando ele perguntar sobre indicação.
+- Se o lead estiver na rota Afiliados e perguntar sobre essa renda, explicar
+  que este benefício específico é do Programa Homologado.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 💬 EXPLICAÇÃO BASE
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -8185,6 +8948,35 @@ Se o lead aceitar o PDF do kit, envie:
 
 Se o lead perguntar se o estoque sempre será em comodato, responda que sim.
 
+REGRA CRÍTICA SOBRE PREÇO DE PRODUTOS INDIVIDUAIS (FASE DE ESTOQUE):
+
+Quando o lead perguntar o preço, valor ou quanto custa cada produto do lote:
+- NUNCA listar preço de produto individual.
+- NUNCA usar placeholder como "R$ XX,XX", "R$ --" ou valores fictícios.
+- NUNCA inventar tabela de preços na resposta.
+- NUNCA dizer "os preços estão na faixa de" seguido de valores inventados.
+
+A resposta correta é:
+1. Explicar que os preços variam constantemente e são atualizados com frequência pela IQG.
+2. As tabelas oficiais de preço serão sempre atualizadas e enviadas ao parceiro após a efetivação da parceria.
+3. Para ter uma ideia dos preços atuais, indicar o e-commerce oficial: https://www.loja.industriaquimicagaucha.com.br/
+4. Reforçar que a IQG tem compromisso com preços comercialmente competitivos e qualidade acima do mercado.
+5. Tranquilizar o parceiro dizendo que a IQG busca sempre oferecer condições que permitam ao parceiro ser competitivo e crescer junto com a indústria.
+
+Exemplo correto:
+"Os preços dos produtos variam com frequência e a IQG trabalha com atualizações constantes. A tabela oficial de preços para parceiro é enviada após a efetivação da parceria 😊
+
+Para ter uma boa ideia dos preços atuais, você pode consultar nosso e-commerce:
+https://www.loja.industriaquimicagaucha.com.br/
+
+E pode ficar tranquilo: a IQG tem compromisso com preços competitivos e qualidade acima do mercado, justamente para que o parceiro consiga atuar de forma forte comercialmente."
+
+Exemplo ERRADO (nunca responder assim):
+"IQG Clarificante 1L: R$ XX,XX"
+"Os preços estão na faixa de R$ 15 a R$ 90"
+"O valor sugerido do Clarificante é R$ 29,90"
+
+
 REGRA OBRIGATÓRIA SOBRE COMODATO E REPOSIÇÃO:
 
 O estoque do Parceiro Homologado IQG sempre será cedido em comodato.
@@ -8203,6 +8995,32 @@ Quanto mais o parceiro vender e demonstrar boa atuação, maior poderá ser o es
 
 Para volumes maiores, a IA deve dizer que isso é tratado diretamente com a equipe IQG conforme evolução do parceiro dentro do programa.
 
+REGRA OBRIGATÓRIA SOBRE FRETE E ENVIO:
+
+O primeiro envio (lote/kit inicial) tem o frete custeado pela IQG.
+O parceiro não paga frete para receber o kit inicial.
+
+As reposições posteriores: os produtos continuam sendo cedidos em comodato (o parceiro não compra os produtos), mas o frete das reposições é custeado pelo parceiro.
+
+A SDR deve explicar isso com clareza sempre que o lead perguntar sobre frete, envio, entrega, transporte ou custo de reposição.
+
+Regras obrigatórias:
+- NÃO dizer que o frete é sempre grátis.
+- NÃO dizer que a IQG paga todos os fretes em todas as reposições.
+- NÃO dizer que não existe custo de envio nas reposições.
+- NÃO dizer que o parceiro paga pelos produtos das reposições (os produtos são sempre comodato).
+- SEMPRE separar claramente: produto = comodato (sem compra); frete da reposição = por conta do parceiro.
+
+Exemplo correto quando o lead perguntar sobre frete:
+"O envio do lote inicial é por conta da IQG, então você não paga frete para receber o kit 😊 Nas reposições seguintes, os produtos continuam sendo cedidos em comodato, ou seja, você não compra o estoque. Mas o frete de envio das reposições fica por conta do parceiro."
+
+Exemplo correto quando o lead perguntar se paga pelo envio da reposição:
+"Os produtos das reposições continuam sendo em comodato, então você não compra o estoque. Mas o frete de envio das reposições é custeado pelo parceiro. Só o primeiro envio do kit inicial tem frete por conta da IQG."
+
+Exemplo ERRADO (nunca responder assim):
+"Você não paga pelo envio da reposição do estoque."
+"A IQG se responsabiliza pelo envio das reposições."
+"Você não precisará pagar o frete do envio das mercadorias, tanto no recebimento do lote inicial quanto na reposição."
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 5 — COMPROMETIMENTO (morno)
@@ -8394,6 +9212,7 @@ Se "não" → pedir correção
 Nunca confirmar manualmente todos os dados.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━
 📦 COMANDOS DE ARQUIVO
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -8406,10 +9225,75 @@ Use apenas:
 [ACTION:SEND_MANUAL]
 
 Regras:
-- só no final
+- só no final da mensagem
 - linha separada
-- nunca explicar
-- nunca duplicar envio
+- nunca explicar o comando ao lead
+- nunca duplicar envio do mesmo arquivo na mesma conversa
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📦 QUANDO ENVIAR CADA ARQUIVO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+CATÁLOGO DE PRODUTOS:
+Quando o lead pedir catálogo, lista de produtos, tabela de produtos, quiser ver os produtos, perguntar quais produtos a IQG tem, ou demonstrar curiosidade sobre os itens disponíveis:
+- Responder que vai enviar o catálogo de produtos de piscina da IQG.
+- Enviar: [ACTION:SEND_CATALOGO]
+- Não recusar envio de catálogo.
+- Não dizer que o catálogo só vem depois.
+- O catálogo é material de apresentação, não é tabela de preços.
+
+MODELO DE CONTRATO:
+Quando o lead pedir contrato, modelo de contrato, quiser ler o contrato, perguntar sobre cláusulas, regras contratuais ou quiser entender o contrato antes de avançar:
+- Responder que vai enviar o modelo de contrato para leitura prévia.
+- Explicar que a versão oficial para assinatura é liberada após análise cadastral da equipe IQG.
+- Enviar: [ACTION:SEND_CONTRATO]
+- Não recusar envio do modelo.
+- Não dizer que o contrato só vem após assinatura.
+- O modelo serve para o lead ler e entender as regras antes de decidir.
+
+KIT PARCEIRO / LISTA DO LOTE INICIAL:
+Quando o lead perguntar o que vem no kit, quais produtos recebe, o que tem no lote, lista do estoque inicial:
+- Enviar: [ACTION:SEND_KIT]
+
+MANUAL PRÁTICO DO PISCINEIRO / CURSO / TREINAMENTO:
+Quando o lead disser que:
+- não entende de piscina;
+- não sabe tratar água de piscina;
+- nunca trabalhou com piscina;
+- quer aprender sobre tratamento de piscina;
+- perguntar se tem curso;
+- perguntar se tem treinamento;
+- perguntar se tem material de estudo;
+- perguntar como usar os produtos;
+- demonstrar insegurança sobre conhecimento técnico;
+
+a SDR deve:
+1. Explicar que a IQG oferece treinamento e suporte ao parceiro.
+2. Dizer que vai enviar um manual prático de tratamento de piscina que ajuda a entender como usar os produtos e quando aplicar cada um.
+3. Enviar: [ACTION:SEND_MANUAL]
+4. NUNCA dizer que a IQG não oferece curso ou treinamento. A IQG OFERECE treinamento e suporte.
+5. NUNCA dizer que o parceiro precisa já saber tratar piscina antes de entrar.
+
+FOLDER DO PROGRAMA:
+Envio obrigatório na fase de benefícios.
+- Enviar: [ACTION:SEND_FOLDER]
+
+━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ REGRA CRÍTICA SOBRE MATERIAIS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A SDR NUNCA deve:
+- Recusar envio de catálogo quando o lead pedir.
+- Recusar envio de modelo de contrato quando o lead pedir.
+- Dizer que a IQG não oferece curso, treinamento ou capacitação.
+- Dizer que o manual não existe.
+- Dizer que o catálogo só vem depois do contrato.
+- Dizer que o contrato só vem depois da assinatura.
+
+A SDR SEMPRE deve:
+- Enviar o material solicitado pelo lead.
+- Contextualizar brevemente o material antes de enviar.
+- Depois de enviar, continuar a condução do funil normalmente.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🚫 PROIBIDO
@@ -9317,12 +10201,26 @@ async function transcribeAudioBuffer(buffer, filename = "audio.ogg") {
 }
 
 function detectRequestedFile(text = "") {
-  const normalizedText = text.toLowerCase();
+  const normalizedText = text.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (normalizedText.includes("contrato")) return "contrato";
-  if (normalizedText.includes("catálogo") || normalizedText.includes("catalogo")) return "catalogo";
+  if (normalizedText.includes("catalogo") || normalizedText.includes("catálogo")) return "catalogo";
+  if (normalizedText.includes("lista de produtos")) return "catalogo";
+  if (normalizedText.includes("quero ver os produtos")) return "catalogo";
+  if (normalizedText.includes("produtos disponiveis")) return "catalogo";
   if (normalizedText.includes("kit")) return "kit";
-  if (normalizedText.includes("manual") || normalizedText.includes("curso")) return "manual";
+  if (normalizedText.includes("manual")) return "manual";
+  if (normalizedText.includes("curso")) return "manual";
+  if (normalizedText.includes("treinamento")) return "manual";
+  if (normalizedText.includes("nao entendo de piscina")) return "manual";
+  if (normalizedText.includes("nao sei tratar")) return "manual";
+  if (normalizedText.includes("como tratar piscina")) return "manual";
+  if (normalizedText.includes("como tratar agua")) return "manual";
+  if (normalizedText.includes("como usar os produtos")) return "manual";
+  if (normalizedText.includes("nunca trabalhei com piscina")) return "manual";
+  if (normalizedText.includes("aprender sobre piscina")) return "manual";
   if (normalizedText.includes("folder")) return "folder";
 
   return null;
@@ -9376,7 +10274,46 @@ function hasExplicitFileRequest(text = "") {
     t.includes("me envie o material") ||
     t.includes("pode enviar o material") ||
 
+// pedidos de catálogo
+    t.includes("catalogo") ||
+    t.includes("catálogo") ||
+    t.includes("catalogo de produtos") ||
+    t.includes("catálogo de produtos") ||
+    t.includes("lista de produtos") ||
+    t.includes("quero ver os produtos") ||
+    t.includes("quais produtos") ||
+    t.includes("produtos disponiveis") ||
+    t.includes("produtos disponíveis") ||
+
+    // pedidos de contrato
+    t.includes("modelo de contrato") ||
+    t.includes("contrato") ||
+    t.includes("quero ver o contrato") ||
+    t.includes("me manda o contrato") ||
+    t.includes("tem contrato") ||
+    t.includes("clausulas") ||
+    t.includes("cláusulas") ||
+
+    // pedidos de manual/curso/treinamento
+    t.includes("manual") ||
+    t.includes("curso") ||
+    t.includes("treinamento") ||
+    t.includes("nao entendo de piscina") ||
+    t.includes("não entendo de piscina") ||
+    t.includes("nao sei tratar") ||
+    t.includes("não sei tratar") ||
+    t.includes("como usar os produtos") ||
+    t.includes("como tratar piscina") ||
+    t.includes("como tratar agua") ||
+    t.includes("como tratar água") ||
+    t.includes("nunca trabalhei com piscina") ||
+    t.includes("nao tenho experiencia") ||
+    t.includes("não tenho experiência") ||
+    t.includes("aprender sobre piscina") ||
+    t.includes("material de estudo") ||
+     
     // pedidos específicos
+    
     t.includes("me manda o folder") ||
     t.includes("me mande o folder") ||
     t.includes("quero o folder") ||
@@ -9532,11 +10469,14 @@ function shouldForceFolderForBenefits({
     resposta.includes("comissao por vendas") ||
     resposta.includes("comissão por vendas");
 
-  return Boolean(
-    falaDeBeneficiosHomologado &&
-    contextoBeneficios &&
-    !respostaMisturaAfiliado
-  );
+  const leadPediuFolderOuKitExplicitamente =
+  hasExplicitFileRequest(leadText) &&
+  (detectRequestedFile(leadText) === "folder" || detectRequestedFile(leadText) === "kit");
+
+return Boolean(
+  (falaDeBeneficiosHomologado && contextoBeneficios && !respostaMisturaAfiliado) ||
+  (leadPediuFolderOuKitExplicitamente && !rotaAfiliado && !fluxoProtegido && !folderJaEnviado)
+);
 }
 
 function extractActions(reply = "") {
@@ -9790,7 +10730,26 @@ function isInvalidLooseNameCandidate(value = "") {
     "pode seguir",
     "pode continuar",
     "vamos seguir",
-    "quero seguir"
+    "quero seguir",
+     "podemos avançar",
+  "podemos avancar",
+  "vamos avançar",
+  "vamos avancar",
+  "vamos seguir",
+  "pode seguir",
+  "pode avançar",
+  "pode avancar",
+  "podemos seguir",
+  "vamos la",
+  "bora seguir",
+  "bora avancar",
+  "bora avançar",
+  "quero seguir",
+  "quero avançar",
+  "quero avancar",
+  "vamos para",
+  "vamos pro",
+  "seguir em frente"
   ];
 
   if (invalidExact.includes(normalized)) {
@@ -9798,50 +10757,81 @@ function isInvalidLooseNameCandidate(value = "") {
   }
 
   const invalidParts = [
-    "confirmacao",
-    "confirmar",
-    "corrigir",
-    "correcao",
-    "errado",
-    "errada",
-    "incorreto",
-    "incorreta",
-    "respondeu",
-    "pergunta",
-    "duvida",
-    "nao entendi",
-    "nao estou entendendo",
-    "ja enviei",
-    "ja passei",
-    "esta correto",
-    "tudo certo",
-    "pode seguir",
-    "pode continuar",
-    "vamos seguir",
-    "me explica",
-    "como funciona",
-    "por que",
-    "porque"
-  ];
-
+  "confirmacao",
+  "confirmar",
+  "corrigir",
+  "correcao",
+  "errado",
+  "errada",
+  "incorreto",
+  "incorreta",
+  "respondeu",
+  "pergunta",
+  "duvida",
+  "nao entendi",
+  "nao estou entendendo",
+  "ja enviei",
+  "ja passei",
+  "esta correto",
+  "tudo certo",
+  "pode seguir",
+  "pode continuar",
+  "vamos seguir",
+  "me explica",
+  "como funciona",
+  "por que",
+  "porque",
+  "desenvolvedor",
+  "ao desenvolvedor",
+  "mensagem ao",
+  "atencao ao",
+  "atençao ao",
+  "follow-up",
+  "followup",
+  "contaminado",
+  "backend",
+  "sistema",
+  "nao vou pagar",
+  "nao quero pagar",
+  "nao tenho interesse",
+  "nao e pra mim",
+  "nao é pra mim",
+  "desisto",
+  "quero desistir",
+  "tchau"
+];
+   
   if (invalidParts.some(term => normalized.includes(term))) {
     return true;
   }
 
   const words = normalized.split(" ").filter(Boolean);
 
-  if (words.length < 2) {
-    return true;
-  }
+if (words.length < 2) {
+  return true;
+}
 
-  if (words.length > 5) {
-    return true;
-  }
+if (words.length > 5) {
+  return true;
+}
 
-  return false;
+// Se o texto original contém dois pontos, é prefixo de mensagem (ex: "Ao desenvolvedor: ...")
+if (raw.includes(":")) {
+  return true;
+}
+
+// Se o texto original tem muito mais palavras do que o candidato a nome capturado,
+// provavelmente é uma frase longa e não um nome
+const palavrasTextoOriginal = raw.trim().split(/\s+/).filter(Boolean).length;
+if (palavrasTextoOriginal > 6) {
+  return true;
+}
+
+return false;
 }
 
 function isInvalidLocationCandidate(value = "") {
+   
   const raw = String(value || "").trim();
 
   if (!raw) {
@@ -10051,6 +11041,21 @@ const estadoCorrecaoMatch = fullText.match(
 if (estadoCorrecaoMatch) {
   data.estado = normalizeUF(estadoCorrecaoMatch[1]);
 
+// Se o sistema estava esperando nome e o lead enviou algo que parece nome válido,
+// sempre sobrescrever o nome anterior (pode estar corrigindo nome errado)
+if (
+  currentLead?.campoEsperado === "nome" &&
+  data.nome &&
+  !isInvalidLooseNameCandidate(data.nome) &&
+  data.nome.trim().split(/\s+/).length >= 2
+) {
+  return {
+    ...safeCurrentLead,
+    ...data,
+    nome: data.nome  // força sobrescrita mesmo que já exista nome salvo
+  };
+}
+   
   return {
     ...safeCurrentLead,
     ...data
@@ -10122,6 +11127,17 @@ if (!data.nome) {
     /\bme chamo\b/i.test(fullText) ||
     /\bsou o\b/i.test(fullText) ||
     /\bsou a\b/i.test(fullText);
+
+   // Bloquear frases de objeção, rejeição ou desistência de virarem nome
+  const textoPareceFraseDeObjecaoOuRecusa =
+    /\b(nao vou|não vou|nao quero|não quero|nao consigo|não consigo|recuso|desisto|nao pago|não pago|nao aceito|não aceito|nao tenho|não tenho|nao e pra mim|não é pra mim|tchau|obrigado|encerra|pode encerrar)\b/i.test(fullText);
+
+  if (textoPareceFraseDeObjecaoOuRecusa) {
+    return {
+      ...safeCurrentLead,
+      ...data
+    };
+  }
 
   if (hasNameContext || isDataContext) {
     let textWithoutNoise = fullText
@@ -10256,6 +11272,12 @@ function isValidCPF(value = "") {
 
   return digit2 === Number(cpf[10]);
 }
+
+/* =========================
+   REGRA COMERCIAL — INDICAÇÃO NO PARCEIRO HOMOLOGADO
+   Benefício oficial do Programa Parceiro Homologado IQG.
+   Não confundir com Programa de Afiliados.
+   ========================= */
 
 function formatPhone(value = "") {
   const digits = onlyDigits(value);
@@ -11607,7 +12629,14 @@ function isLeadRejectingOrCooling(text = "") {
     "nao quero pagar adesao",
     "não quero pagar adesão",
     "nao quero adesao",
-    "não quero adesão"
+    "não quero adesão",
+    "quero desistir de tudo",
+    "desisto de tudo",
+    "obrigado tchau",
+    "tchau obrigado",
+    "quero sair",
+    "pode encerrar tudo",
+    "encerra tudo"
   ];
 
   return patterns.some(pattern => t.includes(pattern));
@@ -12114,42 +13143,32 @@ function enforcePreSdrConsultantHardLimits({
 }
 
 function getMissingFunnelStepLabels(lead = {}) {
-  const e = lead?.etapas || {};
-  const missing = [];
-
-  if (!e.programa) {
-    missing.push("programa");
-  }
-
-  if (!e.beneficios) {
-    missing.push("benefícios");
-  }
-
-  if (!e.estoque) {
-    missing.push("estoque em comodato");
-  }
-
-  if (!e.responsabilidades) {
-    missing.push("responsabilidades");
-  }
-
-  if (!e.investimento) {
-    missing.push("investimento");
-  }
-
-if (lead?.taxaAlinhada !== true) {
-  missing.push("alinhamento claro da taxa");
-}
-   
-  if (!e.compromisso) {
-    missing.push("compromisso de atuação");
-  }
-
-  if (lead?.interesseReal !== true) {
-    missing.push("interesse real explícito");
-  }
-
-  return missing;
+    const e = lead?.etapas || {};
+    const missing = [];
+    if (!e.programa) {
+        missing.push("programa");
+    }
+    if (!e.beneficios) {
+        missing.push("benefícios");
+    }
+    if (!e.estoque) {
+        missing.push("estoque em comodato");
+    }
+    if (!e.responsabilidades) {
+        missing.push("responsabilidades");
+    }
+    if (!e.investimento) {
+        missing.push("investimento");
+    }
+    if (lead?.taxaAlinhada !== true) {
+        missing.push("alinhamento claro da taxa");
+    }
+    // 🚫 Removido do bloqueio do funil (Onda 1):
+    //   - "compromisso de atuação" — não é mais etapa obrigatória.
+    //   - "interesse real explícito" — não é mais etapa obrigatória.
+    // O funil agora libera coleta após: programa, benefícios, estoque,
+    // responsabilidades, investimento e taxa alinhada.
+    return missing;
 }
 
 function normalizeUF(value = "") {
@@ -12353,10 +13372,45 @@ if (
       return result;
     }
   }
+if (field === "estado") {
+    const cleanState = cleanText
+      .replace(/\b(estado|uf)\b/gi, "")
+      .replace(/[:\-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const possibleUf = normalizeUF(cleanState);
+
+    if (VALID_UFS.includes(possibleUf)) {
+      result.estado = possibleUf;
+      return result;
+    }
+  }
+
+  // Campo esperado é nome: aceitar texto que parece nome completo
+  if (field === "nome") {
+    const cleanName = cleanText
+      .replace(/\b(meu nome e|meu nome é|me chamo|sou o|sou a|nome|completo)\b/gi, "")
+      .replace(/\b\d+\b/g, "")
+      .replace(/[.,!?:;]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const nameWords = cleanName.split(/\s+/).filter(Boolean);
+
+    if (
+      nameWords.length >= 2 &&
+      nameWords.length <= 6 &&
+      /^[A-Za-zÀ-ÿ\s]+$/.test(cleanName) &&
+      !isInvalidLooseNameCandidate(cleanName)
+    ) {
+      result.nome = cleanName;
+      return result;
+    }
+  }
 
   return result;
 }
-
 async function saveHistoryStep(from, history, userText, botText, isAudio = false) {
   const updatedHistory = Array.isArray(history) ? [...history] : [];
 
@@ -12519,12 +13573,35 @@ function buildRecentTaxDecisionContext(history = [], lastSdrText = "") {
 function hasTaxBeenExplainedForDecision({ lead = {}, contextText = "" } = {}) {
   const etapas = lead?.etapas || {};
 
-  return Boolean(
-    etapas.investimento === true ||
-    lead?.taxaAlinhada === true ||
-    lead?.taxaModoConversao === true ||
-    /\b(1990|1\.990|r\$ ?1\.990|taxa|investimento|adesao|adesão|implantacao|implantação|10x|199)\b/i.test(contextText)
-  );
+  // taxaAlinhada ou taxaModoConversao já confirmados → taxa foi explicada
+  if (lead?.taxaAlinhada === true || lead?.taxaModoConversao === true) {
+    return true;
+  }
+
+  // O contexto recente menciona o VALOR REAL da taxa (R$ 1.990, 10x de 199, etc.)
+  // Apenas a palavra "taxa" ou "investimento" NÃO é suficiente — precisa do valor
+  const contextMencionaValorReal =
+    /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199|10\s*parcelas?\s*de?\s*199)\b/i.test(contextText);
+
+  if (contextMencionaValorReal) {
+    return true;
+  }
+
+  // etapas.investimento sozinho NÃO é suficiente
+  // porque pode ter sido marcado quando a SDR mencionou "investimento" de passagem
+  // sem ter explicado o valor real da taxa
+  // Só confiar em etapas.investimento se também houver evidência de valor no contexto
+  // ou se taxaPerguntada=true E o lead demonstrou entendimento real
+  if (
+    etapas.investimento === true &&
+    etapas.taxaPerguntada === true &&
+    lead?.taxaObjectionCount > 0
+  ) {
+    // Se o lead já objetou a taxa, é porque a taxa foi explicada em algum momento
+    return true;
+  }
+
+  return false;
 }
 
 function hasMandatoryValueAnchoringForDecision({ lead = {}, contextText = "" } = {}) {
@@ -12681,6 +13758,9 @@ function classifyTaxPhaseDecision({
 
   const weakButContextualAcceptance =
     taxDecisionMessageIsShortPositive(text) &&
+    !taxDecisionMessageIsQuestionAboutTax(text) &&
+    !taxDecisionMessageIsPriceObjection(text) &&
+    !/\?/.test(String(lastUserText || "").trim()) &&
     taxExplained &&
     valueAnchored &&
     (
@@ -12964,55 +14044,41 @@ function canStartDataCollection(lead = {}) {
     return false;
   }
 
-  const etapasObrigatoriasConduzidas =
-    etapas.programa === true &&
-    etapas.beneficios === true &&
-    etapas.estoque === true &&
-    etapas.responsabilidades === true &&
-    etapas.investimento === true;
-
-  const taxaAlinhada =
-    lead?.taxaAlinhada === true;
-
-  const compromissoValidado =
-    etapas.compromisso === true;
-
-  const interesseRealConfirmado =
-    lead?.interesseReal === true;
-
-  const objecaoTaxaResolvida =
-    lead?.taxaObjectionResolved === true ||
-    lead?.taxaAceitaAposObjecao === true ||
-    Boolean(lead?.taxaAceitaEm) ||
-    hasTaxAcceptedDecisionToCollect(lead) ||
-    (
-      lead?.taxaAlinhada === true &&
-      lead?.interesseReal === true &&
-      etapas.compromisso === true
+  /*
+       Onda 2 — coleta libera com base no funil real (6 etapas),
+       sem exigir compromisso ou interesseReal.
+    */
+    const etapasObrigatoriasConduzidas =
+        etapas.programa === true &&
+        etapas.beneficios === true &&
+        etapas.estoque === true &&
+        etapas.responsabilidades === true &&
+        etapas.investimento === true;
+    const taxaAlinhada =
+        lead?.taxaAlinhada === true;
+    const objecaoTaxaResolvida =
+        lead?.taxaObjectionResolved === true ||
+        lead?.taxaAceitaAposObjecao === true ||
+        Boolean(lead?.taxaAceitaEm) ||
+        hasTaxAcceptedDecisionToCollect(lead) ||
+        lead?.taxaAlinhada === true;
+    const semObjecaoTaxaAtiva =
+        lead?.sinalObjecaoTaxa !== true ||
+        objecaoTaxaResolvida === true;
+    const contagemObjecaoNaoBloqueia =
+        Number(lead?.taxaObjectionCount || 0) <= 1 ||
+        objecaoTaxaResolvida === true;
+    const semObjecaoAtiva =
+        semObjecaoTaxaAtiva &&
+        lead?.sinalObjecaoEstoque !== true &&
+        lead?.sinalObjecaoRisco !== true &&
+        lead?.bloqueioComercialAtivo !== true &&
+        contagemObjecaoNaoBloqueia;
+    return Boolean(
+        etapasObrigatoriasConduzidas &&
+        taxaAlinhada &&
+        semObjecaoAtiva
     );
-
-  const semObjecaoTaxaAtiva =
-    lead?.sinalObjecaoTaxa !== true ||
-    objecaoTaxaResolvida === true;
-
-  const contagemObjecaoNaoBloqueia =
-    Number(lead?.taxaObjectionCount || 0) <= 1 ||
-    objecaoTaxaResolvida === true;
-
-  const semObjecaoAtiva =
-    semObjecaoTaxaAtiva &&
-    lead?.sinalObjecaoEstoque !== true &&
-    lead?.sinalObjecaoRisco !== true &&
-    lead?.bloqueioComercialAtivo !== true &&
-    contagemObjecaoNaoBloqueia;
-
-  return Boolean(
-    etapasObrigatoriasConduzidas &&
-    taxaAlinhada &&
-    compromissoValidado &&
-    interesseRealConfirmado &&
-    semObjecaoAtiva
-  );
 }
 
 function canAskForRealInterest(lead = {}) {
@@ -13165,17 +14231,27 @@ Só reforçando: essa etapa ainda não é aprovação automática e não envolve
 }
 
 function getCurrentFunnelStage(lead = {}) {
-  const e = lead.etapas || {};
-
-  if (!e.programa) return 1;
-  if (!e.beneficios) return 2;
-  if (!e.estoque) return 3;
-  if (!e.responsabilidades) return 4;
-  if (!e.investimento) return 5;
-  if (!e.compromisso) return 6;
-  if (lead.interesseReal !== true) return 7;
-
-  return 8; // coleta
+    const e = lead.etapas || {};
+    /*
+       Onda 2 — funil simplificado (6 etapas reais + coleta).
+       Removidos do cálculo: compromisso e interesseReal,
+       porque não são mais bloqueadores do funil (Onda 1).
+       Etapas:
+         1 = programa pendente
+         2 = benefícios pendente
+         3 = estoque/comodato pendente
+         4 = responsabilidades pendente
+         5 = investimento pendente
+         6 = alinhamento da taxa pendente
+         7 = coleta liberada (todas as 5 + taxaAlinhada=true)
+    */
+    if (!e.programa) return 1;
+    if (!e.beneficios) return 2;
+    if (!e.estoque) return 3;
+    if (!e.responsabilidades) return 4;
+    if (!e.investimento) return 5;
+    if (lead?.taxaAlinhada !== true) return 6;
+    return 7; // coleta liberada
 }
 
 function normalizeCommercialText(text = "") {
@@ -13620,8 +14696,8 @@ function enforceFunnelDiscipline({
 
   const pediuDadosCedo =
     pedeDadosPessoais &&
-    !podeColetarDados;
-
+    (!podeColetarDados || leadTemPerguntaOuObjecao);
+   
   const visaoGeralInicialHomologadoSegura =
     isSafeInitialHomologadoOverviewReply({
       respostaFinal,
@@ -15758,118 +16834,6 @@ function iqgBuildMergedLeadDataForCollection({
       `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
   }
 
-  return {
-    normalizedExtractedData,
-    mergedLeadData,
-    missingFieldsAfterMerge: getMissingLeadFields(mergedLeadData),
-    nextMissingField: getMissingLeadFields(mergedLeadData)[0] || null,
-    hasNewRequiredLeadData: Object.keys(normalizedExtractedData).some(key =>
-      REQUIRED_LEAD_FIELDS.includes(key)
-    )
-  };
-}
-
-function iqgBuildCollectionStatePatch({
-  currentLead = {},
-  extractedData = {}
-} = {}) {
-  const {
-    normalizedExtractedData,
-    mergedLeadData,
-    missingFieldsAfterMerge,
-    nextMissingField,
-    hasNewRequiredLeadData
-  } = iqgBuildMergedLeadDataForCollection({
-    currentLead,
-    extractedData
-  });
-
-  const patch = {
-    ...normalizedExtractedData,
-    dadosConfirmadosPeloLead: false,
-    aguardandoConfirmacao: false,
-    faseQualificacao: "dados_parciais",
-    status: "dados_parciais",
-    campoEsperado: nextMissingField,
-    campoPendente: null,
-    valorPendente: null
-  };
-
-  if (mergedLeadData.cidade && mergedLeadData.estado) {
-    patch.cidadeEstado =
-      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
-  }
-
-  return {
-    patch,
-    normalizedExtractedData,
-    mergedLeadData,
-    missingFieldsAfterMerge,
-    nextMissingField,
-    hasNewRequiredLeadData
-  };
-}
-
-/* =========================
-   COLETA — MERGE DO MONGO + MENSAGEM ATUAL
-   Calcula campos faltantes usando o que já está salvo no lead
-   junto com o que foi extraído da mensagem atual.
-========================= */
-
-function iqgPickFilledLeadFields(data = {}) {
-  const result = {};
-
-  for (const field of REQUIRED_LEAD_FIELDS) {
-    const value = data?.[field];
-
-    if (value !== undefined && value !== null && String(value).trim()) {
-      result[field] = value;
-    }
-  }
-
-  return result;
-}
-
-function iqgNormalizeLeadFieldsForStorage(data = {}) {
-  const picked = iqgPickFilledLeadFields(data);
-  const result = { ...picked };
-
-  if (result.cpf) {
-    result.cpf = formatCPF(result.cpf);
-  }
-
-  if (result.telefone) {
-    result.telefone = formatPhone(result.telefone);
-  }
-
-  if (result.estado) {
-    result.estado = normalizeUF(result.estado);
-  }
-
-  if (result.cidade && result.estado) {
-    result.cidadeEstado = `${result.cidade}/${normalizeUF(result.estado)}`;
-  }
-
-  return result;
-}
-
-function iqgBuildMergedLeadDataForCollection({
-  currentLead = {},
-  extractedData = {}
-} = {}) {
-  const normalizedExtractedData =
-    iqgNormalizeLeadFieldsForStorage(extractedData || {});
-
-  const mergedLeadData = {
-    ...(currentLead || {}),
-    ...normalizedExtractedData
-  };
-
-  if (mergedLeadData.cidade && mergedLeadData.estado) {
-    mergedLeadData.cidadeEstado =
-      `${mergedLeadData.cidade}/${normalizeUF(mergedLeadData.estado)}`;
-  }
-
   const missingFieldsAfterMerge = getMissingLeadFields(mergedLeadData);
 
   return {
@@ -17636,6 +18600,25 @@ function shouldSendAffiliateInstructionsNow({
     };
   }
 
+ // Se o lead rejeitou explicitamente múltiplas vezes e já houve tentativa de recovery,
+  // oferecer Afiliado mesmo sem taxaObjectionCount acumulado
+  const mensagemERejeicaoExplicita =
+    /\b(desisto|quero desistir|não vou pagar|nao vou pagar|não quero|nao quero|não é pra mim|nao e pra mim|tchau|pode encerrar|encerra|deixa quieto|deixa pra la|deixa pra lá|nao tenho interesse|não tenho interesse)\b/i.test(t);
+
+ const recoveryEsgotado =
+    Number(lead?.recoveryAttempts || 0) >= 1 &&
+    mensagemERejeicaoExplicita &&
+    !leadFinalizouHomologado &&
+    !fluxoDeDadosProtegido;
+
+  if (recoveryEsgotado) {
+    return {
+      shouldSend: true,
+      responseMode: "fallback_after_homologado",
+      reason: "lead_rejeitou_multiplas_vezes_e_recovery_esgotado"
+    };
+  }
+
   return {
     shouldSend: false,
     reason: "sem_sinal_suficiente_para_afiliado"
@@ -17759,18 +18742,10 @@ if (
 }
 
 function canSendBusinessFile(key, lead = {}) {
-  if (key !== "contrato") {
-    return true;
-  }
-
-  return (
-    lead?.crmEnviado === true ||
-    lead?.statusOperacional === "enviado_crm" ||
-    lead?.statusOperacional === "em_atendimento" ||
-    lead?.faseFunil === "crm" ||
-    lead?.status === "enviado_crm" ||
-    lead?.faseQualificacao === "enviado_crm"
-  );
+  // Todos os arquivos podem ser enviados a qualquer momento.
+  // O modelo de contrato é para leitura prévia.
+  // A versão oficial para assinatura é liberada pela equipe IQG após análise.
+  return true;
 }
 
 function removeFileAction(actions = [], keyToRemove = "") {
@@ -18681,6 +19656,25 @@ const whatsappProfileName = contact?.profile?.name || "";
     const from = message.from;
 const state = getState(from);
 
+// 🔎 AUDITORIA — trace_id para agrupar todos os eventos desta mensagem
+const auditTraceId = generateTraceId();
+
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.WEBHOOK,
+  eventType: AUDIT_EVENT_TYPES.REQUEST_RECEIVED,
+  payload: {
+    messageId: message.id || null,
+    messageType: message.type || "unknown",
+    hasText: Boolean(message.text?.body),
+    hasAudio: Boolean(message.audio?.id),
+    textPreview: message.text?.body ? String(message.text.body).slice(0, 100) : null
+  },
+  requiredLevel: "BASIC",
+  userPhone: from,
+  severity: "low"
+});
+
 let leadBeforeProcessing = await loadLeadProfile(from);
 
      console.log("🔎 Lead antes do processamento:", {
@@ -18940,6 +19934,44 @@ if (leadPerguntouSobreCnpjEmpresaOuPontoFisico(text)) {
     user: from,
     ultimaMensagemLead: text
   });
+}
+
+     // 🧠 NÃO REPETIR ETAPAS JÁ ENTENDIDAS — proteção anti-loop conversacional.
+// Lê do histórico quais etapas (programa, beneficios, estoque, responsabilidades,
+// investimento, compromisso) o lead já disse explicitamente ter entendido.
+// Empurra essa lista para o backendStrategicGuidance, para o Pré-SDR orientar
+// a SDR a NÃO repetir explicação dessas etapas.
+try {
+  const etapasJaEntendidasPeloLead = iqgGetExplicitUnderstoodFunnelStepsFromLead({
+    lead: currentLead || {},
+    history
+  });
+  if (Array.isArray(etapasJaEntendidasPeloLead) && etapasJaEntendidasPeloLead.length > 0) {
+    backendStrategicGuidance.push({
+      tipo: "etapas_ja_entendidas_pelo_lead",
+      prioridade: "alta",
+      motivo: "Lead já confirmou explicitamente entendimento das etapas listadas.",
+      orientacaoParaPreSdr:
+        [
+          `Etapas que o lead JÁ confirmou ter entendido: ${etapasJaEntendidasPeloLead.join(", ")}.`,
+          "A SDR NÃO deve repetir explicação dessas etapas.",
+          "A SDR NÃO deve perguntar 'quer que eu explique sobre X?' para essas etapas.",
+          "Se a SDR achar que precisa avançar, deve ir DIRETO para a próxima etapa pendente, sem reintroduzir tema antigo.",
+          "Se TODAS as etapas comerciais já foram entendidas e o lead pediu para seguir, conduzir naturalmente para o próximo passo objetivo (pré-análise, taxa, ou coleta), respeitando a Política do Turno.",
+          "Se o lead falar 'podemos seguir', 'pode prosseguir', 'manda ver', tratar como sinal de avanço — NÃO repetir explicação anterior só para 'fechar' etapa."
+        ].join("\n"),
+      detalhes: {
+        etapasEntendidas: etapasJaEntendidasPeloLead
+      }
+    });
+    console.log("🧠 Etapas já entendidas pelo lead enviadas ao Pré-SDR:", {
+      user: from,
+      ultimaMensagemLead: text,
+      etapasEntendidas: etapasJaEntendidasPeloLead
+    });
+  }
+} catch (errorEtapasEntendidas) {
+  console.error("⚠️ Falha ao calcular etapas já entendidas, mas atendimento continua:", errorEtapasEntendidas.message);
 }
      
 // 🧠 ROTEADOR SEMÂNTICO DA COLETA / CONFIRMAÇÃO
@@ -19245,7 +20277,15 @@ const msg = `Sem problema 😊 Qual é ${labels[explicitCorrection.campoParaCorr
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "correcao_explicita_campo", campoParaCorrigir: explicitCorrection.campoParaCorrigir }
+  });
+   
   return;
 }
 
@@ -19405,7 +20445,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_nome" }
+      });
       return;
     }
 
@@ -19424,7 +20471,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_cidade_estado", campo }
+      });
       return;
     }
 
@@ -19440,7 +20494,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
       if (messageId) {
         markMessageAsProcessed(messageId);
       }
-
+await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: msg,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "valor_correcao_invalido_uf" }
+      });
       return;
     }
 
@@ -19475,7 +20536,14 @@ if (leadFezPerguntaDuranteColeta && !dataFlowQuestionAlreadyGuided) {
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
-
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: msg,
+      currentLead: dadosAtualizados || {},
+      extras: { tipoSaida: "dado_corrigido_confirmacao_final", campoCorrigido: campo }
+    });
     return;
   }
 }
@@ -19663,6 +20731,22 @@ if (field === "estado" && rawExtracted?.cidade) {
   labelParaMostrar = "cidade/estado";
 }
 
+// GUARDA: Se o nome foi extraído mas pendingFields não o contém
+  // (porque já existia no DB mas pode ter sido corrompido/limpo),
+  // forçar salvamento antes de continuar
+  if (
+    rawExtracted?.nome &&
+    !pendingExtractedData.nome &&
+    !currentLead?.nome
+  ) {
+    await saveLeadProfile(from, { nome: rawExtracted.nome });
+    currentLead = await loadLeadProfile(from);
+    console.log("📝 Nome forçado para salvamento (estava null mas foi extraído):", {
+      user: from,
+      nome: rawExtracted.nome
+    });
+  }
+   
 // 🔥 NÃO CONFIRMAR NOME (deixa fluxo mais natural)
 if (field === "nome") {
   await saveLeadProfile(from, {
@@ -19687,9 +20771,18 @@ ${getMissingFieldQuestion(nextField)}`;
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
-  if (messageId) {
+ if (messageId) {
     markMessageAsProcessed(messageId);
   }
+
+  await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "nome_aceito_sem_confirmacao", campo: "nome", valor: value }
+  });
 
   return;
 }
@@ -19705,7 +20798,14 @@ Está correto?`;
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "confirmacao_campo_pendente", campo: field, valor: value }
+  });
   return;
 }
      
@@ -19714,7 +20814,61 @@ if (currentLead?.aguardandoConfirmacaoCampo) {
   const valor = currentLead.valorPendente;
   let respostaConfirmacaoCampo = "";
 
-  if (isPositiveConfirmation(text)) {
+  // TRAVA FURADA: se o lead mandou algo que NÃO é confirmação nem dado,
+  // verificar se é interrupção comercial e deixar os GPTs responderem
+  const mensagemNaoEConfirmacao =
+    !isPositiveConfirmation(text) &&
+    !isNegativeConfirmation(text) &&
+    !isLikelyPureDataAnswer(text, currentLead);
+
+  const mensagemEInterrupcaoComercial =
+    mensagemNaoEConfirmacao &&
+    (
+      isLeadQuestionObjectionOrCorrection(text) ||
+      isDeveloperOrContextCorrectionMessage(text) ||
+      isLeadRejectingOrCooling(text) ||
+      /\b(taxa|valor|preco|preço|investimento|pagar|pagamento|contrato|afiliado|link|desisto|quero desistir|não quero|nao quero|pulou|pulando|esqueceu|se esqueceu|repetindo|repetitiva|nao entendi|não entendi)\b/i.test(text)
+    );
+
+  if (mensagemEInterrupcaoComercial) {
+    // Lead trouxe pergunta, objeção ou reclamação durante confirmação de campo.
+    // NÃO prender no muro de reconfirmação — deixar os GPTs responderem.
+    dataFlowQuestionAlreadyGuided = true;
+
+    backendStrategicGuidance.push({
+      tipo: "interrupcao_comercial_durante_confirmacao_campo",
+      prioridade: "alta",
+      motivo: "Lead fez pergunta, objeção ou reclamação durante confirmação de campo.",
+      orientacaoParaPreSdr: [
+        "O lead estava confirmando um dado cadastral mas trouxe pergunta, objeção ou reclamação.",
+        "Responder primeiro a manifestação do lead de forma curta e consultiva.",
+        campo && valor
+          ? `Depois retomar: confirmar se o ${campo} "${valor}" está correto.`
+          : "Depois retomar a confirmação do dado pendente.",
+        "Não salvar o texto atual como dado cadastral.",
+        "Não reiniciar o cadastro."
+      ].filter(Boolean).join("\n")
+    });
+
+    await saveLeadProfile(from, {
+      fluxoPausadoPorPergunta: true,
+      ultimaPerguntaDuranteColeta: text,
+      campoRetomadaColeta: campo,
+      ultimaMensagem: text
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("\n\nInterrupção comercial durante confirmação de campo — GPTs vão responder:", {
+      user: from,
+      ultimaMensagemLead: text,
+      campoPendente: campo,
+      valorPendente: valor
+    });
+
+    // NÃO fazer return — o fluxo segue para os GPTs
+  } else if (isPositiveConfirmation(text)) {
+     
     const validation = validateLeadData({
       [campo]: valor
     });
@@ -19815,8 +20969,11 @@ Está correto?`;
 
   await sendWhatsAppMessage(from, respostaConfirmacaoCampo);
 } else {
+   
+  const freshLead = await loadLeadProfile(from);
+
   const updatedLead = {
-    ...(currentLead || {}),
+    ...(freshLead || {}),
     ...dadosConfirmadosDoCampo
   };
 
@@ -19890,11 +21047,16 @@ respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
-
-    return;
-  }
-
-  if (isNegativeConfirmation(text)) {
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: respostaConfirmacaoCampo,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "confirmacao_campo_positiva", campo }
+    });
+ return;
+  } else if (isNegativeConfirmation(text)) {
     await saveLeadProfile(from, {
       campoPendente: null,
       valorPendente: null,
@@ -19919,32 +21081,89 @@ respostaConfirmacaoCampo = `Perfeito, ${labelConfirmado} ✅`;
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
+await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: msg,
+      currentLead: currentLead || {},
+      extras: { tipoSaida: "confirmacao_campo_negativa", campo }
+    });
+   return;
+  } else {
+    // Mensagem não reconhecida como confirmação, negação, dado ou interrupção comercial.
+    // Se parece tentativa de confirmação ou tem conteúdo significativo,
+    // mandar para os GPTs interpretarem em vez de reconfirmar roboticamente.
+    const textNorm = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const pareceConfirmacaoIndireta =
+      textNorm.includes("sim") ||
+      textNorm.includes("correto") ||
+      textNorm.includes("certo") ||
+      textNorm.includes("isso") ||
+      textNorm.includes("ja") ||
+      textNorm.includes("confirmei") ||
+      textNorm.includes("disse") ||
+      textNorm.includes("esta") ||
+      textNorm.length > 15;
 
-    return;
-  }
+    if (pareceConfirmacaoIndireta) {
+      // Mandar para os GPTs interpretarem
+      dataFlowQuestionAlreadyGuided = true;
 
-  const labels = {
-  nome: "nome",
-  cpf: "CPF",
-  telefone: "telefone",
-  cidade: "cidade",
-  estado: "estado"
-};
+      backendStrategicGuidance.push({
+        tipo: "confirmacao_indireta_durante_campo",
+        prioridade: "alta",
+        motivo: "Lead enviou mensagem que parece confirmação mas não bateu nos padrões exatos.",
+        orientacaoParaPreSdr: [
+          `O lead estava confirmando o ${campo} "${valor}".`,
+          `O lead respondeu: "${text}"`,
+          "Essa mensagem parece ser uma confirmação, mas não bateu nos padrões do backend.",
+          "Se for confirmação, confirmar o dado e seguir para o próximo campo.",
+          "Se for negação ou dúvida, tratar adequadamente.",
+          "Não reiniciar o cadastro."
+        ].join("\n")
+      });
 
-const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?
+      await saveLeadProfile(from, {
+        fluxoPausadoPorPergunta: true,
+        ultimaPerguntaDuranteColeta: text,
+        campoRetomadaColeta: campo,
+        ultimaMensagem: text
+      });
 
-Pode responder sim ou não.`;
+      currentLead = await loadLeadProfile(from);
 
-  await sendWhatsAppMessage(from, respostaReconfirmacao);
-   await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
+      // NÃO fazer return — fluxo segue para os GPTs
+    } else {
+      // Mensagem muito curta ou incompreensível — reconfirmar
+      const labels = {
+        nome: "nome",
+        cpf: "CPF",
+        telefone: "telefone",
+        cidade: "cidade",
+        estado: "estado"
+      };
+      const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?\n\nPode responder sim ou não.`;
 
-  if (messageId) {
-    markMessageAsProcessed(messageId);
-  }
+      await sendWhatsAppMessage(from, respostaReconfirmacao);
+      await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
 
-  return;
-}   
-
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+      await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: respostaReconfirmacao,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "reconfirmacao_campo", campo }
+      });
+      return;
+    }
+  } // fecha o else (confirmação indireta ou reconfirmação)
+} // fecha o if aguardandoConfirmacaoCampo
+   
 const changedConfirmedData =
   currentLead?.dadosConfirmadosPeloLead === true &&
   REQUIRED_LEAD_FIELDS.some(field =>
@@ -19975,7 +21194,14 @@ if (changedConfirmedData) {
    if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmationMsg,
+    currentLead: extractedData || {},
+    extras: { tipoSaida: "dados_mudaram_reconfirmacao" }
+  });
   return;
 }
 
@@ -20060,8 +21286,8 @@ if (
 
 let semanticIntent = null;
 
-if (estaEmColetaOuConfirmacao) {
-  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação:", {
+if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (sem interrupção comercial):", {
     user: from,
     ultimaMensagemLead: text,
     statusAtual: currentLead?.status || "-",
@@ -20070,12 +21296,26 @@ if (estaEmColetaOuConfirmacao) {
     motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
   });
 } else {
-  semanticIntent = await runLeadSemanticIntentClassifier({
-    lead: currentLead || {},
-    history,
-    lastUserText: text,
-    lastSdrText: [...history].reverse().find(m => m.role === "assistant")?.content || ""
-  });
+  const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+
+  const [classifierResult, continuityResult] = await Promise.all([
+    runLeadSemanticIntentClassifier({
+      lead: currentLead || {},
+      history,
+      lastUserText: text,
+      lastSdrText: lastSdrTextForClassifiers,
+      auditTraceId
+    }),
+    runConversationContinuityAnalyzer({
+      lead: currentLead || {},
+      history,
+      lastUserText: text,
+      lastSdrText: lastSdrTextForClassifiers
+    })
+  ]);
+
+  semanticIntent = classifierResult;
+  var earlySemanticContinuity = continuityResult;
 
   console.log("🧠 Intenção semântica observada:", {
     user: from,
@@ -20122,7 +21362,14 @@ const podeConfirmarInteresseRealAgora =
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "interesse_real_confirmado_inicio_coleta" }
+  });
   return;
 }
 
@@ -20267,7 +21514,14 @@ if (
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: affiliateMsg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "afiliado_instrucoes_enviadas", responseMode: affiliateInstructionDecision.responseMode }
+  });
   return;
 }
      
@@ -20568,7 +21822,11 @@ if (
 ) {
   const recoveryAttemptsAtual = Number(currentLead?.recoveryAttempts || 0);
   const novoRecoveryAttempts = recoveryAttemptsAtual + 1;
-
+   
+// Se o lead já rejeitou mais de uma vez, limpar flags comerciais
+  // para evitar estado zumbi onde o lead parece qualificado mas está desistindo
+  const deveLimparFlagsComerciais = novoRecoveryAttempts >= 2;
+   
   backendStrategicGuidance.push({
     tipo: "recuperacao_comercial_antes_precadastro",
     prioridade: "alta",
@@ -20592,6 +21850,15 @@ if (
     sinalRecuperacaoComercial: true,
     ultimaRejeicaoOuEsfriamento: text,
     ultimaMensagem: text,
+
+    ...(deveLimparFlagsComerciais ? {
+      interesseReal: false,
+      taxaAlinhada: false,
+      taxaModoConversao: false,
+      sinalObjecaoTaxa: false,
+      bloqueioComercialAtivo: false,
+    } : {}),
+
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "recuperacao_comercial",
       motivo: "lead_rejeitou_ou_esfriou_antes_do_precadastro",
@@ -20662,13 +21929,10 @@ if (
           ].join("\n")
   });
 
-  await saveLeadProfile(from, {
-    sinalInteresseInicial: true,
-    ultimaIntencaoForte: text,
-    interesseReal: podeIniciarColetaSeConfirmarInteresse
-      ? true
-      : currentLead?.interesseReal === true,
+ await saveLeadProfile(from, {
+    sinalCadastroOuParticipacao: true,
     ultimaMensagem: text,
+
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "pedido_cadastro",
       motivo: "lead_pediu_cadastro_ou_participacao",
@@ -20682,7 +21946,6 @@ if (
       }
     })
   });
-
   currentLead = await loadLeadProfile(from);
 
   console.log("✅ Pedido de cadastro enviado ao Pré-SDR, sem resposta direta do backend:", {
@@ -20797,7 +22060,14 @@ Pode me dizer assim:
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "confirmacao_final_negativa" }
+  });
   return;
 }
 
@@ -20870,7 +22140,14 @@ Vou deixar isso registrado no sistema da IQG para verificação interna. Essa et
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmedMsg,
+    currentLead: confirmedLead || currentLead || {},
+    extras: { tipoSaida: "confirmacao_final_positiva_crm", crmOk: crmResult?.ok === true }
+  });
   return;
 }
 
@@ -20972,7 +22249,14 @@ if (
   if (messageId) {
     markMessageAsProcessed(messageId);
   }
-
+await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: confirmationMsg,
+    currentLead: extractedData || {},
+    extras: { tipoSaida: "dados_completos_confirmacao" }
+  });
   return;
 }
    
@@ -21142,7 +22426,7 @@ if (semanticIntent?.mentionsOtherProductLine === true) {
   });
 }
    
-     let semanticContinuity = await runConversationContinuityAnalyzer({
+    let semanticContinuity = earlySemanticContinuity || await runConversationContinuityAnalyzer({
   lead: currentLead || {},
   history,
   lastUserText: text,
@@ -21356,7 +22640,18 @@ var turnPolicy = buildTurnPolicy({
   commercialRouteDecision
 });
 
-if (hasTaxAcceptedDecisionToCollect(currentLead || {}) && canStartDataCollection(currentLead || {})) {
+const leadEstaPosCrmParaTaxa =
+  currentLead?.crmEnviado === true ||
+  currentLead?.status === "enviado_crm" ||
+  currentLead?.faseQualificacao === "enviado_crm" ||
+  currentLead?.statusOperacional === "enviado_crm" ||
+  currentLead?.faseFunil === "crm";
+
+if (
+  !leadEstaPosCrmParaTaxa &&
+  hasTaxAcceptedDecisionToCollect(currentLead || {}) &&
+  canStartDataCollection(currentLead || {})
+) {
   turnPolicy = {
     ...(turnPolicy || {}),
     modo: "coleta_dados_liberada",
@@ -21393,6 +22688,12 @@ if (hasTaxAcceptedDecisionToCollect(currentLead || {}) && canStartDataCollection
     ultimaDecisaoBackend: currentLead?.ultimaDecisaoBackend?.tipo || "",
     faseFunil: currentLead?.faseFunil || "",
     etapas: currentLead?.etapas || {}
+  });
+} else if (leadEstaPosCrmParaTaxa) {
+  console.log("🛡️ Sobrescrita pós-taxa bloqueada: lead já está pós-CRM.", {
+    user: from,
+    faseFunil: currentLead?.faseFunil || "",
+    crmEnviado: currentLead?.crmEnviado === true
   });
 }
    
@@ -21444,7 +22745,8 @@ preSdrConsultantAdvice = await runConsultantAssistant({
   classification: currentLead?.classificacao || {},
   semanticIntent,
   commercialRouteDecision,
-  backendStrategicGuidance
+  backendStrategicGuidance,
+   auditTraceId
 });
 
 const originalPreSdrConsultantAdvice = preSdrConsultantAdvice;
@@ -21869,6 +23171,29 @@ Antes disso, eu consigo te orientar sobre as regras principais do programa, resp
 
 Quer que eu te explique como funciona essa etapa depois da pré-análise?`;
 }
+
+// GUARDRAIL POS-CRM — última proteção antes do envio.
+// Se o lead já está no CRM e a SDR tentou pedir dado pessoal,
+// bloqueia e substitui por resposta consultiva curta.
+const leadEstaPosCrmGuard =
+  currentLead?.crmEnviado === true ||
+  currentLead?.status === "enviado_crm" ||
+  currentLead?.faseQualificacao === "enviado_crm" ||
+  currentLead?.statusOperacional === "enviado_crm" ||
+  currentLead?.faseFunil === "crm";
+const respostaTentouPedirDado =
+  /\b(seu nome completo|me envie seu nome|me passa o cpf|seu cpf|seu telefone|sua cidade|qual seu estado|pode me enviar seu nome)\b/i
+    .test(resposta || "");
+if (leadEstaPosCrmGuard && respostaTentouPedirDado) {
+  console.log("🛡️ GUARDRAIL POS-CRM bloqueou pedido de dados:", {
+    user: from,
+    ultimaMensagemLead: text,
+    respostaBloqueada: String(resposta || "").slice(0, 200)
+  });
+  const nomePrimeiro = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+  const prefixoNome = nomePrimeiro ? `${nomePrimeiro}, ` : "";
+  resposta = `${prefixoNome}seus dados já estão com a equipe comercial da IQG. Se precisar de qualquer informação ou tiver alguma dúvida, me conta aqui que te ajudo no que for possível.`;
+}
      
     const respostaLower = String(resposta || "").toLowerCase();
 
@@ -21923,10 +23248,15 @@ const leadAceitouTaxaNaMensagemAtual =
   ["ACEITE_CLARO", "ACEITE_FRACO_MAS_SUFFICIENTE"].includes(taxPhaseDecision?.categoria) &&
   taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO";
 
+const leadFezPerguntaSobreValorOuPagamento =
+  semanticIntent?.asksQuestion === true &&
+  /\b(valor|quanto|preco|preço|taxa|qual.*valor|qual.*taxa|quanto.*pago|quando.*pago|e qual|qual e|quanto custa|quanto e a taxa|qual o valor|qual a taxa)\b/i.test(text || "");
+
 const leadTemPerguntaComercialAbertaAntesDaColeta =
   leadAceitouTaxaNaMensagemAtual !== true &&
   (
     currentLead?.pendenciaPerguntaComercialAberta === true ||
+    leadFezPerguntaSobreValorOuPagamento ||
     (
       semanticIntent?.asksQuestion === true &&
       semanticIntent?.positiveRealInterest !== true &&
@@ -21935,6 +23265,7 @@ const leadTemPerguntaComercialAbertaAntesDaColeta =
     Boolean(semanticIntent?.requestedFile) ||
     /\b(catalogo|catálogo|folder|pdf|material|kit|manual|produto|produtos|iqg|nano|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto)\b/i.test(text || "")
   );
+     
 const podeIniciarColeta =
   canStartDataCollection(currentLead || {}) &&
   currentLead?.interesseReal === true &&
@@ -21942,7 +23273,12 @@ const podeIniciarColeta =
 
 const startedDataCollection =
   respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
-  respostaLower.includes("pode me enviar seu nome completo");
+  respostaLower.includes("pode me enviar seu nome completo") ||
+  respostaLower.includes("me envie seu nome completo") ||
+  respostaLower.includes("qual seu nome completo") ||
+  respostaLower.includes("me passa seu nome completo") ||
+  respostaLower.includes("enviar seu nome completo") ||
+  respostaLower.includes("me manda seu nome completo");
 
 /*
   Importante:
@@ -21950,21 +23286,54 @@ const startedDataCollection =
   A coleta só começa quando a resposta final realmente pede o nome completo
   e quando não existe pergunta comercial aberta do lead.
 */
+
+// 🛡️ TRAVA FINAL OBRIGATÓRIA — impede coleta se investimento não foi explicado
+if (
+  startedDataCollection &&
+  !podeIniciarColeta &&
+  !coletaLiberadaPorTaxaAceita
+) {
+  const etapasPendentesParaColeta = getMissingFunnelStepLabels(currentLead || {});
+
+  console.log("🛑 TRAVA FINAL: SDR tentou pedir dados mas coleta não está liberada. Substituindo resposta:", {
+    user: from,
+    ultimaMensagemLead: text,
+    etapasPendentes: etapasPendentesParaColeta,
+    respostaOriginal: respostaFinal
+  });
+
+  const safeResponse = getSafeCurrentPhaseResponse(currentLead || {});
+  respostaFinal = safeResponse.message;
+
+  if (safeResponse.fileKey) {
+    actions.push(safeResponse.fileKey);
+  }
+
+  // Re-sincroniza actions após substituir a resposta
+  const syncAfterBlock = syncActionsFromFinalReply({
+    respostaFinal,
+    actions
+  });
+  respostaFinal = syncAfterBlock.respostaFinal;
+}
      
 if (
   startedDataCollection &&
   podeIniciarColeta &&
+  !leadFezPerguntaSobreValorOuPagamento &&    // ← NOVO
   currentLead?.faseQualificacao !== "coletando_dados"
-) {
+){
   await saveLeadProfile(from, {
+     
     // 🔥 limpa dados antigos para não reaproveitar nome/CPF/telefone de conversa passada
-    nome: null,
-    cpf: null,
-    telefone: null,
-    cidade: null,
-    estado: null,
-    cidadeEstado: null,
-
+    // Limpa dados antigos SOMENTE se a coleta está realmente iniciando do zero.
+    // Se o lead JÁ tinha enviado nome/CPF nesta mesma sessão, preservar.
+    ...(currentLead?.nome ? {} : { nome: null }),
+    ...(currentLead?.cpf ? {} : { cpf: null }),
+    ...(currentLead?.telefone ? {} : { telefone: null }),
+    ...(currentLead?.cidade ? {} : { cidade: null }),
+    ...(currentLead?.estado ? {} : { estado: null }),
+    ...(currentLead?.cidadeEstado ? {} : { cidadeEstado: null }),
     campoPendente: null,
     valorPendente: null,
     campoEsperado: "nome",
@@ -22554,6 +23923,44 @@ auditLog("Problemas encontrados pelas travas antes do envio", {
 if (sdrReviewFindings.length > 0) {
   const primeiraRespostaSdr = respostaFinal;
 
+  /*
+    🛡️ CORREÇÃO FALHA 3:
+    Passa os dados que o backend ACABOU de extrair da mensagem atual
+    para que o GPT regenerador NÃO peça de novo um dado que o lead
+    acabou de enviar (ex: nome, CPF, telefone, cidade, estado).
+  */
+  const dadosExtraidosNesteTurno = {
+    nome: extractedData?.nome || currentLead?.nome || null,
+    cpf: extractedData?.cpf || currentLead?.cpf || null,
+    telefone: extractedData?.telefone || currentLead?.telefone || null,
+    cidade: extractedData?.cidade || currentLead?.cidade || null,
+    estado: extractedData?.estado || currentLead?.estado || null
+  };
+
+  const dadosJaPreenchidos = Object.entries(dadosExtraidosNesteTurno)
+    .filter(([_, v]) => v)
+    .map(([k, _]) => k);
+
+  const guardFindingsComDados = [
+    ...sdrReviewFindings,
+    ...(dadosJaPreenchidos.length > 0
+      ? [{
+          tipo: "dados_ja_recebidos_neste_turno",
+          prioridade: "critica",
+          orientacao: [
+            `O lead já informou ou já possui estes dados preenchidos: ${dadosJaPreenchidos.join(", ")}.`,
+            dadosExtraidosNesteTurno.nome ? `Nome já recebido: "${dadosExtraidosNesteTurno.nome}". NÃO pedir nome de novo.` : "",
+            dadosExtraidosNesteTurno.cpf ? `CPF já recebido. NÃO pedir CPF de novo.` : "",
+            dadosExtraidosNesteTurno.telefone ? `Telefone já recebido. NÃO pedir telefone de novo.` : "",
+            dadosExtraidosNesteTurno.cidade ? `Cidade já recebida. NÃO pedir cidade de novo.` : "",
+            dadosExtraidosNesteTurno.estado ? `Estado já recebido. NÃO pedir estado de novo.` : "",
+            "Se a coleta estiver liberada, pedir apenas o PRÓXIMO campo que ainda está faltando.",
+            "Se todos os campos já estiverem preenchidos, seguir para confirmação dos dados."
+          ].filter(Boolean).join("\n")
+        }]
+      : [])
+  ];
+
   respostaFinal = await regenerateSdrReplyWithGuardGuidance({
   currentLead: {
     ...(currentLead || {}),
@@ -22564,7 +23971,7 @@ if (sdrReviewFindings.length > 0) {
   primeiraRespostaSdr,
   preSdrConsultantAdvice: preSdrConsultantAdvice || {},
   preSdrConsultantContext,
-  guardFindings: sdrReviewFindings
+  guardFindings: guardFindingsComDados
 });
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
@@ -22759,6 +24166,120 @@ const respostaAntesDaBarreiraFinalLeak = respostaFinal;
 
 respostaFinal = enforceNoInternalLeakBeforeSend(respostaFinal);
 
+/*
+  🛡️ BARREIRA FINAL ANTI-PLACEHOLDER DE PREÇO
+  Detecta "R$ XX", "XX,XX", valores fictícios ou listas de preço inventadas.
+  Se encontrar, substitui por resposta segura sobre o e-commerce.
+*/
+const placeholderPrecoDetectado =
+  /R\$\s*XX/i.test(respostaFinal) ||
+  /R\$\s*--/i.test(respostaFinal) ||
+  /:\s*R\$\s*XX/i.test(respostaFinal) ||
+  /XX[,.]XX/i.test(respostaFinal) ||
+  /valor\s+a\s+definir/i.test(respostaFinal) ||
+  /preco\s+a\s+definir/i.test(respostaFinal) ||
+  /preço\s+a\s+definir/i.test(respostaFinal);
+
+/*
+  🛡️ BARREIRA FINAL ANTI-REPETIÇÃO DE DADO JÁ COLETADO
+  Se o lead já informou nome (ou CPF, telefone, cidade, estado)
+  e a resposta final ainda está pedindo esse dado de novo,
+  o backend substitui por pedido do próximo campo faltante.
+*/
+const camposJaPreenchidosDoLead = {
+  nome: Boolean(String(currentLead?.nome || extractedData?.nome || "").trim()),
+  cpf: Boolean(String(currentLead?.cpf || extractedData?.cpf || "").trim()),
+  telefone: Boolean(String(currentLead?.telefone || extractedData?.telefone || "").trim()),
+  cidade: Boolean(String(currentLead?.cidade || extractedData?.cidade || "").trim()),
+  estado: Boolean(String(currentLead?.estado || extractedData?.estado || "").trim())
+};
+
+const respostaLowerBarreira = String(respostaFinal || "").toLowerCase();
+
+const respostaPedeNomeMasJaTem =
+  camposJaPreenchidosDoLead.nome &&
+  (
+    respostaLowerBarreira.includes("nome completo") ||
+    respostaLowerBarreira.includes("me envie seu nome") ||
+    respostaLowerBarreira.includes("me passa seu nome") ||
+    respostaLowerBarreira.includes("me manda seu nome") ||
+    respostaLowerBarreira.includes("qual seu nome")
+  );
+
+const respostaPedeCpfMasJaTem =
+  camposJaPreenchidosDoLead.cpf &&
+  (
+    respostaLowerBarreira.includes("seu cpf") ||
+    respostaLowerBarreira.includes("me envie seu cpf") ||
+    respostaLowerBarreira.includes("me passa seu cpf") ||
+    respostaLowerBarreira.includes("me manda seu cpf")
+  );
+
+const respostaPedeTelefoneMasJaTem =
+  camposJaPreenchidosDoLead.telefone &&
+  (
+    respostaLowerBarreira.includes("telefone com ddd") ||
+    respostaLowerBarreira.includes("seu telefone") ||
+    respostaLowerBarreira.includes("número com ddd")
+  );
+
+const respostaPedeCidadeMasJaTem =
+  camposJaPreenchidosDoLead.cidade &&
+  (
+    respostaLowerBarreira.includes("qual sua cidade") ||
+    respostaLowerBarreira.includes("sua cidade")
+  );
+
+const respostaPedeEstadoMasJaTem =
+  camposJaPreenchidosDoLead.estado &&
+  (
+    respostaLowerBarreira.includes("qual seu estado") ||
+    respostaLowerBarreira.includes("seu estado")
+  );
+
+const algumDadoRepetidoNaResposta =
+  respostaPedeNomeMasJaTem ||
+  respostaPedeCpfMasJaTem ||
+  respostaPedeTelefoneMasJaTem ||
+  respostaPedeCidadeMasJaTem ||
+  respostaPedeEstadoMasJaTem;
+
+if (algumDadoRepetidoNaResposta) {
+  const dadoRepetido =
+    respostaPedeNomeMasJaTem ? "nome" :
+    respostaPedeCpfMasJaTem ? "cpf" :
+    respostaPedeTelefoneMasJaTem ? "telefone" :
+    respostaPedeCidadeMasJaTem ? "cidade" :
+    "estado";
+
+  console.warn("🛡️ BARREIRA ANTI-REPETIÇÃO DE DADO: resposta pedia dado que o lead já informou. Corrigida antes do envio:", {
+    user: from,
+    dadoRepetido,
+    nomePreenchido: camposJaPreenchidosDoLead.nome,
+    cpfPreenchido: camposJaPreenchidosDoLead.cpf,
+    telefonePreenchido: camposJaPreenchidosDoLead.telefone,
+    cidadePreenchida: camposJaPreenchidosDoLead.cidade,
+    estadoPreenchido: camposJaPreenchidosDoLead.estado,
+    respostaBloqueada: String(respostaFinal).slice(0, 200)
+  });
+
+  const mergedParaBarreira = {
+    ...(currentLead || {}),
+    ...(extractedData || {})
+  };
+
+  const camposFaltantesBarreira = getMissingLeadFields(mergedParaBarreira);
+
+  if (camposFaltantesBarreira.length > 0) {
+    const proximoCampoReal = camposFaltantesBarreira[0];
+    respostaFinal = `Perfeito 😊\n\n${getMissingFieldQuestion(proximoCampoReal)}`;
+  } else if (!mergedParaBarreira.dadosConfirmadosPeloLead) {
+    respostaFinal = buildLeadConfirmationMessage(mergedParaBarreira);
+  } else {
+    respostaFinal = "Perfeito 😊 Seus dados já estão completos. Vamos seguir com a análise!";
+  }
+}
+
 if (respostaFinal !== respostaAntesDaBarreiraFinalLeak) {
   console.warn("🛡️ Barreira final removeu possível vazamento interno antes do WhatsApp:", {
     user: from,
@@ -22809,6 +24330,137 @@ auditLog("Resposta FINAL que sera enviada ao WhatsApp", {
   actions
 });
 
+// 🔎 AUDITORIA — Grava resposta final da SDR + estado do lead + decisões
+await recordAuditEvent({
+  traceId: auditTraceId,
+  component: AUDIT_COMPONENTS.BACKEND_ORCHESTRATOR,
+  eventType: AUDIT_EVENT_TYPES.REQUEST_COMPLETED,
+  payload: {
+    respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
+    actions: syncedFinalReply.actions || actions || [],
+    sdrReviewFindingsCount: sdrReviewFindings.length,
+    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => ({
+      tipo: f.tipo,
+      prioridade: f.prioridade
+    })),
+    estadoLead: {
+      status: currentLead?.status || "-",
+      faseQualificacao: currentLead?.faseQualificacao || "-",
+      faseFunil: currentLead?.faseFunil || "-",
+      temperaturaComercial: currentLead?.temperaturaComercial || "-",
+      rotaComercial: currentLead?.rotaComercial || "-",
+      interesseReal: currentLead?.interesseReal === true,
+      taxaAlinhada: currentLead?.taxaAlinhada === true,
+      taxaObjectionCount: Number(currentLead?.taxaObjectionCount || 0),
+      etapas: currentLead?.etapas || {}
+    },
+    turnPolicy: {
+      modo: turnPolicy?.modo || "-",
+      ofertaPermitida: turnPolicy?.ofertaPermitida || "-",
+      podeFalarTaxa: turnPolicy?.podeFalarTaxa === true,
+      podePedirDados: turnPolicy?.podePedirDados === true,
+      podeFalarAfiliado: turnPolicy?.podeFalarAfiliado === true
+    },
+    podeIniciarColeta: podeIniciarColeta === true,
+    startedDataCollection: startedDataCollection === true,
+    coletaLiberadaPorTaxaAceita: coletaLiberadaPorTaxaAceita === true
+  },
+  requiredLevel: "STANDARD",
+  userPhone: from,
+  severity: sdrReviewFindings.length > 0 ? "medium" : "low"
+});
+
+// Se os GPTs responderam durante coleta e o lead enviou dado cadastral,
+// garantir que o dado foi salvo mesmo que o backend não tenha processado
+if (
+  estaEmColetaOuConfirmacao &&
+  dataFlowQuestionAlreadyGuided !== true &&
+  hasNewRequiredLeadData &&
+  Object.keys(normalizedExtractedLeadData || {}).length > 0
+) {
+  const dadosParaSalvarPosGpt = {};
+  for (const [campo, valor] of Object.entries(normalizedExtractedLeadData)) {
+    if (REQUIRED_LEAD_FIELDS.includes(campo) && valor && !currentLead?.[campo]) {
+      dadosParaSalvarPosGpt[campo] = valor;
+    }
+  }
+  if (Object.keys(dadosParaSalvarPosGpt).length > 0) {
+    await saveLeadProfile(from, dadosParaSalvarPosGpt);
+    currentLead = await loadLeadProfile(from);
+    console.log("📝 Dados cadastrais salvos após GPTs responderem durante coleta:", {
+      user: from,
+      dadosSalvos: Object.keys(dadosParaSalvarPosGpt)
+    });
+  }
+}
+
+// CORREÇÃO: Se o GPT respondeu durante confirmação de campo e a resposta
+// parece aceitar o dado, o backend deve confirmar o campo automaticamente.
+// Sem isso, o GPT gera texto mas o estado fica travado.
+if (
+  currentLead?.aguardandoConfirmacaoCampo === true &&
+  dataFlowQuestionAlreadyGuided === true &&
+  currentLead?.campoPendente &&
+  currentLead?.valorPendente
+) {
+  const respostaLowerConfirm = (respostaFinal || "").toLowerCase();
+  const gptPareceuConfirmar =
+    respostaLowerConfirm.includes("confirmado") ||
+    respostaLowerConfirm.includes("anotado") ||
+    respostaLowerConfirm.includes("registrado") ||
+    respostaLowerConfirm.includes("entendi") ||
+    respostaLowerConfirm.includes("perfeito") ||
+    respostaLowerConfirm.includes("retomando") ||
+    respostaLowerConfirm.includes("desculp") ||
+    /\best[aá] correto\b/i.test(respostaFinal || "");
+
+  const gptReconfirmou =
+    respostaLowerConfirm.includes("está correto?") ||
+    respostaLowerConfirm.includes("esta correto?") ||
+    respostaLowerConfirm.includes("pode confirmar?") ||
+    respostaLowerConfirm.includes("confirma?");
+
+  if (gptPareceuConfirmar && !gptReconfirmou) {
+    // GPT aceitou o dado — salvar confirmação no backend
+    const campoConfirmado = currentLead.campoPendente;
+    const valorConfirmado = currentLead.valorPendente;
+
+    const dadosConfirmados = { [campoConfirmado]: valorConfirmado };
+
+    if (campoConfirmado === "cidade" && currentLead?.estadoPendente) {
+      dadosConfirmados.estado = currentLead.estadoPendente;
+    }
+    if (campoConfirmado === "estado" && currentLead?.cidadePendente) {
+      dadosConfirmados.cidade = currentLead.cidadePendente;
+    }
+
+    const updatedLead = { ...(currentLead || {}), ...dadosConfirmados };
+    const missingAfterConfirm = getMissingLeadFields(updatedLead);
+
+    await saveLeadProfile(from, {
+      ...dadosConfirmados,
+      campoPendente: null,
+      valorPendente: null,
+      cidadePendente: null,
+      estadoPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: missingAfterConfirm.length > 0 ? "dados_parciais" : "aguardando_confirmacao_dados",
+      status: missingAfterConfirm.length > 0 ? "dados_parciais" : "aguardando_confirmacao_dados",
+      ...(missingAfterConfirm.length > 0 ? { campoEsperado: missingAfterConfirm[0] } : { campoEsperado: null }),
+      ...(missingAfterConfirm.length === 0 ? { aguardandoConfirmacao: true, dadosConfirmadosPeloLead: false } : {})
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("✅ GPT confirmou campo durante trava furada — backend salvou:", {
+      user: from,
+      campoConfirmado,
+      valorConfirmado,
+      proximoCampo: missingAfterConfirm[0] || "nenhum"
+    });
+  }
+}
+     
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
      
@@ -22904,6 +24556,937 @@ return;
 
     console.error("Erro no webhook:", error);
     return;
+  }
+});
+
+/* =========================
+   DASHBOARD DE AUDITORIA — IQG
+   Visualiza eventos agrupados por conversa (trace_id).
+========================= */
+
+app.get("/auditoria", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const senhaQuery = req.query.senha
+      ? `?senha=${encodeURIComponent(req.query.senha)}`
+      : "";
+
+    const componentFilter = req.query.component || "";
+    const severityFilter = req.query.severity || "";
+    const traceFilter = req.query.trace || "";
+    const modeFilter = req.query.mode || "grouped";
+    const leadFilter = req.query.lead || "";
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+
+    const query = {};
+    if (componentFilter) query.component = componentFilter;
+    if (severityFilter) query.severity = severityFilter;
+    if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
+    if (leadFilter) {
+      query.userMasked = { $regex: leadFilter, $options: "i" };
+    } 
+
+    const events = await db
+      .collection("audit_events")
+      .find(query)
+      .sort({ timestamp: -1 })
+      .limit(limit)
+      .toArray();
+
+    const totalEvents = await db.collection("audit_events").countDocuments({});
+
+    const componentCounts = {};
+    const severityCounts = {};
+    for (const evt of events) {
+      componentCounts[evt.component] = (componentCounts[evt.component] || 0) + 1;
+      severityCounts[evt.severity] = (severityCounts[evt.severity] || 0) + 1;
+    }
+
+    const severityColors = {
+      low: "#16a34a",
+      medium: "#f59e0b",
+      high: "#dc2626",
+      critical: "#7c2d12"
+    };
+
+    const componentOptions = Object.keys(componentCounts)
+      .sort()
+      .map(c => '<option value="' + escapeHtml(c) + '" ' + (componentFilter === c ? "selected" : "") + '>' + escapeHtml(c) + ' (' + componentCounts[c] + ')</option>')
+      .join("");
+
+    let contentHtml = "";
+
+    if (modeFilter === "flat") {
+      const rows = events.map(evt => {
+        const sevColor = severityColors[evt.severity] || "#6b7280";
+        const payloadPreview = JSON.stringify(evt.payload || {}).slice(0, 300);
+        const traceShort = evt.traceId ? evt.traceId.slice(0, 8) : "-";
+        const timestamp = evt.timestamp
+          ? new Date(evt.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+
+        return '<tr>' +
+          '<td style="font-family:monospace;font-size:11px;color:#6b7280;">' + escapeHtml(traceShort) + '</td>' +
+          '<td>' + escapeHtml(timestamp) + '</td>' +
+          '<td><strong>' + escapeHtml(evt.component || "-") + '</strong></td>' +
+          '<td>' + escapeHtml(evt.eventType || "-") + '</td>' +
+          '<td><span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(evt.severity || "low") + '</span></td>' +
+          '<td>' + escapeHtml(evt.userMasked || "-") + '</td>' +
+          '<td style="font-size:11px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(payloadPreview) + '">' + escapeHtml(payloadPreview) + '</td>' +
+          '<td style="font-size:11px;color:#9ca3af;">' + escapeHtml(evt.auditLevel || "-") + '</td>' +
+          '</tr>';
+      }).join("");
+
+      contentHtml = '<div class="table-card"><table>' +
+        '<thead><tr><th>Trace</th><th>Timestamp</th><th>Componente</th><th>Evento</th><th>Severidade</th><th>Lead</th><th>Payload</th><th>Nível</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="8" class="empty">Nenhum evento encontrado.</td></tr>') + '</tbody>' +
+        '</table></div>';
+    } else if (modeFilter === "by_lead") {
+      const byLead = {};
+      for (const evt of events) {
+        const key = evt.userMasked || "sem_lead";
+        if (!byLead[key]) byLead[key] = [];
+        byLead[key].push(evt);
+      }
+
+      for (const key of Object.keys(byLead)) {
+        byLead[key].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      }
+
+      const sortedLeads = Object.keys(byLead).sort((a, b) => {
+        return new Date(byLead[b][0].timestamp) - new Date(byLead[a][0].timestamp);
+      });
+
+      const leadCards = sortedLeads.map(leadKey => {
+        const leadEvents = byLead[leadKey];
+        const totalEvts = leadEvents.length;
+
+        const traceIds = [...new Set(leadEvents.map(e => e.traceId).filter(Boolean))];
+        const totalConversas = traceIds.length;
+
+        const maxSeverity = leadEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low");
+
+        const sevColor = severityColors[maxSeverity] || "#6b7280";
+
+        const firstTime = leadEvents[leadEvents.length - 1].timestamp
+          ? new Date(leadEvents[leadEvents.length - 1].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+        const lastTime = leadEvents[0].timestamp
+          ? new Date(leadEvents[0].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+
+        const componentBreakdown = {};
+        for (const evt of leadEvents) {
+          componentBreakdown[evt.component] = (componentBreakdown[evt.component] || 0) + 1;
+        }
+
+        const componentBadges = Object.keys(componentBreakdown)
+          .sort()
+          .map(c => '<span style="background:#e5e7eb;color:#374151;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;margin:2px;">' + escapeHtml(c) + ' (' + componentBreakdown[c] + ')</span>')
+          .join(" ");
+
+        const recentTraces = traceIds.slice(0, 5).map(tid => {
+          const traceEvts = leadEvents.filter(e => e.traceId === tid);
+          const traceTime = traceEvts[0]?.timestamp
+            ? new Date(traceEvts[0].timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+            : "-";
+          const traceText = traceEvts[0]?.payload?.textPreview || traceEvts[0]?.payload?.ultimaMensagemLead || "-";
+          const traceShort = tid.slice(0, 8);
+
+          return '<div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<span style="font-family:monospace;font-size:11px;color:#6b7280;flex:0 0 70px;">' + escapeHtml(traceShort) + '</span>' +
+            '<span style="font-size:12px;color:#6b7280;flex:0 0 140px;">' + escapeHtml(traceTime) + '</span>' +
+            '<span style="font-size:12px;color:#374151;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(String(traceText).slice(0, 120)) + '</span>' +
+            '<a style="font-size:11px;color:#2563eb;flex:0 0 auto;" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=grouped&trace=' + encodeURIComponent(tid) + '">ver</a>' +
+          '</div>';
+        }).join("");
+
+        return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">' +
+            '<div>' +
+              '<span style="font-size:16px;font-weight:700;">📱 ' + escapeHtml(leadKey) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(maxSeverity) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + totalEvts + ' eventos</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + totalConversas + ' conversas</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<div style="font-size:12px;color:#6b7280;">Primeiro evento: ' + escapeHtml(firstTime) + '</div>' +
+            '<div style="font-size:12px;color:#6b7280;">Último evento: ' + escapeHtml(lastTime) + '</div>' +
+          '</div>' +
+          '<div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px;">' + componentBadges + '</div>' +
+          '<div style="border-top:1px solid #e5e7eb;padding-top:10px;">' +
+            '<div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;">Últimas conversas:</div>' +
+            recentTraces +
+          '</div>' +
+        '</div>';
+      }).join("");
+
+      contentHtml = leadCards || '<p class="empty">Nenhum evento encontrado.</p>';
+    } else {
+      const grouped = {};
+      for (const evt of events) {
+        const key = evt.traceId || "sem_trace";
+         
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(evt);
+      }
+
+      for (const key of Object.keys(grouped)) {
+        grouped[key].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      }
+
+      const sortedTraces = Object.keys(grouped).sort((a, b) => {
+        const lastA = grouped[a][grouped[a].length - 1];
+        const lastB = grouped[b][grouped[b].length - 1];
+        return new Date(lastB.timestamp) - new Date(lastA.timestamp);
+      });
+
+      const cards = sortedTraces.map(traceId => {
+        const traceEvents = grouped[traceId];
+        const first = traceEvents[0];
+        const last = traceEvents[traceEvents.length - 1];
+        const traceShort = traceId !== "sem_trace" ? traceId.slice(0, 12) : "sem trace";
+        const leadMasked = first.userMasked || "-";
+        const textPreview = first.payload?.textPreview || first.payload?.ultimaMensagemLead || "-";
+        const startTime = first.timestamp
+          ? new Date(first.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+          : "-";
+
+        const maxSeverity = traceEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low");
+
+        const sevColor = severityColors[maxSeverity] || "#6b7280";
+
+        const stepIcons = {
+          webhook: "📩",
+          gpt_semantic_intent: "🧠",
+          gpt_semantic_continuity: "📜",
+          gpt_pre_sdr_consultant: "🎯",
+          gpt_sdr: "💬",
+          gpt_supervisor: "👁️",
+          gpt_classifier: "📊",
+          gpt_data_flow_router: "🔀",
+          gpt_route_mix_guard: "🛡️"
+        };
+
+        const timeline = traceEvents.map(evt => {
+          const icon = stepIcons[evt.component] || "⚙️";
+          const evtTime = evt.timestamp
+            ? new Date(evt.timestamp).toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo" })
+            : "-";
+          const evtSevColor = severityColors[evt.severity] || "#6b7280";
+          const payloadStr = JSON.stringify(evt.payload || {}).slice(0, 250);
+
+          return '<div style="display:flex;gap:12px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f1f5f9;">' +
+            '<div style="font-size:20px;flex:0 0 30px;text-align:center;">' + icon + '</div>' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                '<strong style="font-size:13px;">' + escapeHtml(evt.component) + '</strong>' +
+                '<span style="font-size:11px;color:#6b7280;">' + escapeHtml(evt.eventType) + '</span>' +
+                '<span style="background:' + evtSevColor + ';color:white;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;">' + escapeHtml(evt.severity) + '</span>' +
+                '<span style="font-size:11px;color:#9ca3af;">' + escapeHtml(evtTime) + '</span>' +
+              '</div>' +
+              '<div style="font-size:11px;color:#6b7280;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(payloadStr) + '">' + escapeHtml(payloadStr) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join("");
+
+        return '<div style="background:white;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">' +
+            '<div>' +
+              '<span style="font-family:monospace;font-size:12px;color:#6b7280;margin-right:10px;">trace:' + escapeHtml(traceShort) + '</span>' +
+              '<span style="font-size:13px;font-weight:700;">' + escapeHtml(leadMasked) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;margin-left:10px;">' + escapeHtml(startTime) + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' +
+              '<span style="background:' + sevColor + ';color:white;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">' + escapeHtml(maxSeverity) + '</span>' +
+              '<span style="font-size:12px;color:#6b7280;">' + traceEvents.length + ' eventos</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size:13px;color:#374151;margin-bottom:12px;padding:8px 12px;background:#f0fdf4;border-radius:8px;border-left:4px solid #16a34a;">' +
+            '💬 ' + escapeHtml(String(textPreview).slice(0, 150)) +
+          '</div>' +
+          timeline +
+        '</div>';
+      }).join("");
+
+      contentHtml = cards || '<p class="empty">Nenhum evento encontrado.</p>';
+    }
+
+    const modeLinks = [
+      { mode: "grouped", label: "Por conversa" },
+      { mode: "by_lead", label: "Por lead" },
+      { mode: "flat", label: "Lista plana" }
+    ];
+
+    const modeToggle = modeLinks
+      .filter(m => m.mode !== modeFilter)
+      .map(m => '<a class="btn" href="/auditoria' + senhaQuery + (senhaQuery ? '&' : '?') + 'mode=' + m.mode + '">' + m.label + '</a>')
+      .join(" ");
+
+    res.send('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Auditoria IQG</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>' +
+      'body{margin:0;font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;}' +
+      'header{background:#0f172a;color:white;padding:20px 28px;}' +
+      'header h1{margin:0;font-size:24px;}' +
+      'header p{margin:6px 0 0;color:#94a3b8;font-size:14px;}' +
+      '.container{max-width:1600px;margin:0 auto;padding:24px;}' +
+      '.topbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;}' +
+      '.btn{display:inline-block;padding:9px 12px;background:#374151;color:white;text-decoration:none;border-radius:8px;font-size:14px;}' +
+      '.stats{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;}' +
+      '.stat-card{background:white;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;min-width:160px;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      '.stat-card small{display:block;color:#6b7280;margin-bottom:4px;font-size:12px;}' +
+      '.stat-card strong{font-size:22px;}' +
+      '.toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:white;border:1px solid #e5e7eb;padding:14px;border-radius:10px;margin-bottom:18px;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      '.toolbar select,.toolbar input{height:36px;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;font-size:13px;}' +
+      '.toolbar button{height:36px;padding:0 14px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:13px;}' +
+      '.table-card{background:white;border:1px solid #e5e7eb;border-radius:10px;overflow-x:auto;box-shadow:0 2px 8px rgba(0,0,0,0.04);}' +
+      'table{width:100%;border-collapse:collapse;}' +
+      'th{background:#f8fafc;color:#334155;font-size:12px;text-align:left;padding:10px 12px;border-bottom:1px solid #e5e7eb;white-space:nowrap;}' +
+      'td{padding:9px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;vertical-align:middle;}' +
+      'tr:hover td{background:#f8fafc;}' +
+      '.empty{color:#6b7280;font-style:italic;padding:20px;text-align:center;}' +
+      '</style></head><body>' +
+      '<header><h1>Auditoria IQG</h1><p>Eventos estruturados — Nível atual: ' + escapeHtml(getCurrentAuditLevel()) + '</p></header>' +
+      '<div class="container">' +
+        '<div class="topbar">' +
+          '<a class="btn" href="/dashboard' + senhaQuery + '">← Voltar ao Dashboard</a>' +
+          modeToggle +
+          '<a id="btnRelatorio24h" class="btn" style="background:#2563eb;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=24" download>📥 Baixar Relatório 24h</a>' +
+          '<a id="btnRelatorio7d" class="btn" style="background:#7c3aed;" href="/auditoria/relatorio-tecnico' + senhaQuery + (senhaQuery ? '&' : '?') + 'horas=168" download>📥 Relatório 7 dias</a>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;margin-bottom:18px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+          '<label style="font-size:13px;font-weight:700;color:#374151;white-space:nowrap;">🎯 Filtro de lead para relatórios:</label>' +
+          '<input id="relatorioLeadFilter" type="text" style="flex:1;min-width:220px;height:34px;border:1px solid #d1d5db;border-radius:8px;padding:0 10px;font-size:13px;font-family:monospace;" placeholder="Ex: 5554*****75 — vazio = todos os leads">' +
+          '<button type="button" onclick="document.getElementById(\'relatorioLeadFilter\').value=\'\';atualizarLinksRelatorio();" style="height:34px;padding:0 12px;border:1px solid #d1d5db;border-radius:8px;background:#f9fafb;color:#374151;font-size:12px;font-weight:600;cursor:pointer;">Limpar</button>' +
+          '<a id="btnRelatorioCompleto" class="btn" style="display:none;background:#dc2626;font-weight:800;font-size:12px;white-space:nowrap;" download>📥 Histórico COMPLETO deste lead</a>' +
+          '<span id="relatorioFiltroStatus" style="font-size:12px;color:#6b7280;font-style:italic;">Relatórios baixarão todos os leads</span>' +
+        '</div>' +
+        '<script>' +
+          'var relatorio24hBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=24") + ';' +
+          'var relatorio7dBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=168") + ';' +
+          'var relatorioCompletoBase = ' + JSON.stringify("/auditoria/relatorio-tecnico" + senhaQuery + (senhaQuery ? "&" : "?") + "horas=all") + ';' +
+          'function atualizarLinksRelatorio() {' +
+            'var input = document.getElementById("relatorioLeadFilter");' +
+            'var lead = input ? String(input.value || "").trim() : "";' +
+            'var b24 = document.getElementById("btnRelatorio24h");' +
+            'var b7d = document.getElementById("btnRelatorio7d");' +
+            'var bFull = document.getElementById("btnRelatorioCompleto");' +
+            'var status = document.getElementById("relatorioFiltroStatus");' +
+            'var suffix = lead ? ("&lead=" + encodeURIComponent(lead)) : "";' +
+            'if (b24) b24.href = relatorio24hBase + suffix;' +
+            'if (b7d) b7d.href = relatorio7dBase + suffix;' +
+            'if (bFull) {' +
+              'if (lead) {' +
+                'bFull.href = relatorioCompletoBase + "&lead=" + encodeURIComponent(lead);' +
+                'bFull.style.display = "inline-block";' +
+              '} else {' +
+                'bFull.style.display = "none";' +
+              '}' +
+            '}' +
+            'if (status) {' +
+              'status.textContent = lead ? ("Relatórios filtrarão apenas o lead: " + lead) : "Relatórios baixarão todos os leads";' +
+              'status.style.color = lead ? "#dc2626" : "#6b7280";' +
+              'status.style.fontWeight = lead ? "700" : "400";' +
+            '}' +
+          '}' +
+          'document.addEventListener("DOMContentLoaded", function() {' +
+            'var input = document.getElementById("relatorioLeadFilter");' +
+            'if (input) {' +
+              'input.addEventListener("input", atualizarLinksRelatorio);' +
+              'input.addEventListener("change", atualizarLinksRelatorio);' +
+            '}' +
+          '});' +
+        '</script>' +
+        '<div class="stats">' +
+          '<div class="stat-card"><small>Total de eventos</small><strong>' + totalEvents + '</strong></div>' +
+          '<div class="stat-card"><small>Exibindo</small><strong>' + events.length + '</strong></div>' +
+          '<div class="stat-card"><small>Nível ativo</small><strong>' + escapeHtml(getCurrentAuditLevel()) + '</strong></div>' +
+          '<div class="stat-card"><small>Conversas</small><strong>' + (modeFilter !== "flat" ? Object.keys(events.reduce((acc, e) => { acc[e.traceId || "x"] = 1; return acc; }, {})).length : "-") + '</strong></div>' +
+          '<div class="stat-card"><small>Severidade alta+</small><strong style="color:#dc2626;">' + ((severityCounts.high || 0) + (severityCounts.critical || 0)) + '</strong></div>' +
+        '</div>' +
+        '<form class="toolbar" method="GET" action="/auditoria">' +
+          (req.query.senha ? '<input type="hidden" name="senha" value="' + escapeHtml(req.query.senha) + '">' : '') +
+          '<input type="hidden" name="mode" value="' + escapeHtml(modeFilter) + '">' +
+          '<select name="component"><option value="">Componente: todos</option>' + componentOptions + '</select>' +
+          '<select name="severity"><option value="">Severidade: todas</option>' +
+            '<option value="low"' + (severityFilter === "low" ? " selected" : "") + '>low</option>' +
+            '<option value="medium"' + (severityFilter === "medium" ? " selected" : "") + '>medium</option>' +
+            '<option value="high"' + (severityFilter === "high" ? " selected" : "") + '>high</option>' +
+            '<option value="critical"' + (severityFilter === "critical" ? " selected" : "") + '>critical</option>' +
+          '</select>' +
+          '<input type="text" name="trace" placeholder="Buscar trace_id..." value="' + escapeHtml(traceFilter) + '">' +
+          '<select name="limit">' +
+            '<option value="50"' + (limit === 50 ? " selected" : "") + '>50</option>' +
+            '<option value="100"' + (limit === 100 ? " selected" : "") + '>100</option>' +
+            '<option value="200"' + (limit === 200 ? " selected" : "") + '>200</option>' +
+            '<option value="500"' + (limit === 500 ? " selected" : "") + '>500</option>' +
+          '</select>' +
+          '<button type="submit">Filtrar</button>' +
+          '<a class="btn" href="/auditoria' + senhaQuery + '">Limpar</a>' +
+       '</form>' +
+      '<div style="margin-bottom:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#172554 100%);border-radius:14px;padding:20px;color:#fff;box-shadow:0 12px 34px rgba(15,23,42,0.20);border:1px solid rgba(255,255,255,0.08);">' +
+          '<div style="display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:rgba(59,130,246,0.18);color:#bfdbfe;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">C-Level Auditor GPT</div>' +
+          '<h3 style="margin:0 0 8px;font-size:22px;font-weight:900;">Auditor IA — Análise dos Eventos</h3>' +
+          '<p style="margin:0 0 18px;color:#cbd5e1;font-size:14px;">Analisa padrões, qualidade dos GPTs, gargalos e sugestões de melhoria com base nos eventos de auditoria.</p>' +
+          '<div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;">' +
+            '<div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:6px;color:#e2e8f0;">Filtrar por lead específico <span style="font-weight:500;color:#94a3b8;">(opcional — deixe vazio para análise geral)</span>:</label>' +
+              '<input id="auditorLeadFilter" type="text" style="width:100%;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px;font-family:monospace;" placeholder="Ex: 5554*****75 — cole o telefone mascarado do lead que aparece na lista">' +
+              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:9px;color:#e2e8f0;">Pergunte ao Auditor:</label>' +
+              '<textarea id="auditorQuestion" style="width:100%;min-height:100px;resize:vertical;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:12px;font-size:13px;line-height:1.45;outline:none;" placeholder="Ex: Quais GPTs estão gerando mais erros? Tem algum padrão de falha?"></textarea>' +
+              '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
+                '<button type="button" id="askAuditorBtn" onclick="askAuditor()" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Perguntar ao Auditor</button>' +
+                '<button type="button" onclick="document.getElementById(\'auditorLeadFilter\').value=\'\';document.getElementById(\'auditorLeadFilter\').focus();" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:700;cursor:pointer;background:transparent;color:#cbd5e1;">Limpar filtro de lead</button>' +
+                '<button type="button" onclick="askAuditor(\'Analise os eventos recentes. Quais GPTs estão funcionando bem, quais precisam de atenção e existe algum padrão de erro?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Diagnóstico geral</button>' +
+                '<button type="button" onclick="askAuditor(\'Existem eventos de alta severidade? Se sim, o que causou e como corrigir?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Erros críticos</button>' +
+                '<button type="button" onclick="askAuditor(\'Quais melhorias nos prompts ou travas do backend você sugere com base nos eventos?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Sugestões</button>' +
+              '</div>' +
+            '</div>' +
+            '<div id="auditorResponse" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+              '<div style="font-size:13px;font-weight:900;color:#bfdbfe;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Resposta do Auditor</div>' +
+              '<p style="color:#e2e8f0;font-size:13px;">Faça uma pergunta para receber uma análise técnica dos eventos de auditoria.</p>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<script>' +
+        'var auditorSenha = ' + JSON.stringify(String(req.query.senha || "")) + ';' +
+        'async function askAuditor(qOverride) {' +
+          'var qBox = document.getElementById("auditorQuestion");' +
+          'var leadBox = document.getElementById("auditorLeadFilter");' +
+          'var rBox = document.getElementById("auditorResponse");' +
+          'var btn = document.getElementById("askAuditorBtn");' +
+          'var pergunta = String(qOverride || qBox.value || "").trim();' +
+          'var leadFiltro = leadBox ? String(leadBox.value || "").trim() : "";' +
+          'if (!pergunta || pergunta.length < 8) { rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">Digite uma pergunta mais completa.</p>"; return; }' +
+          'qBox.value = pergunta;' +
+          'if (btn) { btn.disabled = true; btn.textContent = leadFiltro ? "Analisando lead..." : "Analisando..."; }' +
+          'var loadingMsg = leadFiltro ? ("Analisando eventos do lead <strong>" + leadFiltro + "</strong>...") : "Analisando eventos de auditoria (todos os leads)...";' +
+          'rBox.innerHTML = "<p style=\\"color:#e2e8f0;\\">" + loadingMsg + "</p>";' +
+          'try {' +
+            'var url = "/auditoria/c-level-auditor" + (auditorSenha ? "?senha=" + encodeURIComponent(auditorSenha) : "");' +
+            'var body = { pergunta: pergunta };' +
+            'if (leadFiltro) { body.lead = leadFiltro; }' +
+            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });' +
+            'var data = await resp.json();' +
+            'if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na análise.");' +
+            'var a = data.analysis || {};' +
+            'var snap = data.auditSnapshot || {};' +
+            'var modoBadge = "";' +
+            'if (snap.modoAnalise === "lead_especifico") {' +
+              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(245,158,11,0.18);color:#fde68a;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(245,158,11,0.35);\\">🎯 Análise de lead específico: " + (snap.leadAnalisado || leadFiltro) + " · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
+            '} else {' +
+              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(96,165,250,0.18);color:#dbeafe;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(96,165,250,0.35);\\">🌐 Análise geral do sistema · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
+            '}' +
+            'var html = modoBadge + "<h4 style=\\"margin:0 0 10px;font-size:18px;color:#fff;\\">" + (a.tituloDiagnostico || "Diagnóstico") + "</h4>";' +
+            'if (a.qualidadeGpts) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">GPTs: " + (a.qualidadeGpts.status || "-") + "</span>";' +
+            'if (a.qualidadeBackend) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">Backend: " + (a.qualidadeBackend.status || "-") + "</span>";' +
+            'if (a.prioridadeExecutiva) html += "<div style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(250,204,21,0.16);color:#fef3c7;font-size:12px;font-weight:800;margin-bottom:10px;\\">Prioridade: " + a.prioridadeExecutiva + "</div>";' +
+            'html += "<p style=\\"color:#e2e8f0;font-size:13px;line-height:1.45;\\">" + (a.resumoExecutivo || "") + "</p>";' +
+            'if (a.qualidadeGpts && a.qualidadeGpts.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade GPTs</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeGpts.analise + "</p>";' +
+            'if (a.qualidadeBackend && a.qualidadeBackend.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade Backend</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeBackend.analise + "</p>";' +
+            'if (Array.isArray(a.diagnosticosAcionaveis) && a.diagnosticosAcionaveis.length > 0) {' +
+              'html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;text-transform:uppercase;\\">Diagnósticos acionáveis</h5>";' +
+              'a.diagnosticosAcionaveis.forEach(function(d, i) {' +
+                'var pc = d.prioridade === "critica" ? "#ef4444" : d.prioridade === "alta" ? "#f59e0b" : d.prioridade === "media" ? "#3b82f6" : "#6b7280";' +
+                'html += "<div style=\\"background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:12px;margin-bottom:10px;border-left:4px solid " + pc + ";\\">";' +
+                'html += "<div style=\\"display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;\\"><strong style=\\"font-size:13px;color:#fff;\\">#" + (i+1) + " — " + (d.problema || "-") + "</strong><span style=\\"background:" + pc + ";color:white;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;\\">" + (d.prioridade || "-") + "</span></div>";' +
+                'html += "<div style=\\"font-size:12px;color:#94a3b8;margin-bottom:4px;\\">📍 Onde: " + (d.onde || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:12px;color:#fca5a5;margin-bottom:4px;\\">⚠️ Por quê: " + (d.porqueEProblema || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:12px;color:#86efac;margin-bottom:4px;\\">✅ Correção: " + (d.comoCorrigir || "-") + "</div>";' +
+                'html += "<div style=\\"font-size:11px;color:#6b7280;\\">🔧 Componente: " + (d.componente || "-") + "</div>";' +
+                'html += "</div>";' +
+              '});' +
+            '}' +
+            'function rl(t, items) { if (!Array.isArray(items) || !items.length) return ""; return "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">" + t + "</h5><ul style=\\"margin:0;padding-left:18px;color:#cbd5e1;font-size:13px;line-height:1.55;\\">" + items.map(function(x){return "<li>"+x+"</li>";}).join("") + "</ul>"; }' +
+            'html += rl("Padrões observados", a.padroesObservados);' +
+            'html += rl("Gargalos", a.gargalos);' +
+            'html += rl("Oportunidades de melhoria", a.oportunidadesMelhoria);' +
+            'html += rl("Plano de ação", a.planoAcao);' +
+            'if (a.observacaoSobreAmostra) html += "<p style=\\"color:#94a3b8;font-size:12px;margin-top:12px;\\">" + a.observacaoSobreAmostra + "</p>";' +
+            'rBox.innerHTML = html;' +
+          '} catch (err) {' +
+            'rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">" + (err.message || "Erro ao gerar análise.") + "</p>";' +
+          '} finally {' +
+            'if (btn) { btn.disabled = false; btn.textContent = "Perguntar ao Auditor"; }' +
+          '}' +
+        '}' +
+        '</script>' +
+        contentHtml +
+      '</div></body></html>'
+    );
+  } catch (error) {
+    console.error("Erro no dashboard de auditoria:", error);
+    res.status(500).send("Erro ao carregar auditoria.");
+  }
+});
+
+/* =========================
+   C-LEVEL AUDITOR GPT — ANÁLISE DOS EVENTOS DE AUDITORIA
+========================= */
+
+const CLEVEL_AUDITOR_SYSTEM_PROMPT = `
+Você é o C-Level Auditor GPT da IQG.
+
+Você analisa eventos de auditoria do sistema de SDR IA no WhatsApp e gera diagnósticos detalhados e acionáveis.
+
+Seu papel é:
+- Identificar padrões de erro nos GPTs (Classificador, Historiador, Pré-SDR, Supervisor, SDR).
+- Detectar decisões incorretas dos agentes.
+- Apontar gargalos de conversão, repetição ou perda de leads.
+- Avaliar a qualidade geral do atendimento automatizado.
+- Gerar recomendações PRÁTICAS e ESPECÍFICAS de correção.
+
+Você NÃO altera leads, NÃO manda WhatsApp, NÃO envia CRM, NÃO gera código.
+
+Contexto técnico da IQG:
+- Backend Node.js + Express + MongoDB no Render.
+- Arquivo principal: server.js (~7000 linhas).
+- Múltiplos GPTs: SDR IA, Consultor Pré-SDR, Supervisor, Classificador Comercial, Classificador Semântico de Intenção, Historiador Semântico de Continuidade, Roteador de Coleta, Anti-Mistura, C-Level Dashboard.
+- Travas determinísticas no backend protegem contra erros dos GPTs.
+- Funil principal: Programa Parceiro Homologado IQG (taxa R$ 1.990, lote em comodato, suporte).
+- Rota alternativa: Programa de Afiliados IQG (link, sem estoque, sem taxa).
+- A taxa de adesão é o principal gargalo de conversão.
+- Etapas do funil: programa → benefícios → estoque → responsabilidades → investimento → compromisso → coleta → confirmação → CRM.
+
+REGRA PRINCIPAL — DIAGNÓSTICOS ACIONÁVEIS:
+
+Para cada problema detectado, você DEVE informar:
+
+1. O QUE aconteceu — descrição clara do problema.
+2. ONDE no sistema — qual GPT, qual trava, qual parte do fluxo.
+3. POR QUE é problema — impacto na conversão, experiência do lead ou custo.
+4. COMO corrigir — descrição prática da correção necessária.
+5. PRIORIDADE — baixa, média, alta ou crítica.
+6. COMPONENTE — qual função/prompt/trava precisa ser ajustada.
+
+CATEGORIAS DE PROBLEMAS A MONITORAR:
+
+1. CLASSIFICAÇÃO INCORRETA — GPT interpretou errado a intenção do lead.
+2. REPETIÇÃO — SDR repetiu explicação que o lead já entendeu.
+3. COLETA PREMATURA — sistema tentou pedir dados antes da hora.
+4. ROTA ERRADA — lead foi jogado para Afiliado ou Homologado sem motivo.
+5. OBJEÇÃO MAL TRATADA — taxa/preço não foi respondida corretamente.
+6. PERDA EVITÁVEL — lead esfriou por erro de condução.
+7. TRAVA EXCESSIVA — backend bloqueou avanço legítimo do lead.
+8. TRAVA INSUFICIENTE — backend permitiu avanço indevido.
+9. CUSTO DESNECESSÁRIO — GPT chamado sem necessidade.
+10. LATÊNCIA — processamento demorou demais.
+
+Regras:
+1. Base sua análise SOMENTE nos eventos recebidos.
+2. Não invente dados.
+3. Se a amostra for pequena, diga claramente.
+4. Separe problemas dos GPTs de problemas do backend/travas.
+5. Priorize ações práticas e específicas.
+6. Para cada sugestão, indique o componente exato do sistema.
+7. Use linguagem técnica quando necessário, mas explique o impacto comercial.
+
+Responda SEMPRE em JSON válido:
+
+{
+  "tituloDiagnostico": "",
+  "resumoExecutivo": "",
+  "qualidadeGpts": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "qualidadeBackend": {
+    "status": "boa | atencao | critica | inconclusiva",
+    "analise": ""
+  },
+  "diagnosticosAcionaveis": [
+    {
+      "problema": "",
+      "onde": "",
+      "porqueEProblema": "",
+      "comoCorrigir": "",
+      "prioridade": "baixa | media | alta | critica",
+      "componente": ""
+    }
+  ],
+  "padroesObservados": [],
+  "gargalos": [],
+  "oportunidadesMelhoria": [],
+  "planoAcao": [],
+  "prioridadeExecutiva": "baixa | media | alta | critica",
+  "observacaoSobreAmostra": ""
+}
+`;
+
+app.post("/auditoria/c-level-auditor", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    const pergunta = String(req.body?.pergunta || "").trim();
+    const leadFilter = String(req.body?.lead || "").trim();
+
+    if (!pergunta || pergunta.length < 8) {
+      return res.status(400).json({
+        ok: false,
+        error: "Digite uma pergunta mais completa para o C-Level Auditor."
+      });
+    }
+
+    await connectMongo();
+
+    /*
+      Filtro opcional por lead específico.
+      Se vier `lead` no body, restringe a análise apenas aos eventos
+      daquele lead (busca por userMasked, case-insensitive).
+      Útil para analisar 1 conversa específica sem desperdiçar tokens
+      revisando leads onde a condução da SDR foi ok.
+    */
+    const eventQuery = {};
+    if (leadFilter) {
+      eventQuery.userMasked = { $regex: leadFilter, $options: "i" };
+    }
+
+    const recentEvents = await db
+      .collection("audit_events")
+      .find(eventQuery)
+      .sort({ timestamp: -1 })
+      .limit(leadFilter ? 500 : 200)
+      .toArray();
+
+    const totalEvents = await db
+      .collection("audit_events")
+      .countDocuments(eventQuery);
+
+    const componentSummary = {};
+    const severitySummary = {};
+    const eventTypeSummary = {};
+
+    for (const evt of recentEvents) {
+      componentSummary[evt.component] = (componentSummary[evt.component] || 0) + 1;
+      severitySummary[evt.severity] = (severitySummary[evt.severity] || 0) + 1;
+      eventTypeSummary[evt.eventType] = (eventTypeSummary[evt.eventType] || 0) + 1;
+    }
+
+    const highSeverityEvents = recentEvents
+      .filter(evt => evt.severity === "high" || evt.severity === "critical")
+      .slice(0, 20)
+      .map(evt => ({
+        component: evt.component,
+        eventType: evt.eventType,
+        severity: evt.severity,
+        timestamp: evt.timestamp,
+        userMasked: evt.userMasked,
+        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, 500)
+      }));
+
+    const auditSnapshot = {
+      modoAnalise: leadFilter ? "lead_especifico" : "sistema_geral",
+      leadAnalisado: leadFilter || null,
+      avisoParaOAuditor: leadFilter
+        ? `IMPORTANTE: esta análise é de UM LEAD ESPECÍFICO (${leadFilter}). Os dados abaixo referem-se SOMENTE a este lead, não ao sistema inteiro. Foque em diagnosticar a condução desta conversa específica. Não tire conclusões sobre volume geral, gargalos do sistema ou performance global a partir destes dados.`
+        : "Esta análise é GERAL do sistema (todos os leads recentes). Identifique padrões, gargalos e problemas recorrentes entre múltiplos leads.",
+      totalEvents,
+      eventosAnalisados: recentEvents.length,
+      auditLevelAtivo: getCurrentAuditLevel(),
+      resumoPorComponente: componentSummary,
+      resumoPorSeveridade: severitySummary,
+      resumoPorTipoEvento: eventTypeSummary,
+      eventosAltaSeveridade: highSeverityEvents,
+      amostraEventosRecentes: recentEvents.slice(0, leadFilter ? 80 : 30).map(evt => ({
+        component: evt.component,
+        eventType: evt.eventType,
+        severity: evt.severity,
+        timestamp: evt.timestamp,
+        auditLevel: evt.auditLevel,
+        userMasked: evt.userMasked,
+        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, leadFilter ? 600 : 300)
+      }))
+    };
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_CLEVEL_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: CLEVEL_AUDITOR_SYSTEM_PROMPT
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              perguntaDoGestor: pergunta,
+              auditSnapshot
+            })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao chamar C-Level Auditor GPT:", data);
+      return res.status(500).json({
+        ok: false,
+        error: "Falha ao gerar análise do C-Level Auditor."
+      });
+    }
+
+    const rawText = data.choices?.[0]?.message?.content || "{}";
+
+    let analysis;
+    try {
+      analysis = JSON.parse(rawText);
+    } catch (e) {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+      analysis = start !== -1 && end > start
+        ? JSON.parse(rawText.slice(start, end + 1))
+        : { resumoExecutivo: "Falha ao interpretar resposta do Auditor." };
+    }
+
+    return res.json({
+      ok: true,
+      analysis,
+      auditSnapshot
+    });
+  } catch (error) {
+    console.error("Erro na rota C-Level Auditor:", error);
+    return res.status(500).json({
+      ok: false,
+      error: "Erro ao gerar análise do C-Level Auditor."
+    });
+  }
+});
+
+/* =========================
+   RELATÓRIO TÉCNICO DE AUDITORIA — DOWNLOAD
+   Gera arquivo JSON completo para análise externa.
+========================= */
+
+app.get("/auditoria/relatorio-tecnico", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const horasParam = String(req.query.horas || "").trim().toLowerCase();
+    const traceFilter = req.query.trace || "";
+    const leadFilter = req.query.lead || "";
+
+    /*
+      Suporte ao modo "histórico completo do lead":
+      - Se horas=all (ou "tudo" / "completo") E houver leadFilter,
+        ignora o filtro de tempo e busca TODOS os eventos do lead.
+      - Caso contrário, comporta-se como antes (default 24h, máx 168h).
+      O modo "all" só é permitido com leadFilter preenchido, para evitar
+      relatórios gigantes do sistema inteiro.
+    */
+    const wantsFullHistory =
+      ["all", "tudo", "completo", "full"].includes(horasParam) &&
+      Boolean(leadFilter);
+
+    const hoursBack = wantsFullHistory
+      ? null
+      : Math.min(Number(req.query.horas) || 24, 168);
+
+    const cutoff = wantsFullHistory
+      ? null
+      : new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+
+    const query = {};
+    if (!wantsFullHistory) query.timestamp = { $gte: cutoff };
+    if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
+    if (leadFilter) query.userMasked = { $regex: leadFilter, $options: "i" };
+
+    const events = await db
+      .collection("audit_events")
+      .find(query)
+      .sort({ timestamp: 1 })
+      .limit(wantsFullHistory ? 5000 : 2000)
+      .toArray();
+
+    const grouped = {};
+    for (const evt of events) {
+      const key = evt.traceId || "sem_trace_" + evt._id;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(evt);
+    }
+
+    const conversas = [];
+
+    for (const [traceId, traceEvents] of Object.entries(grouped)) {
+      traceEvents.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      const first = traceEvents[0];
+      const last = traceEvents[traceEvents.length - 1];
+
+      const webhookEvt = traceEvents.find(e => e.component === "webhook");
+      const classifierEvt = traceEvents.find(e => e.component === "gpt_semantic_intent");
+      const historianEvt = traceEvents.find(e => e.component === "gpt_semantic_continuity");
+      const preSdrEvt = traceEvents.find(e => e.component === "gpt_pre_sdr_consultant");
+       const orchestratorEvt = traceEvents.find(e => e.component === "backend_orchestrator");
+
+      conversas.push({
+        traceId,
+        leadMasked: first.userMasked || "-",
+        timestampInicio: first.timestamp,
+        timestampFim: last.timestamp,
+        totalEventos: traceEvents.length,
+        severidadeMaxima: traceEvents.reduce((max, evt) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 };
+          return (order[evt.severity] || 0) > (order[max] || 0) ? evt.severity : max;
+        }, "low"),
+
+        mensagemLead: webhookEvt?.payload?.textPreview
+          || classifierEvt?.payload?.ultimaMensagemLead
+          || "-",
+
+        webhook: webhookEvt ? {
+          messageType: webhookEvt.payload?.messageType || "-",
+          hasText: webhookEvt.payload?.hasText,
+          hasAudio: webhookEvt.payload?.hasAudio,
+          textPreview: webhookEvt.payload?.textPreview || "-",
+          timestamp: webhookEvt.timestamp
+        } : null,
+
+        classificadorSemantico: classifierEvt ? {
+          modelo: classifierEvt.payload?.model || "-",
+          ultimaMensagemLead: classifierEvt.payload?.ultimaMensagemLead || "-",
+          confidence: classifierEvt.payload?.confidence || "-",
+          wantsAffiliate: classifierEvt.payload?.wantsAffiliate,
+          wantsHomologado: classifierEvt.payload?.wantsHomologado,
+          blockingObjection: classifierEvt.payload?.blockingObjection,
+          priceObjection: classifierEvt.payload?.priceObjection,
+          asksQuestion: classifierEvt.payload?.asksQuestion,
+          greetingOnly: classifierEvt.payload?.greetingOnly,
+          reason: classifierEvt.payload?.reason || "-",
+          payloadCompleto: classifierEvt.payload,
+          timestamp: classifierEvt.timestamp
+        } : null,
+         respostaFinalSdr: orchestratorEvt?.payload?.respostaFinalSdr || null,
+        estadoLead: orchestratorEvt?.payload?.estadoLead || null,
+        turnPolicy: orchestratorEvt?.payload?.turnPolicy || null,
+        decisoesBackend: orchestratorEvt ? {
+          podeIniciarColeta: orchestratorEvt.payload?.podeIniciarColeta,
+          startedDataCollection: orchestratorEvt.payload?.startedDataCollection,
+          coletaLiberadaPorTaxaAceita: orchestratorEvt.payload?.coletaLiberadaPorTaxaAceita,
+          sdrReviewFindingsCount: orchestratorEvt.payload?.sdrReviewFindingsCount || 0,
+          sdrReviewFindings: orchestratorEvt.payload?.sdrReviewFindings || [],
+          actions: orchestratorEvt.payload?.actions || []
+        } : null,
+
+        historiadorSemantico: historianEvt ? {
+          modelo: historianEvt.payload?.model || "-",
+          ultimaMensagemLead: historianEvt.payload?.ultimaMensagemLead || "-",
+          leadEntendeuUltimaExplicacao: historianEvt.payload?.leadEntendeuUltimaExplicacao,
+          leadQuerAvancar: historianEvt.payload?.leadQuerAvancar,
+          leadCriticouRepeticao: historianEvt.payload?.leadCriticouRepeticao,
+          naoRepetirUltimoTema: historianEvt.payload?.naoRepetirUltimoTema,
+          proximaAcaoSemantica: historianEvt.payload?.proximaAcaoSemantica || "-",
+          confidence: historianEvt.payload?.confidence || "-",
+          reason: historianEvt.payload?.reason || "-",
+          payloadCompleto: historianEvt.payload,
+          timestamp: historianEvt.timestamp
+        } : null,
+
+        consultorPreSdr: preSdrEvt ? {
+          modelo: preSdrEvt.payload?.model || "-",
+          ultimaMensagemLead: preSdrEvt.payload?.ultimaMensagemLead || "-",
+          estrategiaRecomendada: preSdrEvt.payload?.estrategiaRecomendada || "-",
+          proximaMelhorAcao: preSdrEvt.payload?.proximaMelhorAcao || "-",
+          ofertaMaisAdequada: preSdrEvt.payload?.ofertaMaisAdequada || "-",
+          prioridadeComercial: preSdrEvt.payload?.prioridadeComercial || "-",
+          momentoIdealHumano: preSdrEvt.payload?.momentoIdealHumano || "-",
+          cuidadoPrincipal: preSdrEvt.payload?.cuidadoPrincipal || "-",
+          payloadCompleto: preSdrEvt.payload,
+          timestamp: preSdrEvt.timestamp
+        } : null,
+
+        todosEventos: traceEvents.map(evt => ({
+          component: evt.component,
+          eventType: evt.eventType,
+          severity: evt.severity,
+          auditLevel: evt.auditLevel,
+          timestamp: evt.timestamp,
+          payload: evt.payload
+        }))
+      });
+    }
+
+    const leadsUnicos = [...new Set(events.map(e => e.userMasked).filter(Boolean))];
+
+    const relatorio = {
+      metadados: {
+        geradoEm: new Date().toISOString(),
+        periodoAnalisado: wantsFullHistory
+          ? `HISTÓRICO COMPLETO do lead ${leadFilter} (sem limite de tempo)`
+          : `últimas ${hoursBack} horas`,
+        dataInicio: wantsFullHistory
+          ? (events[0]?.timestamp || null)
+          : cutoff.toISOString(),
+        dataFim: new Date().toISOString(),
+        totalEventos: events.length,
+        totalConversas: conversas.length,
+        totalLeads: leadsUnicos.length,
+        auditLevelAtivo: getCurrentAuditLevel(),
+        appVersion: process.env.APP_VERSION || "iqg-sdr-v1.0.0",
+        modoRelatorio: wantsFullHistory ? "historico_completo_lead" : "janela_temporal",
+        filtrosAplicados: {
+          horas: wantsFullHistory ? "all" : hoursBack,
+          trace: traceFilter || null,
+          lead: leadFilter || null
+        }
+      },
+
+      resumoGeral: {
+        eventosPorComponente: events.reduce((acc, e) => {
+          acc[e.component] = (acc[e.component] || 0) + 1;
+          return acc;
+        }, {}),
+        eventosPorSeveridade: events.reduce((acc, e) => {
+          acc[e.severity] = (acc[e.severity] || 0) + 1;
+          return acc;
+        }, {}),
+        eventosPorTipo: events.reduce((acc, e) => {
+          acc[e.eventType] = (acc[e.eventType] || 0) + 1;
+          return acc;
+        }, {}),
+        leadsAtendidos: leadsUnicos
+      },
+
+      conversas,
+
+      instrucaoParaAnalise: [
+        "Este relatório contém todos os eventos de auditoria agrupados por conversa (traceId).",
+        "Cada conversa mostra: mensagem do lead, resposta de cada GPT com payload completo, e a sequência cronológica de todos os eventos.",
+        "Use este arquivo para identificar: classificações incorretas, repetições, coletas prematuras, rotas erradas, objeções mal tratadas, travas excessivas ou insuficientes.",
+        "Para cada problema encontrado, indique: o que aconteceu, onde no código (qual função/prompt), por que é problema, como corrigir e a prioridade.",
+        "As funções principais do sistema são: runLeadSemanticIntentClassifier, runConversationContinuityAnalyzer, runConsultantAssistant, buildTurnPolicy, enforceFunnelDiscipline, classifyTaxPhaseDecision, runFinalRouteMixGuard."
+      ]
+    };
+
+    const filename = `auditoria-tecnica-${new Date().toISOString().slice(0, 10)}.json`;
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(relatorio, null, 2));
+  } catch (error) {
+    console.error("Erro ao gerar relatório técnico:", error);
+    res.status(500).send("Erro ao gerar relatório técnico.");
   }
 });
 
@@ -25541,16 +28124,19 @@ body {
 }
 
 /* Tabela */
+/* Tabela */
 .leads-table-card {
   background: #fff;
   border: 1px solid var(--iqg-border);
   border-radius: 10px;
   box-shadow: var(--iqg-shadow-soft);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
   width: 100%;
+  min-width: 1100px;
   border-collapse: collapse;
   background: #fff;
 }
@@ -25693,24 +28279,52 @@ tr:hover td {
 
 @media (max-width: 900px) {
   .dashboard-page {
-    padding: 18px;
+    padding: 14px;
   }
 
   .dashboard-header {
     flex-direction: column;
   }
 
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .toolbar input {
     min-width: 100%;
   }
 
+  .toolbar select {
+    width: 100%;
+  }
+
+  .leads-table-card {
+    margin-left: -14px;
+    margin-right: -14px;
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+  }
+
   table {
     font-size: 12px;
+    min-width: 900px;
   }
 
   th,
   td {
-    padding: 8px;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+
+  td.actions {
+    white-space: normal;
+    min-width: 280px;
+  }
+
+  .print-info {
+    padding: 0 4px;
   }
 }
 
@@ -25892,6 +28506,9 @@ tr:hover td {
       </head>
 
       <body>
+      <div style="background:#0f172a;padding:10px 28px;display:flex;gap:10px;align-items:center;">
+          <a style="display:inline-block;padding:9px 12px;background:#2563eb;color:white;text-decoration:none;border-radius:8px;font-size:14px;" href="/auditoria${senhaQuery}">🔍 Auditoria</a>
+        </div>
   <div class="dashboard-page">
     <div class="dashboard-header">
       <div class="dashboard-title">
