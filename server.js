@@ -10601,7 +10601,7 @@ function isInvalidLooseNameCandidate(value = "") {
     return true;
   }
 
-  cconst invalidParts = [
+  const invalidParts = [
   "confirmacao",
   "confirmar",
   "corrigir",
