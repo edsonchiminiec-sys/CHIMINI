@@ -21836,22 +21836,10 @@ if (
   });
 
  await saveLeadProfile(from, {
-    recoveryAttempts: novoRecoveryAttempts,
-    sinalRecuperacaoComercial: true,
-    ultimaRejeicaoOuEsfriamento: text,
+    sinalCadastroOuParticipacao: true,
     ultimaMensagem: text,
 
-    // Limpar flags comerciais após múltiplas rejeições para evitar estado inconsistente
-    ...(deveLimparFlagsComerciais ? {    // ← NOVO
-      interesseReal: false,              // ← NOVO
-      taxaAlinhada: false,               // ← NOVO
-      taxaModoConversao: false,          // ← NOVO
-      sinalObjecaoTaxa: false,           // ← NOVO
-      bloqueioComercialAtivo: false,     // ← NOVO
-    } : {}),                             // ← NOVO
-
     ultimaDecisaoBackend: buildBackendDecision({
-       
       tipo: "pedido_cadastro",
       motivo: "lead_pediu_cadastro_ou_participacao",
       acao: "orientar_pre_sdr_sem_responder_direto",
@@ -21864,7 +21852,6 @@ if (
       }
     })
   });
-
   currentLead = await loadLeadProfile(from);
 
   console.log("✅ Pedido de cadastro enviado ao Pré-SDR, sem resposta direta do backend:", {
