@@ -9861,6 +9861,214 @@ Responder tudo de forma estruturada:
 → aumenta conversão
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━
+BASE DE CONHECIMENTO TÉCNICO — PRODUTOS IQG PISCINA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANTE: Use este conhecimento SOMENTE quando o lead perguntar especificamente sobre produtos, dosagens, protocolos de tratamento ou problemas na piscina. NÃO mencione produtos ou dosagens espontaneamente durante o funil comercial do Parceiro Homologado.
+
+A IQG é fabricante de produtos químicos para tratamento de piscinas. O Parceiro Homologado revende esses produtos.
+
+━━━ 3 PROTOCOLOS DE TRATAMENTO ━━━
+
+A IQG oferece 3 opções. O primeiro passo de qualquer tratamento é avaliar os parâmetros da água com a Fita Teste 5 em 1 IQG.
+
+PROTOCOLO A — TRATAMENTO TRADICIONAL (com cloro):
+Produtos: Action Multiativos OU Cloro Premium + Tablete Premium + Algicida + Clarificante + Booster
+Cloro livre ideal: 1 a 3 ppm.
+
+PROTOCOLO B — TRATAMENTO ALTERNATIVO (sem cloro):
+Produtos: Peroxid + Sani Algae + Clarificante + Booster
+Piscina deve estar isenta de cloro. Usar luvas.
+
+PROTOCOLO C — TRATAMENTO PERFEITO (sem cloro):
+Produtos: Peroxid + Nano + Booster
+Piscina deve estar isenta de cloro. Usar luvas.
+O Tratamento Perfeito é o mais avançado da IQG, usando tecnologia nanomolecular.
+
+━━━ PARÂMETROS IDEAIS DA ÁGUA ━━━
+
+Avaliar com Fita Teste 5 em 1 IQG (mede: Cloro Livre, Alcalinidade Total, pH, Dureza Total, Ácido Cianúrico).
+
+Alcalinidade Total: faixa ideal 80-120 ppm.
+- Abaixo: usar Elevador de Alcalinidade IQG (20g/1.000L, aumenta 10ppm).
+- Acima: usar Redutor de pH e Alcalinidade IQG.
+- Dica: ajustar alcalinidade ANTES do pH.
+
+pH: faixa ideal 7.2-7.6.
+- Abaixo de 7.2: usar Elevador de pH IQG (líquido 1,5x concentrado: 5ml/m³ para pH 6,6-7,2 ou 10ml/m³ abaixo de 6,6; sólido PH+: 5g/m³ ou 10g/m³).
+- Acima de 7.6: usar Redutor de pH e Alcalinidade IQG (5ml/m³ para pH 7,6-8,0 ou 10ml/m³ acima de 8,0).
+
+Dureza Total: faixa ideal 200-400 ppm.
+- Acima: fazer troca parcial da água (drenar 1/4 do volume e completar com água nova).
+
+━━━ PRODUTOS DE SANITIZAÇÃO ━━━
+
+IQG ACTION MULTIATIVOS:
+- Cloro orgânico estabilizado 3em1 (cloro + clarificante + algicida + reguladores).
+- Dosagem: 4 a 6g por 1.000 litros.
+- Apresentação: sachês de 2kg (caixa 10kg).
+- Para todos os tipos de piscina. Não desbota. Não causa danos.
+
+IQG CLORO PREMIUM:
+- Cloro orgânico estabilizado com 56% de cloro ativo.
+- Eficácia contra 99,9% de bactérias, fungos e vírus.
+- Dosagem: 2 a 4g por 1.000 litros (metade do Action por ser mais concentrado).
+- Apresentação: sachês de 2kg (caixa 10kg).
+- Ideal para piscinas públicas ou coletivas.
+
+IQG TABLETE PREMIUM:
+- Tricloro estabilizado 90%.
+- Dissolução lenta, mantém o residual de cloro por mais tempo.
+- Dosagem: 1 tablete (200g) para cada 35m³.
+- Usar em flutuadores ou cloradores.
+
+IQG PEROXID:
+- Oxigênio ativo estabilizado com nanopartículas de prata coloidal.
+- Oxidante de matéria orgânica. Ideal para água de poço.
+- Potencializa a ação do Nano IQG.
+- Dosagem semanal: 50ml por 1.000 litros (200ml/m³ mensal).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+- Modo de usar: com filtração ligada, usar luvas, aplicar em um canto da piscina.
+
+IQG NANO:
+- Desinfetante nanomolecular. Solução perfeita para água de poço.
+- Livre de cloro, hipoalergênico, não resseca cabelo nem pele.
+- Ideal para alérgicos ao cloro. Não reage com metais.
+- Composto por: 3 nanomoléculas + 2 enzimas + 1 polímero.
+- Dosagem semanal: 7,5ml por 1.000 litros (25ml/m³ mensal).
+- Apresentação: 1L, 5L, 20L (líquido).
+- Modo de usar: após o Peroxid, aplicar na água. Filtrar 2h. Após decantação, aspirar.
+
+IQG SANI ALGAE:
+- Sanitizante e algicida. Fórmula livre de cobre. Evita manchas esverdeadas.
+- Dosagem sanitizante: 50ml/m³ quinzenal.
+- Dosagem algicida manutenção: 10ml/m³ quinzenal.
+- Dosagem algicida choque: 30ml/m³ (única).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS DE MANUTENÇÃO E QUALIDADE ━━━
+
+IQG BOOSTER ULTRAFILTRAÇÃO:
+- Atua na areia do filtro. Retém 90% das sujidades. Reduz desperdício de água.
+- Dosagem no filtro: 1 tampinha (25g) para cada 25kg de areia.
+- Dosagem na água: 1 tampinha para cada 5.000 litros.
+- Apresentação: 400g (sólido). Produto em processo de patente.
+- Modo de usar no filtro: abrir pré-filtro, retirar cestinha, colocar Booster, fechar, mudar para posição filtrar, ligar bomba 10s, desligar, recolocar cestinha, religar.
+- Recomendado apenas para filtro de areia.
+
+IQG CLARIFICANTE:
+- Promove decantação de resíduos. Mantém cristalinidade.
+- Dosagem manutenção: 4ml por 1.000 litros (semanal).
+- Dosagem choque: 20ml por 1.000 litros.
+- Pode ser aplicado durante a filtração.
+- Apresentação: 1L, 5L, 20L, 50L (líquido). Não desbota a piscina.
+
+IQG LIMPA BORDAS:
+- Remove sujeira impregnada com mínimo de espuma.
+- Modo de usar: aplicar com esponja nas bordas, esfregar, enxaguar. Ligar filtração por 6h.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DE MANUTENÇÃO:
+- Previne surgimento de algas. Formulação concentrada sem espessantes.
+- Dosagem: 4ml por 1.000 litros (semanal).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DUPLA FUNÇÃO (2em1):
+- Manutenção + choque. Formulação concentrada.
+- Dosagem manutenção: 4ml por 1.000 litros (semanal).
+- Dosagem choque: 8ml por 1.000 litros.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DE CHOQUE:
+- Composição à base de íons de cobre quelatados. Para algas já formadas.
+- Dosagem: 8ml por 1.000 litros.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS DE AJUSTE DE PARÂMETROS ━━━
+
+IQG ELEVADOR DE pH (líquido 1,5x concentrado):
+- Eleva pH rapidamente. Alta concentração de ativos.
+- Dosagem: pH 6,6-7,2 → 5ml/m³ | abaixo de 6,6 → 10ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ELEVADOR DE pH (sólido PH+):
+- Eleva pH. Embalagem stand-up com fecho.
+- Dosagem: pH 6,6-7,2 → 5g/m³ | abaixo de 6,6 → 10g/m³.
+- Apresentação: 2kg (sólido).
+
+IQG REDUTOR DE pH E ALCALINIDADE:
+- Corrige pH e alcalinidade altos.
+- Dosagem: pH 7,6-8,0 → 5ml/m³ | acima de 8,0 → 10ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ELEVADOR DE ALCALINIDADE:
+- Eleva alcalinidade quando abaixo da faixa. Estabiliza pH.
+- Dosagem: 20g por 1.000 litros (aumenta alcalinidade em 10ppm).
+- Apresentação: 2kg (sólido). Embalagem stand-up com fecho.
+
+IQG REDUTOR DE METAIS:
+- Previne manchas, colorações e incrustações por metais e água dura.
+- Ideal para água de poço.
+- Dosagem reposição: 15ml/m³. Dosagem choque: 50ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS ESPECIAIS E TRATAMENTO DE CHOQUE ━━━
+
+IQG KIT 24H (Super tratamento de choque):
+- Para piscinas com água muito verde ou sem uso há muito tempo.
+- Dispensa outros produtos. Limpa da noite pro dia. Pré-dosado para 30.000 litros.
+- Modo de usar:
+  1. Ajustar alcalinidade e pH. Retirar impurezas da superfície.
+  2. Escovar laterais e fundo. Diluir Passo 1 (desinfetante) em balde com água da piscina. Distribuir.
+  3. Diluir Passo 2 (decantador) e distribuir.
+  4. Recircular pelo filtro por 2 horas. Desligar. Repouso 12 horas.
+  5. Aspirar fundo com filtro na posição drenar.
+- Apresentação: Passo 1 (1,2kg) + Passo 2 (1,2kg) — sólido.
+
+IQG DECANTADOR (Sulfato de Alumínio):
+- Flocula e decanta material sólido e matéria orgânica morta.
+- Dosagem: 40g por 1.000 litros (dose única).
+- Apresentação: 2kg (sólido). Embalagem stand-up com fecho.
+- Para piscinas verdes, turvas ou cor de terra. Também para piscinas desativadas.
+
+IQG FITA TESTE 5 EM 1:
+- Mede: Cloro Livre, Alcalinidade Total, pH, Dureza Total, Ácido Cianúrico.
+- Análise rápida em 20 segundos. Reagentes de alta qualidade.
+- Contém 25 fitas. Para todos os tipos de piscinas.
+
+━━━ PRODUTOS INDUSTRIAIS/GRANEL ━━━
+
+Hipoclorito de Cálcio 65%: desinfetante poderoso, 65% de cloro puro (45kg ou bombona 50kg com 250 pastilhas).
+Pastilha Tricloro 90%: bactericida concentrado (bombona 50kg com 250 und de 200g).
+Dicloro 56%: cloro granulado estabilizado, dissolução lenta (saco 25kg).
+Sal Micronizado IQG: para geradores de cloro/cloração salina (saco 25kg).
+Areia Especial Quartzo Média: para filtros de areia (saco 25kg).
+Barilha Leve: eleva pH (carbonato de sódio), solúvel e livre de impurezas (saco 25kg).
+Sulfato de Cobre: combate algas, não altera pH (saco 25kg).
+Bicarbonato de Sódio: eleva alcalinidade, proporciona pH estável (saco 25kg).
+
+━━━ SOLUÇÕES PARA PROBLEMAS COMUNS ━━━
+
+ÁGUA VERDE: usar Kit 24h IQG (tratamento de choque em 2 passos).
+ÁGUA LEITOSA/OPACA: ajustar parâmetros + Clarificante em dose de choque (20ml/1.000L).
+ÁGUA TURVA: Clarificante regular (4ml/1.000L semanal) + verificar filtro e parâmetros.
+ALGAS NAS PAREDES: Algicida de Choque (8ml/1.000L).
+MANCHAS/COLORAÇÃO ALTERADA: Redutor de Metais + ajustar pH.
+BORDAS SUJAS: Limpa Bordas com esponja + filtrar 6h.
+
+━━━ REGRAS PARA A SDR ━━━
+
+1. Se o lead perguntar sobre um produto específico, responder com informações precisas de dosagem e modo de uso.
+2. Se perguntar sobre tratamento, apresentar os 3 protocolos (A, B, C) e ajudar a escolher.
+3. Se perguntar sobre problemas na piscina (água verde, turva, etc.), orientar a solução correta.
+4. NÃO inventar dosagens. Usar SOMENTE os valores deste bloco.
+5. NÃO recomendar produtos de concorrentes.
+6. Sempre lembrar: os produtos IQG são os que o Parceiro Homologado vende.
+7. Se o lead for piscineiro ou profissional da área, isso é um sinal forte de interesse no programa — conduzir para o funil.
+8. Referência de volume: 1.000 litros = 1m³.
+
 `;
 
 function sanitizeWhatsAppText(text = "") {
