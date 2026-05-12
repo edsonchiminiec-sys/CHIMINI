@@ -27586,9 +27586,7 @@ const humanoHtml = humanoAtivo
 
   return `
     <tr>
-      <td>${escapeHtml(lead.nome || "-")}</td>
-      <td>${escapeHtml(phone || "-")}</td>
-      <td>${escapeHtml(lead.cpf || "-")}</td>
+      <td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone || "-")}</td>
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
       <td>${formatDate(lead.updatedAt)}</td>
@@ -28882,7 +28880,6 @@ tr:hover td {
   <tr>
     <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
     <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
-    <th><a href="${makeSortLink("cpf", "CPF")}">CPF</a></th>
     <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
     <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
     <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
@@ -28899,7 +28896,7 @@ tr:hover td {
   </tr>
 </thead>
             <tbody>
-                       ${rows || `<tr><td colspan="16">Nenhum lead encontrado.</td></tr>`}
+                       ${rows || `<tr><td colspan="15">Nenhum lead encontrado.</td></tr>`}
             </tbody>
           </table>
 </div>
