@@ -27599,7 +27599,7 @@ const humanoHtml = humanoAtivo
       <td>${escapeHtml(phone || "-")}</td>
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
-     <td style="font-size:11px;white-space:nowrap">${formatDate(lead.updatedAt)}</td>
+     <td style="font-size:11px;white-space:nowrap;padding-right:14px">${formatDate(lead.updatedAt)}</td>
       <td style="text-align:center">${lead.etapas?.programa ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
@@ -28375,8 +28375,8 @@ th {
   white-space: nowrap;
 }
 
-th:nth-child(1) { max-width: 120px; }
-td:nth-child(1) { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+th:nth-child(1) { max-width: 150px; }
+td:nth-child(1) { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 th:nth-child(4) { max-width: 90px; }
 td:nth-child(4) { max-width: 90px; }
@@ -28908,7 +28908,7 @@ tr:hover td {
     <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
     <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
     <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
-    <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
+    <th style="padding-right:14px"><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
     <th><a href="${makeSortLink("programa", "Prog")}">Prog</a></th>
     <th><a href="${makeSortLink("beneficios", "Benef")}">Benef</a></th>
     <th><a href="${makeSortLink("estoque", "Estoq")}">Estoq</a></th>
