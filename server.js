@@ -12474,7 +12474,14 @@ function isLeadRejectingOrCooling(text = "") {
     "nao quero pagar adesao",
     "não quero pagar adesão",
     "nao quero adesao",
-    "não quero adesão"
+    "não quero adesão",
+    "quero desistir de tudo",
+    "desisto de tudo",
+    "obrigado tchau",
+    "tchau obrigado",
+    "quero sair",
+    "pode encerrar tudo",
+    "encerra tudo"
   ];
 
   return patterns.some(pattern => t.includes(pattern));
@@ -18380,6 +18387,25 @@ function shouldSendAffiliateInstructionsNow({
     };
   }
 
+ // Se o lead rejeitou explicitamente múltiplas vezes e já houve tentativa de recovery,
+  // oferecer Afiliado mesmo sem taxaObjectionCount acumulado
+  const mensagemERejeicaoExplicita =
+    /\b(desisto|quero desistir|não vou pagar|nao vou pagar|não quero|nao quero|não é pra mim|nao e pra mim|tchau|pode encerrar|encerra|deixa quieto|deixa pra la|deixa pra lá|nao tenho interesse|não tenho interesse)\b/i.test(t);
+
+  const recoveryEsgotado =
+    Number(currentLead?.recoveryAttempts || 0) >= 1 &&
+    mensagemERejeicaoExplicita &&
+    !leadFinalizouHomologado &&
+    !fluxoDeDadosProtegido;
+
+  if (recoveryEsgotado) {
+    return {
+      shouldSend: true,
+      responseMode: "fallback_after_homologado",
+      reason: "lead_rejeitou_multiplas_vezes_e_recovery_esgotado"
+    };
+  }
+
   return {
     shouldSend: false,
     reason: "sem_sinal_suficiente_para_afiliado"
@@ -20550,7 +20576,61 @@ if (currentLead?.aguardandoConfirmacaoCampo) {
   const valor = currentLead.valorPendente;
   let respostaConfirmacaoCampo = "";
 
-  if (isPositiveConfirmation(text)) {
+  // TRAVA FURADA: se o lead mandou algo que NÃO é confirmação nem dado,
+  // verificar se é interrupção comercial e deixar os GPTs responderem
+  const mensagemNaoEConfirmacao =
+    !isPositiveConfirmation(text) &&
+    !isNegativeConfirmation(text) &&
+    !isLikelyPureDataAnswer(text, currentLead);
+
+  const mensagemEInterrupcaoComercial =
+    mensagemNaoEConfirmacao &&
+    (
+      isLeadQuestionObjectionOrCorrection(text) ||
+      isDeveloperOrContextCorrectionMessage(text) ||
+      isLeadRejectingOrCooling(text) ||
+      /\b(taxa|valor|preco|preço|investimento|pagar|pagamento|contrato|afiliado|link|desisto|quero desistir|não quero|nao quero|pulou|pulando|esqueceu|se esqueceu|repetindo|repetitiva|nao entendi|não entendi)\b/i.test(text)
+    );
+
+  if (mensagemEInterrupcaoComercial) {
+    // Lead trouxe pergunta, objeção ou reclamação durante confirmação de campo.
+    // NÃO prender no muro de reconfirmação — deixar os GPTs responderem.
+    dataFlowQuestionAlreadyGuided = true;
+
+    backendStrategicGuidance.push({
+      tipo: "interrupcao_comercial_durante_confirmacao_campo",
+      prioridade: "alta",
+      motivo: "Lead fez pergunta, objeção ou reclamação durante confirmação de campo.",
+      orientacaoParaPreSdr: [
+        "O lead estava confirmando um dado cadastral mas trouxe pergunta, objeção ou reclamação.",
+        "Responder primeiro a manifestação do lead de forma curta e consultiva.",
+        campo && valor
+          ? `Depois retomar: confirmar se o ${campo} "${valor}" está correto.`
+          : "Depois retomar a confirmação do dado pendente.",
+        "Não salvar o texto atual como dado cadastral.",
+        "Não reiniciar o cadastro."
+      ].filter(Boolean).join("\n")
+    });
+
+    await saveLeadProfile(from, {
+      fluxoPausadoPorPergunta: true,
+      ultimaPerguntaDuranteColeta: text,
+      campoRetomadaColeta: campo,
+      ultimaMensagem: text
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("\n\nInterrupção comercial durante confirmação de campo — GPTs vão responder:", {
+      user: from,
+      ultimaMensagemLead: text,
+      campoPendente: campo,
+      valorPendente: valor
+    });
+
+    // NÃO fazer return — o fluxo segue para os GPTs
+  } else if (isPositiveConfirmation(text)) {
+     
     const validation = validateLeadData({
       [campo]: valor
     });
@@ -20740,7 +20820,7 @@ await recordRequestCompleted({
     return;
   }
 
-  if (isNegativeConfirmation(text)) {
+  } else if (isNegativeConfirmation(text)) {
     await saveLeadProfile(from, {
       campoPendente: null,
       valorPendente: null,
@@ -20773,17 +20853,10 @@ await recordRequestCompleted({
       currentLead: currentLead || {},
       extras: { tipoSaida: "confirmacao_campo_negativa", campo }
     });
-     await recordRequestCompleted({
-      traceId: auditTraceId,
-      userPhone: from,
-      mensagemLead: text,
-      respostaFinal: msg,
-      currentLead: currentLead || {},
-      extras: { tipoSaida: "confirmacao_campo_negativa", campo }
-    });
     return;
   }
 
+} else {
   const labels = {
   nome: "nome",
   cpf: "CPF",
@@ -20791,8 +20864,7 @@ await recordRequestCompleted({
   cidade: "cidade",
   estado: "estado"
 };
-
-const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?
+const respostaReconfirmacao = `Só para confirmar:
 
 Pode responder sim ou não.`;
 
@@ -20811,8 +20883,9 @@ await recordRequestCompleted({
     extras: { tipoSaida: "reconfirmacao_campo", campo }
   });
   return;
-}   
-
+  } // fecha o else (reconfirmação genérica + confirmação negativa + confirmação positiva)
+} // fecha o if aguardandoConfirmacaoCampo
+   
 const changedConfirmedData =
   currentLead?.dadosConfirmadosPeloLead === true &&
   REQUIRED_LEAD_FIELDS.some(field =>
@@ -20935,8 +21008,8 @@ if (
 
 let semanticIntent = null;
 
-if (estaEmColetaOuConfirmacao) {
-  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação:", {
+if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (sem interrupção comercial):", {
     user: from,
     ultimaMensagemLead: text,
     statusAtual: currentLead?.status || "-",
