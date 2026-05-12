@@ -21469,7 +21469,11 @@ if (
 ) {
   const recoveryAttemptsAtual = Number(currentLead?.recoveryAttempts || 0);
   const novoRecoveryAttempts = recoveryAttemptsAtual + 1;
-
+   
+// Se o lead já rejeitou mais de uma vez, limpar flags comerciais
+  // para evitar estado zumbi onde o lead parece qualificado mas está desistindo
+  const deveLimparFlagsComerciais = novoRecoveryAttempts >= 2;
+   
   backendStrategicGuidance.push({
     tipo: "recuperacao_comercial_antes_precadastro",
     prioridade: "alta",
@@ -21563,14 +21567,23 @@ if (
           ].join("\n")
   });
 
-  await saveLeadProfile(from, {
-    sinalInteresseInicial: true,
-    ultimaIntencaoForte: text,
-    interesseReal: podeIniciarColetaSeConfirmarInteresse
-      ? true
-      : currentLead?.interesseReal === true,
+ await saveLeadProfile(from, {
+    recoveryAttempts: novoRecoveryAttempts,
+    sinalRecuperacaoComercial: true,
+    ultimaRejeicaoOuEsfriamento: text,
     ultimaMensagem: text,
+
+    // Limpar flags comerciais após múltiplas rejeições para evitar estado inconsistente
+    ...(deveLimparFlagsComerciais ? {    // ← NOVO
+      interesseReal: false,              // ← NOVO
+      taxaAlinhada: false,               // ← NOVO
+      taxaModoConversao: false,          // ← NOVO
+      sinalObjecaoTaxa: false,           // ← NOVO
+      bloqueioComercialAtivo: false,     // ← NOVO
+    } : {}),                             // ← NOVO
+
     ultimaDecisaoBackend: buildBackendDecision({
+       
       tipo: "pedido_cadastro",
       motivo: "lead_pediu_cadastro_ou_participacao",
       acao: "orientar_pre_sdr_sem_responder_direto",
