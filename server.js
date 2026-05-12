@@ -20853,31 +20853,77 @@ await recordRequestCompleted({
     });
    return;
   } else {
-    const labels = {
-      nome: "nome",
-      cpf: "CPF",
-      telefone: "telefone",
-      cidade: "cidade",
-      estado: "estado"
-    };
-    const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?\n\nPode responder sim ou não.`;
+    // Mensagem não reconhecida como confirmação, negação, dado ou interrupção comercial.
+    // Se parece tentativa de confirmação ou tem conteúdo significativo,
+    // mandar para os GPTs interpretarem em vez de reconfirmar roboticamente.
+    const textNorm = (text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const pareceConfirmacaoIndireta =
+      textNorm.includes("sim") ||
+      textNorm.includes("correto") ||
+      textNorm.includes("certo") ||
+      textNorm.includes("isso") ||
+      textNorm.includes("ja") ||
+      textNorm.includes("confirmei") ||
+      textNorm.includes("disse") ||
+      textNorm.includes("esta") ||
+      textNorm.length > 15;
 
-    await sendWhatsAppMessage(from, respostaReconfirmacao);
-    await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
+    if (pareceConfirmacaoIndireta) {
+      // Mandar para os GPTs interpretarem
+      dataFlowQuestionAlreadyGuided = true;
 
-    if (messageId) {
-      markMessageAsProcessed(messageId);
+      backendStrategicGuidance.push({
+        tipo: "confirmacao_indireta_durante_campo",
+        prioridade: "alta",
+        motivo: "Lead enviou mensagem que parece confirmação mas não bateu nos padrões exatos.",
+        orientacaoParaPreSdr: [
+          `O lead estava confirmando o ${campo} "${valor}".`,
+          `O lead respondeu: "${text}"`,
+          "Essa mensagem parece ser uma confirmação, mas não bateu nos padrões do backend.",
+          "Se for confirmação, confirmar o dado e seguir para o próximo campo.",
+          "Se for negação ou dúvida, tratar adequadamente.",
+          "Não reiniciar o cadastro."
+        ].join("\n")
+      });
+
+      await saveLeadProfile(from, {
+        fluxoPausadoPorPergunta: true,
+        ultimaPerguntaDuranteColeta: text,
+        campoRetomadaColeta: campo,
+        ultimaMensagem: text
+      });
+
+      currentLead = await loadLeadProfile(from);
+
+      // NÃO fazer return — fluxo segue para os GPTs
+    } else {
+      // Mensagem muito curta ou incompreensível — reconfirmar
+      const labels = {
+        nome: "nome",
+        cpf: "CPF",
+        telefone: "telefone",
+        cidade: "cidade",
+        estado: "estado"
+      };
+      const respostaReconfirmacao = `Só para confirmar: o ${labels[campo] || campo} "${valor}" está correto?\n\nPode responder sim ou não.`;
+
+      await sendWhatsAppMessage(from, respostaReconfirmacao);
+      await saveHistoryStep(from, history, text, respostaReconfirmacao, !!message.audio?.id);
+
+      if (messageId) {
+        markMessageAsProcessed(messageId);
+      }
+      await recordRequestCompleted({
+        traceId: auditTraceId,
+        userPhone: from,
+        mensagemLead: text,
+        respostaFinal: respostaReconfirmacao,
+        currentLead: currentLead || {},
+        extras: { tipoSaida: "reconfirmacao_campo", campo }
+      });
+      return;
     }
-    await recordRequestCompleted({
-      traceId: auditTraceId,
-      userPhone: from,
-      mensagemLead: text,
-      respostaFinal: respostaReconfirmacao,
-      currentLead: currentLead || {},
-      extras: { tipoSaida: "reconfirmacao_campo", campo }
-    });
-    return;
-  } // fecha o else (reconfirmação genérica)
+  } // fecha o else (confirmação indireta ou reconfirmação)
 } // fecha o if aguardandoConfirmacaoCampo
    
 const changedConfirmedData =
@@ -24088,6 +24134,30 @@ await recordAuditEvent({
   userPhone: from,
   severity: sdrReviewFindings.length > 0 ? "medium" : "low"
 });
+
+// Se os GPTs responderam durante coleta e o lead enviou dado cadastral,
+// garantir que o dado foi salvo mesmo que o backend não tenha processado
+if (
+  estaEmColetaOuConfirmacao &&
+  dataFlowQuestionAlreadyGuided !== true &&
+  hasNewRequiredLeadData &&
+  Object.keys(normalizedExtractedLeadData || {}).length > 0
+) {
+  const dadosParaSalvarPosGpt = {};
+  for (const [campo, valor] of Object.entries(normalizedExtractedLeadData)) {
+    if (REQUIRED_LEAD_FIELDS.includes(campo) && valor && !currentLead?.[campo]) {
+      dadosParaSalvarPosGpt[campo] = valor;
+    }
+  }
+  if (Object.keys(dadosParaSalvarPosGpt).length > 0) {
+    await saveLeadProfile(from, dadosParaSalvarPosGpt);
+    currentLead = await loadLeadProfile(from);
+    console.log("📝 Dados cadastrais salvos após GPTs responderem durante coleta:", {
+      user: from,
+      dadosSalvos: Object.keys(dadosParaSalvarPosGpt)
+    });
+  }
+}
      
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
