@@ -27195,7 +27195,15 @@ const query =
   cpf: "cpf",
   cidade: "cidade",
   estado: "estado",
-  updatedAt: "updatedAt"
+  updatedAt: "updatedAt",
+  programa: "etapas.programa",
+  beneficios: "etapas.beneficios",
+  estoque: "etapas.estoque",
+  responsabilidades: "etapas.responsabilidades",
+  investimento: "etapas.investimento",
+  taxaAlinhada: "taxaAlinhada",
+  compromisso: "etapas.compromisso",
+  afiliado: "interesseAfiliado"
 };
     const sortField = sortMap[sort] || "updatedAt";
 
@@ -28883,14 +28891,14 @@ tr:hover td {
     <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
     <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
     <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
-    <th>Prog</th>
-    <th>Benef</th>
-    <th>Estoq</th>
-    <th>Resp</th>
-    <th>Invest</th>
-    <th>Taxa</th>
-    <th>Comp</th>
-    <th>Afil</th>
+    <th><a href="${makeSortLink("programa", "Prog")}">Prog</a></th>
+    <th><a href="${makeSortLink("beneficios", "Benef")}">Benef</a></th>
+    <th><a href="${makeSortLink("estoque", "Estoq")}">Estoq</a></th>
+    <th><a href="${makeSortLink("responsabilidades", "Resp")}">Resp</a></th>
+    <th><a href="${makeSortLink("investimento", "Invest")}">Invest</a></th>
+    <th><a href="${makeSortLink("taxaAlinhada", "Taxa")}">Taxa</a></th>
+    <th><a href="${makeSortLink("compromisso", "Comp")}">Comp</a></th>
+    <th><a href="${makeSortLink("afiliado", "Afil")}">Afil</a></th>
     <th>Humano</th>
     <th>Ação</th>
   </tr>
