@@ -28591,9 +28591,10 @@ tr:hover td {
       return;
     }
 
-    window.location.reload();
-  }, 10000);
-
+    const baseUrl = "/dashboard?sort=updatedAt&dir=desc" + (dashboardSenha ? "&senha=" + encodeURIComponent(dashboardSenha) : "");
+    window.location.href = baseUrl;
+  }, 30000);
+  
   function printCRM() {
     window.print();
   }
