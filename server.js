@@ -27594,7 +27594,8 @@ const humanoHtml = humanoAtivo
 
   return `
     <tr>
-      <td>${escapeHtml(lead.nome || "-")}</td><td>${escapeHtml(phone || "-")}</td>
+      <td>${escapeHtml(lead.nome || lead.nomeWhatsApp || "-")}</td>
+      <td>${escapeHtml(phone || "-")}</td>
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
       <td>${formatDate(lead.updatedAt)}</td>
