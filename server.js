@@ -5966,18 +5966,27 @@ const canEvaluateInvestmentUnderstanding = lastReplyActuallyExplainedInvestment;
       classifierSawRealInterest
     );
 
-  if (shouldConfirmInvestment && updatedEtapas.investimento !== true) {
-    updatedEtapas.investimento = true;
-    reasons.push("investimento_confirmado_por_contexto_real_de_taxa");
-  }
+  // Investimento só pode ser marcado se a última resposta da SDR
+// mencionou o VALOR REAL da taxa (R$ 1.990, 10x de 199, etc.)
+// Apenas mencionar "investimento" de passagem NÃO é suficiente
+const lastSdrMencionouValorReal =
+  /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199|10\s*parcelas?\s*de?\s*199)\b/i.test(lastSdrText || "");
 
-  if (shouldConfirmInvestment && lead?.taxaAlinhada !== true) {
-    patch.taxaAlinhada = true;
-    patch.taxaModoConversao = false;
-    patch.sinalObjecaoTaxa = false;
-    reasons.push("taxa_alinhada_por_contexto_real_de_investimento");
-  }
+const shouldConfirmInvestmentComValor =
+  shouldConfirmInvestment && lastSdrMencionouValorReal;
 
+if (shouldConfirmInvestmentComValor && updatedEtapas.investimento !== true) {
+  updatedEtapas.investimento = true;
+  reasons.push("investimento_confirmado_por_contexto_real_de_taxa_com_valor");
+}
+
+if (shouldConfirmInvestmentComValor && lead?.taxaAlinhada !== true) {
+  patch.taxaAlinhada = true;
+  patch.taxaModoConversao = false;
+  patch.sinalObjecaoTaxa = false;
+  reasons.push("taxa_alinhada_por_contexto_real_de_investimento_com_valor");
+}
+   
   /*
     2. Consolidar compromisso.
     Só consolida se houve contexto real de responsabilidades/compromisso.
@@ -13564,12 +13573,35 @@ function buildRecentTaxDecisionContext(history = [], lastSdrText = "") {
 function hasTaxBeenExplainedForDecision({ lead = {}, contextText = "" } = {}) {
   const etapas = lead?.etapas || {};
 
-  return Boolean(
-    etapas.investimento === true ||
-    lead?.taxaAlinhada === true ||
-    lead?.taxaModoConversao === true ||
-    /\b(1990|1\.990|r\$ ?1\.990|taxa|investimento|adesao|adesão|implantacao|implantação|10x|199)\b/i.test(contextText)
-  );
+  // taxaAlinhada ou taxaModoConversao já confirmados → taxa foi explicada
+  if (lead?.taxaAlinhada === true || lead?.taxaModoConversao === true) {
+    return true;
+  }
+
+  // O contexto recente menciona o VALOR REAL da taxa (R$ 1.990, 10x de 199, etc.)
+  // Apenas a palavra "taxa" ou "investimento" NÃO é suficiente — precisa do valor
+  const contextMencionaValorReal =
+    /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199|10\s*parcelas?\s*de?\s*199)\b/i.test(contextText);
+
+  if (contextMencionaValorReal) {
+    return true;
+  }
+
+  // etapas.investimento sozinho NÃO é suficiente
+  // porque pode ter sido marcado quando a SDR mencionou "investimento" de passagem
+  // sem ter explicado o valor real da taxa
+  // Só confiar em etapas.investimento se também houver evidência de valor no contexto
+  // ou se taxaPerguntada=true E o lead demonstrou entendimento real
+  if (
+    etapas.investimento === true &&
+    etapas.taxaPerguntada === true &&
+    lead?.taxaObjectionCount > 0
+  ) {
+    // Se o lead já objetou a taxa, é porque a taxa foi explicada em algum momento
+    return true;
+  }
+
+  return false;
 }
 
 function hasMandatoryValueAnchoringForDecision({ lead = {}, contextText = "" } = {}) {
