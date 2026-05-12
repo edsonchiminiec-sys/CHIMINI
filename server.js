@@ -267,7 +267,51 @@ async function updateLeadStatus(user, status) {
     atualizadoPeloDashboard: true
   };
 
-  if (status === "em_atendimento") {
+ if (status === "em_atendimento") {
+    // Toggle: se já está em atendimento humano, reverter
+    if (
+      currentLead?.humanoAssumiu === true ||
+      currentLead?.atendimentoHumanoAtivo === true ||
+      currentLead?.status === "em_atendimento"
+    ) {
+      const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
+      const faseAnterior = currentLead?.faseAnteriorDashboard || "morno";
+
+      await db.collection("leads").updateOne(
+        { user },
+        {
+          $set: {
+            ...dashboardPatch,
+            status: statusAnterior,
+            faseQualificacao: faseAnterior,
+            statusOperacional: "ativo",
+            humanoAssumiu: false,
+            atendimentoHumanoAtivo: false,
+            botBloqueadoPorHumano: false,
+            liberadoDoAtendimentoHumanoEm: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log("✅ Dashboard reverteu atendimento humano:", {
+        user,
+        para: statusAnterior
+      });
+
+      return;
+    }
+
+    // Salvar status anterior para poder reverter
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          statusAnteriorDashboard: currentLead?.status || "morno",
+          faseAnteriorDashboard: currentLead?.faseQualificacao || "morno",
+        }
+      }
+    );
     const lifecycleData = getLeadLifecycleFields({
       ...(currentLead || {}),
       status: "em_atendimento",
@@ -355,17 +399,71 @@ async function updateLeadStatus(user, status) {
   }
 
   /*
-    Para qualquer outro status vindo do dashboard:
-    - não muda status;
-    - não muda faseQualificacao;
-    - não muda faseFunil;
-    - não muda temperaturaComercial;
-    - não muda rotaComercial;
-    - não muda interesseReal;
-    - não muda interesseAfiliado.
-
-    Fica apenas como marcação visual/humana.
+  Para status "fechado" e "perdido":
+  - muda status real para que o dashboard reflita a ação
+  - bloqueia o bot para não reabrir conversa
+  - libera atendimento humano se estava ativo
   */
+  if (status === "fechado" || status === "perdido") {
+    // Toggle: se já está neste status, reverter para o anterior
+    if (currentLead?.status === status) {
+      const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
+      const faseAnterior = currentLead?.faseAnteriorDashboard || "morno";
+
+      await db.collection("leads").updateOne(
+        { user },
+        {
+          $set: {
+            ...dashboardPatch,
+            status: statusAnterior,
+            faseQualificacao: faseAnterior,
+            statusOperacional: "ativo",
+            humanoAssumiu: false,
+            atendimentoHumanoAtivo: false,
+            botBloqueadoPorHumano: false,
+            liberadoDoAtendimentoHumanoEm: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      console.log("✅ Dashboard reverteu status:", {
+        user,
+        de: status,
+        para: statusAnterior
+      });
+
+      return;
+    }
+
+    await db.collection("leads").updateOne(
+      { user },
+      {
+        $set: {
+          ...dashboardPatch,
+          statusAnteriorDashboard: currentLead?.status || "morno",
+          faseAnteriorDashboard: currentLead?.faseQualificacao || "morno",
+          status: status,
+          faseQualificacao: status,
+          statusOperacional: status,
+          faseFunil: "encerrado",
+          humanoAssumiu: false,
+          atendimentoHumanoAtivo: false,
+          botBloqueadoPorHumano: true,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    console.log("✅ Dashboard marcou lead como " + status + ":", {
+      user,
+      statusAnterior: currentLead?.status
+    });
+
+    return;
+  }
+
+  // Para qualquer outro status visual
   await db.collection("leads").updateOne(
     { user },
     {
@@ -376,6 +474,10 @@ async function updateLeadStatus(user, status) {
     }
   );
 
+  console.log("📊 Dashboard atualizou status visual:", {
+    user,
+    statusDashboard: status
+  });
   console.log("🏷️ Dashboard atualizou status visual sem interferir na IA:", {
     user,
     statusDashboard: status,
