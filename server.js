@@ -10697,6 +10697,25 @@ function isInvalidLooseNameCandidate(value = "") {
     "pode continuar",
     "vamos seguir",
     "quero seguir"
+     "podemos avançar",
+  "podemos avancar",
+  "vamos avançar",
+  "vamos avancar",
+  "vamos seguir",
+  "pode seguir",
+  "pode avançar",
+  "pode avancar",
+  "podemos seguir",
+  "vamos la",
+  "bora seguir",
+  "bora avancar",
+  "bora avançar",
+  "quero seguir",
+  "quero avançar",
+  "quero avancar",
+  "vamos para",
+  "vamos pro",
+  "seguir em frente"
   ];
 
   if (invalidExact.includes(normalized)) {
