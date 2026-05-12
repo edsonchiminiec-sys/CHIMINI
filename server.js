@@ -26370,6 +26370,7 @@ app.get("/conversation/:user", async (req, res) => {
             flex-wrap: wrap;
             margin-bottom: 18px;
           }
+          
 
           .btn {
             display: inline-block;
@@ -27598,15 +27599,15 @@ const humanoHtml = humanoAtivo
       <td>${escapeHtml(phone || "-")}</td>
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
-      <td>${formatDate(lead.updatedAt)}</td>
-      <td style="text-align:center">${lead.etapas?.programa ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.taxaAlinhada ? '✅' : '—'}</td>
-      <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '—'}</td>
-      <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '—'}</td>
+     <td style="font-size:11px;white-space:nowrap">${formatDate(lead.updatedAt)}</td>
+      <td style="text-align:center">${lead.etapas?.programa ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.taxaAlinhada ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td>${humanoHtml}</td>
       <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
@@ -28359,7 +28360,7 @@ body {
 
 table {
   width: 100%;
-  min-width: 1600px;
+  min-width: 1400px;
   border-collapse: collapse;
   background: #fff;
 }
@@ -28383,9 +28384,14 @@ td:nth-child(4) { max-width: 90px; }
 th:nth-child(5) { max-width: 50px; }
 td:nth-child(5) { max-width: 50px; }
 
-th:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 12px 4px; }
+th:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 12px 4px; background: #f0f4ff; }
 td:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 11px 4px; }
-th a {
+
+th:nth-child(6) { border-left: 2px solid #cbd5e1; }
+td:nth-child(6) { border-left: 2px solid #e2e8f0; }
+
+th:nth-child(14) { border-left: 2px solid #cbd5e1; }
+td:nth-child(14) { border-left: 2px solid #e2e8f0; }th a {
   color: #334155;
   text-decoration: none;
 }
@@ -28439,15 +28445,15 @@ tr:hover td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 7px 9px;
-  border-radius: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
   background: #374151;
   color: white;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
   border: 0;
+  white-space: nowrap;
 }
-
 .btn.whatsapp {
   background: #16a34a;
 }
