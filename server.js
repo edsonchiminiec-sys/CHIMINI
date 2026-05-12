@@ -2180,6 +2180,15 @@ Lead:
 Orientação correta:
 "Responder que há catálogo/material dos produtos e orientar envio se disponível. Não pedir CPF. Não tratar a frase como nome."
 
+REGRA CRÍTICA — FOLDER E KIT PODEM SER ENVIADOS:
+
+Quando o lead pedir folder, kit, material ou catálogo de forma direta:
+- NÃO dizer que não pode enviar
+- NÃO dizer que o material não está disponível neste momento
+- Folder e kit DEVEM ser enviados quando pedidos, desde que o lead esteja no Programa Parceiro Homologado
+- A SDR deve incluir [ACTION:SEND_FOLDER] para folder e catálago e [ACTION:SEND_KIT] para kit
+- Dizer que "não pode enviar folder" é um erro grave de condução
+
 6. Se memoriaConversacional.ultimaInteracao.temasMensagemAtualLead tiver temas:
 - usar esses temas para priorizar a resposta;
 - se houver mais de um tema, orientar resposta organizada em uma única mensagem;
@@ -5770,21 +5779,10 @@ const currentTextLooksCommercialQuestion =
     Não basta lead perguntar sobre estoque, kit, catálogo ou reposição.
   */
   const lastReplyActuallyExplainedInvestment =
-    /\b(taxa|adesao|adesão|investimento|r\$|1990|1\.990|10x|parcelado|cartao|cartão|pix|pagamento)\b/i.test(lastSdrText || "") ||
-    semanticListIncludesAny(lastSdrTopics, [
-      "investimento",
-      "taxa",
-      "adesao",
-      "adesão",
-      "pagamento",
-      "parcelamento"
-    ]);
+  /\b(taxa|adesao|adesão|investimento|r\$|1990|1\.990|10x|parcelado|cartao|cartão|pix|pagamento)\b/i.test(lastSdrText || "") &&
+  /\b(r\$\s*1[\.,]?990|taxa de ades[aã]o|taxa de implanta[cç][aã]o|nao e compra de mercadoria|não é compra de mercadoria|nao e caucao|não é caução|lote inicial.*r\$\s*5)\b/i.test(lastSdrText || "");
 
-  const historyHasInvestmentContext =
-    /\b(taxa de adesao|taxa de adesão|r\$ ?1\.?990|1990|1\.990|investimento|10x de r\$ ?199|parcelado|pagamento apos analise|pagamento após análise)\b/i.test(recentHistoryText);
-
-  const canEvaluateInvestmentUnderstanding =
-    lastReplyActuallyExplainedInvestment || historyHasInvestmentContext;
+const canEvaluateInvestmentUnderstanding = lastReplyActuallyExplainedInvestment;
 
   /*
     Para confirmar compromisso, precisa ter contexto real de compromisso,
@@ -10335,11 +10333,14 @@ function shouldForceFolderForBenefits({
     resposta.includes("comissao por vendas") ||
     resposta.includes("comissão por vendas");
 
-  return Boolean(
-    falaDeBeneficiosHomologado &&
-    contextoBeneficios &&
-    !respostaMisturaAfiliado
-  );
+  const leadPediuFolderOuKitExplicitamente =
+  hasExplicitFileRequest(leadText) &&
+  (detectRequestedFile(leadText) === "folder" || detectRequestedFile(leadText) === "kit");
+
+return Boolean(
+  (falaDeBeneficiosHomologado && contextoBeneficios && !respostaMisturaAfiliado) ||
+  (leadPediuFolderOuKitExplicitamente && !rotaAfiliado && !fluxoProtegido && !folderJaEnviado)
+);
 }
 
 function extractActions(reply = "") {
@@ -10600,49 +10601,78 @@ function isInvalidLooseNameCandidate(value = "") {
     return true;
   }
 
-  const invalidParts = [
-    "confirmacao",
-    "confirmar",
-    "corrigir",
-    "correcao",
-    "errado",
-    "errada",
-    "incorreto",
-    "incorreta",
-    "respondeu",
-    "pergunta",
-    "duvida",
-    "nao entendi",
-    "nao estou entendendo",
-    "ja enviei",
-    "ja passei",
-    "esta correto",
-    "tudo certo",
-    "pode seguir",
-    "pode continuar",
-    "vamos seguir",
-    "me explica",
-    "como funciona",
-    "por que",
-    "porque"
-  ];
-
+  cconst invalidParts = [
+  "confirmacao",
+  "confirmar",
+  "corrigir",
+  "correcao",
+  "errado",
+  "errada",
+  "incorreto",
+  "incorreta",
+  "respondeu",
+  "pergunta",
+  "duvida",
+  "nao entendi",
+  "nao estou entendendo",
+  "ja enviei",
+  "ja passei",
+  "esta correto",
+  "tudo certo",
+  "pode seguir",
+  "pode continuar",
+  "vamos seguir",
+  "me explica",
+  "como funciona",
+  "por que",
+  "porque",
+  "desenvolvedor",
+  "ao desenvolvedor",
+  "mensagem ao",
+  "atencao ao",
+  "atençao ao",
+  "follow-up",
+  "followup",
+  "contaminado",
+  "backend",
+  "sistema",
+  "nao vou pagar",
+  "nao quero pagar",
+  "nao tenho interesse",
+  "nao e pra mim",
+  "nao é pra mim",
+  "desisto",
+  "quero desistir",
+  "tchau"
+];
+   
   if (invalidParts.some(term => normalized.includes(term))) {
     return true;
   }
 
   const words = normalized.split(" ").filter(Boolean);
 
-  if (words.length < 2) {
-    return true;
-  }
-
-  if (words.length > 5) {
-    return true;
-  }
-
-  return false;
+if (words.length < 2) {
+  return true;
 }
+
+if (words.length > 5) {
+  return true;
+}
+
+// Se o texto original contém dois pontos, é prefixo de mensagem (ex: "Ao desenvolvedor: ...")
+if (raw.includes(":")) {
+  return true;
+}
+
+// Se o texto original tem muito mais palavras do que o candidato a nome capturado,
+// provavelmente é uma frase longa e não um nome
+const palavrasTextoOriginal = raw.trim().split(/\s+/).filter(Boolean).length;
+if (palavrasTextoOriginal > 6) {
+  return true;
+}
+
+return false;
 
 function isInvalidLocationCandidate(value = "") {
   const raw = String(value || "").trim();
@@ -10925,6 +10955,17 @@ if (!data.nome) {
     /\bme chamo\b/i.test(fullText) ||
     /\bsou o\b/i.test(fullText) ||
     /\bsou a\b/i.test(fullText);
+
+   // Bloquear frases de objeção, rejeição ou desistência de virarem nome
+  const textoPareceFraseDeObjecaoOuRecusa =
+    /\b(nao vou|não vou|nao quero|não quero|nao consigo|não consigo|recuso|desisto|nao pago|não pago|nao aceito|não aceito|nao tenho|não tenho|nao e pra mim|não é pra mim|tchau|obrigado|encerra|pode encerrar)\b/i.test(fullText);
+
+  if (textoPareceFraseDeObjecaoOuRecusa) {
+    return {
+      ...safeCurrentLead,
+      ...data
+    };
+  }
 
   if (hasNameContext || isDataContext) {
     let textWithoutNoise = fullText
@@ -22830,10 +22871,15 @@ const leadAceitouTaxaNaMensagemAtual =
   ["ACEITE_CLARO", "ACEITE_FRACO_MAS_SUFFICIENTE"].includes(taxPhaseDecision?.categoria) &&
   taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO";
 
+const leadFezPerguntaSobreValorOuPagamento =
+  semanticIntent?.asksQuestion === true &&
+  /\b(valor|quanto|preco|preço|taxa|qual.*valor|qual.*taxa|quanto.*pago|quando.*pago|e qual|qual e|quanto custa|quanto e a taxa|qual o valor|qual a taxa)\b/i.test(text || "");
+
 const leadTemPerguntaComercialAbertaAntesDaColeta =
   leadAceitouTaxaNaMensagemAtual !== true &&
   (
     currentLead?.pendenciaPerguntaComercialAberta === true ||
+    leadFezPerguntaSobreValorOuPagamento ||
     (
       semanticIntent?.asksQuestion === true &&
       semanticIntent?.positiveRealInterest !== true &&
@@ -22842,6 +22888,7 @@ const leadTemPerguntaComercialAbertaAntesDaColeta =
     Boolean(semanticIntent?.requestedFile) ||
     /\b(catalogo|catálogo|folder|pdf|material|kit|manual|produto|produtos|iqg|nano|estoque|comodato|reposicao|reposição|taxa|valor|preco|preço|contrato|pagamento|boleto)\b/i.test(text || "")
   );
+     
 const podeIniciarColeta =
   canStartDataCollection(currentLead || {}) &&
   currentLead?.interesseReal === true &&
@@ -22896,9 +22943,11 @@ if (
 if (
   startedDataCollection &&
   podeIniciarColeta &&
+  !leadFezPerguntaSobreValorOuPagamento &&    // ← NOVO
   currentLead?.faseQualificacao !== "coletando_dados"
-) {
+){
   await saveLeadProfile(from, {
+     
     // 🔥 limpa dados antigos para não reaproveitar nome/CPF/telefone de conversa passada
     nome: null,
     cpf: null,
