@@ -18392,8 +18392,8 @@ function shouldSendAffiliateInstructionsNow({
   const mensagemERejeicaoExplicita =
     /\b(desisto|quero desistir|não vou pagar|nao vou pagar|não quero|nao quero|não é pra mim|nao e pra mim|tchau|pode encerrar|encerra|deixa quieto|deixa pra la|deixa pra lá|nao tenho interesse|não tenho interesse)\b/i.test(t);
 
-  const recoveryEsgotado =
-    Number(currentLead?.recoveryAttempts || 0) >= 1 &&
+ const recoveryEsgotado =
+    Number(lead?.recoveryAttempts || 0) >= 1 &&
     mensagemERejeicaoExplicita &&
     !leadFinalizouHomologado &&
     !fluxoDeDadosProtegido;
