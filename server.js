@@ -372,7 +372,7 @@ async function updateLeadStatus(user, status) {
     currentLead?.status === "em_atendimento" ||
     currentLead?.faseQualificacao === "em_atendimento";
 
-  if (liberarAtendimentoHumano) {
+  if (liberarAtendimentoHumano && status !== "fechado" && status !== "perdido") {
     await db.collection("leads").updateOne(
       { user },
       {
@@ -397,7 +397,7 @@ async function updateLeadStatus(user, status) {
 
     return;
   }
-
+   
   /*
   Para status "fechado" e "perdido":
   - muda status real para que o dashboard reflita a ação
@@ -28368,18 +28368,29 @@ th {
   color: #334155;
   font-size: 12px;
   text-align: left;
-  padding: 12px;
+  padding: 12px 8px;
   border-bottom: 1px solid #e5e7eb;
   white-space: nowrap;
 }
 
+th:nth-child(1) { max-width: 120px; }
+td:nth-child(1) { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+
+th:nth-child(4) { max-width: 90px; }
+td:nth-child(4) { max-width: 90px; }
+
+th:nth-child(5) { max-width: 50px; }
+td:nth-child(5) { max-width: 50px; }
+
+th:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 12px 4px; }
+td:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 11px 4px; }
 th a {
   color: #334155;
   text-decoration: none;
 }
 
 td {
-  padding: 11px 12px;
+  padding: 11px 8px;
   border-bottom: 1px solid #f1f5f9;
   color: #111827;
   font-size: 13px;
