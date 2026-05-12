@@ -10884,6 +10884,21 @@ const estadoCorrecaoMatch = fullText.match(
 if (estadoCorrecaoMatch) {
   data.estado = normalizeUF(estadoCorrecaoMatch[1]);
 
+// Se o sistema estava esperando nome e o lead enviou algo que parece nome válido,
+// sempre sobrescrever o nome anterior (pode estar corrigindo nome errado)
+if (
+  currentLead?.campoEsperado === "nome" &&
+  data.nome &&
+  !isInvalidLooseNameCandidate(data.nome) &&
+  data.nome.trim().split(/\s+/).length >= 2
+) {
+  return {
+    ...safeCurrentLead,
+    ...data,
+    nome: data.nome  // força sobrescrita mesmo que já exista nome salvo
+  };
+}
+   
   return {
     ...safeCurrentLead,
     ...data
