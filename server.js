@@ -13217,10 +13217,45 @@ if (
       return result;
     }
   }
+if (field === "estado") {
+    const cleanState = cleanText
+      .replace(/\b(estado|uf)\b/gi, "")
+      .replace(/[:\-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const possibleUf = normalizeUF(cleanState);
+
+    if (VALID_UFS.includes(possibleUf)) {
+      result.estado = possibleUf;
+      return result;
+    }
+  }
+
+  // Campo esperado é nome: aceitar texto que parece nome completo
+  if (field === "nome") {
+    const cleanName = cleanText
+      .replace(/\b(meu nome e|meu nome é|me chamo|sou o|sou a|nome|completo)\b/gi, "")
+      .replace(/\b\d+\b/g, "")
+      .replace(/[.,!?:;]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const nameWords = cleanName.split(/\s+/).filter(Boolean);
+
+    if (
+      nameWords.length >= 2 &&
+      nameWords.length <= 6 &&
+      /^[A-Za-zÀ-ÿ\s]+$/.test(cleanName) &&
+      !isInvalidLooseNameCandidate(cleanName)
+    ) {
+      result.nome = cleanName;
+      return result;
+    }
+  }
 
   return result;
 }
-
 async function saveHistoryStep(from, history, userText, botText, isAudio = false) {
   const updatedHistory = Array.isArray(history) ? [...history] : [];
 
@@ -20518,6 +20553,22 @@ if (field === "estado" && rawExtracted?.cidade) {
   labelParaMostrar = "cidade/estado";
 }
 
+// GUARDA: Se o nome foi extraído mas pendingFields não o contém
+  // (porque já existia no DB mas pode ter sido corrompido/limpo),
+  // forçar salvamento antes de continuar
+  if (
+    rawExtracted?.nome &&
+    !pendingExtractedData.nome &&
+    !currentLead?.nome
+  ) {
+    await saveLeadProfile(from, { nome: rawExtracted.nome });
+    currentLead = await loadLeadProfile(from);
+    console.log("📝 Nome forçado para salvamento (estava null mas foi extraído):", {
+      user: from,
+      nome: rawExtracted.nome
+    });
+  }
+   
 // 🔥 NÃO CONFIRMAR NOME (deixa fluxo mais natural)
 if (field === "nome") {
   await saveLeadProfile(from, {
@@ -23092,13 +23143,14 @@ if (
   await saveLeadProfile(from, {
      
     // 🔥 limpa dados antigos para não reaproveitar nome/CPF/telefone de conversa passada
-    nome: null,
-    cpf: null,
-    telefone: null,
-    cidade: null,
-    estado: null,
-    cidadeEstado: null,
-
+    // Limpa dados antigos SOMENTE se a coleta está realmente iniciando do zero.
+    // Se o lead JÁ tinha enviado nome/CPF nesta mesma sessão, preservar.
+    ...(currentLead?.nome ? {} : { nome: null }),
+    ...(currentLead?.cpf ? {} : { cpf: null }),
+    ...(currentLead?.telefone ? {} : { telefone: null }),
+    ...(currentLead?.cidade ? {} : { cidade: null }),
+    ...(currentLead?.estado ? {} : { estado: null }),
+    ...(currentLead?.cidadeEstado ? {} : { cidadeEstado: null }),
     campoPendente: null,
     valorPendente: null,
     campoEsperado: "nome",
