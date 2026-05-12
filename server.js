@@ -1753,7 +1753,8 @@ const PROCESSED_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PROCESSED_MESSAGES = 5000;
 
 // 🔥 BUFFER PERSISTENTE NO MONGO PARA AGUARDAR O LEAD TERMINAR DE DIGITAR
-const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem
+const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem (funil)
+const TYPING_DEBOUNCE_MS_COLETA = 5000; // espera 5s durante coleta de dados
 const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
 /* =========================
    STATE
@@ -1819,6 +1820,20 @@ async function collectBufferedText(from, text, messageId) {
 
   const bufferId = from;
 
+   // Durante confirmação de campo, não agrupar — processar imediatamente
+  // para evitar misturar correção de dado com pergunta
+  const leadForBuffer = await db.collection("leads").findOne({ user: from });
+  if (
+    leadForBuffer?.aguardandoConfirmacaoCampo === true ||
+    leadForBuffer?.aguardandoConfirmacao === true
+  ) {
+    return {
+      shouldContinue: true,
+      text: cleanText,
+      messageIds: messageId ? [messageId] : []
+    };
+  }
+
   const pushData = {
   messages: cleanText
 };
@@ -1844,7 +1859,17 @@ await db.collection("incoming_message_buffers").updateOne(
   { upsert: true }
 );
    
-  await delay(TYPING_DEBOUNCE_MS);
+  // Durante coleta de dados, usar debounce mais curto
+  // para não fazer o lead esperar 12s por respostas curtas como "Sim", CPF, telefone
+  const leadProfile = await db.collection("leads").findOne({ user: from });
+  const estaEmColeta = [
+    "coletando_dados", "dados_parciais", "aguardando_dados",
+    "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+    "corrigir_dado", "corrigir_dado_final", "aguardando_valor_correcao_final"
+  ].includes(leadProfile?.faseQualificacao);
+
+  const debounceMs = estaEmColeta ? TYPING_DEBOUNCE_MS_COLETA : TYPING_DEBOUNCE_MS;
+  await delay(debounceMs);
 
   const buffer = await db.collection("incoming_message_buffers").findOne({
     _id: bufferId
@@ -1860,7 +1885,7 @@ await db.collection("incoming_message_buffers").updateOne(
   const quietFor = Date.now() - Number(buffer.lastAtMs || 0);
   const totalWait = Date.now() - Number(buffer.startedAtMs || 0);
 
-  if (quietFor < TYPING_DEBOUNCE_MS && totalWait < MAX_TYPING_WAIT_MS) {
+ if (quietFor < debounceMs && totalWait < MAX_TYPING_WAIT_MS) {
     return {
       shouldContinue: false,
       text: ""
@@ -20714,9 +20739,18 @@ ${getMissingFieldQuestion(nextField)}`;
   await sendWhatsAppMessage(from, msg);
   await saveHistoryStep(from, history, text, msg, !!message.audio?.id);
 
-  if (messageId) {
+ if (messageId) {
     markMessageAsProcessed(messageId);
   }
+
+  await recordRequestCompleted({
+    traceId: auditTraceId,
+    userPhone: from,
+    mensagemLead: text,
+    respostaFinal: msg,
+    currentLead: currentLead || {},
+    extras: { tipoSaida: "nome_aceito_sem_confirmacao", campo: "nome", valor: value }
+  });
 
   return;
 }
