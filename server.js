@@ -24327,6 +24327,73 @@ if (
     });
   }
 }
+
+// CORREÇÃO: Se o GPT respondeu durante confirmação de campo e a resposta
+// parece aceitar o dado, o backend deve confirmar o campo automaticamente.
+// Sem isso, o GPT gera texto mas o estado fica travado.
+if (
+  currentLead?.aguardandoConfirmacaoCampo === true &&
+  dataFlowQuestionAlreadyGuided === true &&
+  currentLead?.campoPendente &&
+  currentLead?.valorPendente
+) {
+  const respostaLowerConfirm = (respostaFinal || "").toLowerCase();
+  const gptPareceuConfirmar =
+    respostaLowerConfirm.includes("confirmado") ||
+    respostaLowerConfirm.includes("anotado") ||
+    respostaLowerConfirm.includes("registrado") ||
+    respostaLowerConfirm.includes("entendi") ||
+    respostaLowerConfirm.includes("perfeito") ||
+    respostaLowerConfirm.includes("retomando") ||
+    respostaLowerConfirm.includes("desculp") ||
+    /\best[aá] correto\b/i.test(respostaFinal || "");
+
+  const gptReconfirmou =
+    respostaLowerConfirm.includes("está correto?") ||
+    respostaLowerConfirm.includes("esta correto?") ||
+    respostaLowerConfirm.includes("pode confirmar?") ||
+    respostaLowerConfirm.includes("confirma?");
+
+  if (gptPareceuConfirmar && !gptReconfirmou) {
+    // GPT aceitou o dado — salvar confirmação no backend
+    const campoConfirmado = currentLead.campoPendente;
+    const valorConfirmado = currentLead.valorPendente;
+
+    const dadosConfirmados = { [campoConfirmado]: valorConfirmado };
+
+    if (campoConfirmado === "cidade" && currentLead?.estadoPendente) {
+      dadosConfirmados.estado = currentLead.estadoPendente;
+    }
+    if (campoConfirmado === "estado" && currentLead?.cidadePendente) {
+      dadosConfirmados.cidade = currentLead.cidadePendente;
+    }
+
+    const updatedLead = { ...(currentLead || {}), ...dadosConfirmados };
+    const missingAfterConfirm = getMissingLeadFields(updatedLead);
+
+    await saveLeadProfile(from, {
+      ...dadosConfirmados,
+      campoPendente: null,
+      valorPendente: null,
+      cidadePendente: null,
+      estadoPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: missingAfterConfirm.length > 0 ? "dados_parciais" : "aguardando_confirmacao_dados",
+      status: missingAfterConfirm.length > 0 ? "dados_parciais" : "aguardando_confirmacao_dados",
+      ...(missingAfterConfirm.length > 0 ? { campoEsperado: missingAfterConfirm[0] } : { campoEsperado: null }),
+      ...(missingAfterConfirm.length === 0 ? { aguardandoConfirmacao: true, dadosConfirmadosPeloLead: false } : {})
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("✅ GPT confirmou campo durante trava furada — backend salvou:", {
+      user: from,
+      campoConfirmado,
+      valorConfirmado,
+      proximoCampo: missingAfterConfirm[0] || "nenhum"
+    });
+  }
+}
      
 // envia resposta
 await sendWhatsAppMessage(from, respostaFinal);
