@@ -20817,9 +20817,7 @@ await recordRequestCompleted({
       currentLead: currentLead || {},
       extras: { tipoSaida: "confirmacao_campo_positiva", campo }
     });
-    return;
-  }
-
+ return;
   } else if (isNegativeConfirmation(text)) {
     await saveLeadProfile(from, {
       campoPendente: null,
