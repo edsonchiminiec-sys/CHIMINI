@@ -21765,6 +21765,15 @@ if (
     sinalRecuperacaoComercial: true,
     ultimaRejeicaoOuEsfriamento: text,
     ultimaMensagem: text,
+
+    ...(deveLimparFlagsComerciais ? {
+      interesseReal: false,
+      taxaAlinhada: false,
+      taxaModoConversao: false,
+      sinalObjecaoTaxa: false,
+      bloqueioComercialAtivo: false,
+    } : {}),
+
     ultimaDecisaoBackend: buildBackendDecision({
       tipo: "recuperacao_comercial",
       motivo: "lead_rejeitou_ou_esfriou_antes_do_precadastro",
