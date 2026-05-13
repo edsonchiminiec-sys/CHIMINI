@@ -30128,8 +30128,8 @@ tr:hover td {
     <th><a href="${makeSortLink("beneficios", "Benef")}">Benef</a></th>
     <th><a href="${makeSortLink("estoque", "Estoq")}">Estoq</a></th>
     <th><a href="${makeSortLink("responsabilidades", "Resp")}">Resp</a></th>
-    <th><a href="${makeSortLink("taxaAlinhada", "Taxa Iniciada")}">Taxa Iniciada</a></th>
-    <th><a href="${makeSortLink("investimento", "Taxa Finalizada")}">Taxa Finalizada</a></th>
+    <th style="line-height:1.25;padding-top:14px;padding-bottom:14px;"><a href="${makeSortLink("taxaAlinhada", "Taxa Iniciada")}">Taxa<br>Iniciada</a></th>
+    <th style="line-height:1.25;padding-top:14px;padding-bottom:14px;"><a href="${makeSortLink("investimento", "Taxa Finalizada")}">Taxa<br>Finalizada</a></th>
     <th><a href="${makeSortLink("compromisso", "Comp")}">Comp</a></th>
     <th><a href="${makeSortLink("afiliado", "Afil")}">Afil</a></th>
     <th>Status</th>
