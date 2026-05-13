@@ -26103,6 +26103,86 @@ function leadRecoveredByAffiliateForKpi(lead = {}) {
   );
 }
 
+/* =========================
+   DETECÇÃO DE TAXA NAS MENSAGENS — DASHBOARD
+   Adicionado em 13/05/2026.
+
+   Detecta se o valor R$ 1.990 (taxa do Programa Parceiro Homologado)
+   apareceu em qualquer mensagem da conversa, independente de quem
+   falou — SDR ou lead. Usado pelo dashboard para marcar a coluna
+   "Taxa" com ✅ assim que a SDR chegou nessa parte da conversa.
+
+   Importante: esta função NÃO altera a lógica interna do sistema
+   (taxaAlinhada, taxaApresentada, etapas.investimento). Ela só
+   serve para o dashboard ter uma visão mais ampla, baseada na
+   conversa real, sem depender exclusivamente das flags do motor.
+========================= */
+
+/*
+  Regex que detecta os formatos comuns do valor da taxa.
+  Pega:
+    - "1.990"
+    - "1990"
+    - "1 990"
+    - "R$ 1.990"
+    - "R$ 1.990,00"
+    - "r$1990"
+    - "mil novecentos e noventa"
+*/
+const REGEX_VALOR_TAXA_1990 = /(r\$\s*1[.\s]?990(?:[,.]00)?|\b1[.\s]?990\b|mil\s+novecentos\s+e\s+noventa)/i;
+
+/*
+  Verifica se o texto de uma única mensagem contém o valor da taxa.
+  Recebe string, devolve boolean.
+*/
+function mensagemContemValorTaxa(texto = "") {
+  if (!texto || typeof texto !== "string") return false;
+  return REGEX_VALOR_TAXA_1990.test(texto);
+}
+
+/*
+  Verifica se o histórico completo de mensagens já tocou no valor da taxa.
+  Recebe array de mensagens (formato {role, content}), devolve boolean.
+*/
+function conversaTocouNaTaxa(messages = []) {
+  if (!Array.isArray(messages) || messages.length === 0) return false;
+
+  for (const msg of messages) {
+    if (msg && typeof msg.content === "string" && mensagemContemValorTaxa(msg.content)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/*
+  Função PRINCIPAL: dado um lead + suas mensagens, retorna true se
+  qualquer evidência indicar que a fase da taxa já foi alcançada.
+
+  Olha em DUAS fontes (qualquer uma satisfaz):
+    1. Conversa: alguma mensagem (lead ou SDR) mencionou 1.990.
+    2. Flags antigas: campos que o sistema já marcava antes
+       (fallback para leads sem conversa em mãos).
+
+  Não persiste nada. Só lê.
+*/
+function leadAtingiuFaseTaxaDashboard(lead = {}, messages = []) {
+  /* Camada 1: olhar a conversa real */
+  if (conversaTocouNaTaxa(messages)) return true;
+
+  /* Camada 2: fallback nos campos antigos do sistema */
+  const etapas = lead.etapas || {};
+  return Boolean(
+    etapas.investimento === true ||
+    etapas.taxaPerguntada === true ||
+    lead.taxaAlinhada === true ||
+    lead.taxaApresentada === true ||
+    lead.taxaApresentadaEm ||
+    Number(lead.taxaObjectionCount || 0) > 0
+  );
+}
+
 function buildKpiMetricsForCLevel(leads = []) {
   const safeLeads = Array.isArray(leads) ? leads : [];
 
@@ -26851,6 +26931,46 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
+/*
+      ===== DETECÇÃO DE TAXA NAS MENSAGENS (DASHBOARD) =====
+      Busca as conversations de todos os leads em uma única query
+      e monta um Map onde a chave é o "user" do lead e o valor é
+      true/false indicando se a conversa tocou no valor R$ 1.990.
+
+      Isso permite que a coluna "Taxa" e o KPI "Taxa apresentada"
+      reflitam a realidade da conversa, e não só as flags do motor.
+    */
+    const allUsers = allLeads
+      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+      .filter(Boolean);
+
+    const conversationsForTaxDetection = allUsers.length > 0
+      ? await db.collection("conversations").find({
+          user: { $in: allUsers }
+        }, {
+          projection: { user: 1, messages: 1 }
+        }).toArray()
+      : [];
+
+    const leadTocouTaxaMap = new Map();
+    for (const conv of conversationsForTaxDetection) {
+      if (conv && conv.user) {
+        leadTocouTaxaMap.set(conv.user, conversaTocouNaTaxa(conv.messages || []));
+      }
+    }
+
+    /*
+      Função auxiliar para usar nas duas regiões abaixo
+      (KPIs e linhas da tabela). Devolve true se o lead tocou na taxa
+      pela conversa OU pelas flags antigas do motor.
+    */
+    const leadAtingiuFaseTaxaParaDashboard = lead => {
+      const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+      const tocouNaConversa = leadTocouTaxaMap.get(user) === true;
+      if (tocouNaConversa) return true;
+      return leadAtingiuFaseTaxaDashboard(lead, []);
+    };
+     
     /*
       ===== DETECÇÃO DE RELATÓRIO DE TRÁFEGO =====
       Olha a pergunta. Se o gestor pediu relatório, monta os dados
@@ -28054,18 +28174,16 @@ const isQualifiedLead = lead => {
 };
 
 const hasTaxPresented = lead => {
-  const etapas = lead?.etapas || {};
-
-  return Boolean(
-    etapas.investimento === true ||
-    etapas.taxaPerguntada === true ||
-    lead?.taxaAlinhada === true ||
-    lead?.taxaApresentada === true ||
-    lead?.taxaApresentadaEm ||
-    Number(lead?.taxaObjectionCount || 0) > 0
-  );
+  /*
+    Lógica nova (13/05/2026):
+    O dashboard considera "taxa apresentada" sempre que o valor
+    R$ 1.990 já apareceu em alguma mensagem da conversa, ou quando
+    as flags antigas do motor indicarem isso. Isso é só pra exibição
+    no dashboard — o motor continua usando suas próprias regras.
+  */
+  return leadAtingiuFaseTaxaParaDashboard(lead);
 };
-
+     
 const hasTaxObjection = lead => {
   return Boolean(
     Number(lead?.taxaObjectionCount || 0) > 0 ||
@@ -28376,7 +28494,7 @@ const statusVisual = (() => {
       <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
-      <td style="text-align:center">${lead.taxaAlinhada ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${leadAtingiuFaseTaxaParaDashboard(lead) ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
      <td>${statusVisual}</td>
