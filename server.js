@@ -1938,16 +1938,37 @@ if (!finalBuffer) {
       : []
   };
 }
+/*
+  ===========================================================
+  clearTimers (HÍBRIDO RAM + BANCO — V2)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Agora limpa DUAS coisas:
+    1. Timers em memória (compatibilidade — pra caso ainda exista
+       algum setTimeout vivo de antes do redeploy).
+    2. Campos do banco (proximoFollowupEm, followupStep, followupLockEm)
+       pra cancelar o próximo disparo do cron job.
+
+  ⚠️ ATENÇÃO: a função virou ASYNC porque agora persiste no banco.
+  Onde ela é chamada (várias dezenas de lugares no código), o
+  comportamento continua igual — não é mais necessário `await` 
+  exceto se você quiser garantir que o cancelamento foi gravado
+  antes de prosseguir.
+
+  Sem await: o cancelamento ainda acontece, só não bloqueia.
+  Com await: garante que o banco gravou antes do próximo passo.
+
+  Como o cron só roda a cada 60s, o pequeno delay no banco não
+  causa disparo duplo.
+*/
 function clearTimers(from) {
   const state = getState(from);
 
   /*
-    Controle de versão dos follow-ups.
-
-    Explicação simples:
-    Toda vez que limpamos os timers, aumentamos uma "senha".
-    Se um timer antigo acordar depois, ele vai ver que a senha mudou
-    e NÃO vai mandar mensagem fora de contexto.
+    Controle de versão dos follow-ups em RAM.
+    Mantido pra compatibilidade caso ainda exista algum setTimeout
+    rodando de antes do deploy do modelo V2.
   */
   state.followupVersion = Number(state.followupVersion || 0) + 1;
   state.followupScheduledAtMs = 0;
@@ -1966,8 +1987,28 @@ function clearTimers(from) {
     for (const timer of state.followupTimers) {
       clearTimeout(timer);
     }
-
     state.followupTimers = [];
+  }
+
+  /*
+    Limpa o agendamento persistente do banco.
+    Não usamos await pra não bloquear o webhook.
+    Como o cron só roda a cada 60s, o pequeno delay de gravação
+    não causa disparo indevido (a chance de o cron passar exatamente
+    nesse intervalo é mínima e mesmo se passar, o followupLockEm
+    protege contra disparo duplo).
+  */
+  if (from) {
+    saveLeadProfile(from, {
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null
+    }).catch(error => {
+      console.error("Erro ao limpar follow-up persistente:", {
+        user: from,
+        error: error.message
+      });
+    });
   }
 }
 
@@ -13962,8 +14003,8 @@ async function finalizeHandledResponse({
   await sendWhatsAppMessage(from, botText);
   await saveHistoryStep(from, history, userText, botText, isAudio);
 
-  if (shouldScheduleFollowups) {
-    scheduleLeadFollowups(from);
+ if (shouldScheduleFollowups) {
+    await scheduleLeadFollowups(from);
   }
 
   const idsToMark = Array.isArray(messageIds) && messageIds.length > 0
@@ -19926,27 +19967,120 @@ async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {
   }
 }
 
+/*
+  ===========================================================
+  sendAutomaticFollowupIfStillValid (V2 — LOCK + AUDIT)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Função que efetivamente verifica + envia + audita o follow-up.
+
+  Chamada por DOIS lugares:
+    1. Cron job (runFollowupCronTick) — modelo novo, robusto.
+    2. setTimeout antigo (compatibilidade, caso sobre algum em RAM).
+
+  Mudanças desta versão:
+    - Aceita parâmetro adicional 'dbVersion' (vindo do cron) para
+      checar se o follow-up no banco ainda é válido.
+    - Persiste no banco o avanço pro próximo step OU encerramento.
+    - Registra recordAuditEvent toda vez que dispara (sucesso ou
+      cancelamento) — agora aparece na tela de Auditoria.
+    - Mantém todas as proteções anti-disparo-duplo existentes.
+*/
 async function sendAutomaticFollowupIfStillValid({
   from,
   followup,
-  scheduleVersion
+  scheduleVersion,
+  dbVersion = null
 } = {}) {
   const currentState = getState(from);
 
-  if (currentState.closed) return false;
+  /*
+    Trace único para esse disparo. Vai aparecer na Auditoria.
+  */
+  const followupTraceId = `followup_${from}_${Date.now()}`;
+  const audit_component_followup = (typeof AUDIT_COMPONENTS === "object" && AUDIT_COMPONENTS?.BACKEND_FOLLOWUP)
+    ? AUDIT_COMPONENTS.BACKEND_FOLLOWUP
+    : "backend_followup";
 
-  if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
-    console.log("🔕 Follow-up cancelado: versão antiga do timer.", {
+  /*
+    Helper local pra logar follow-up cancelado/sucesso na auditoria.
+    Tem try/catch interno pra nunca derrubar o disparo se o audit falhar.
+  */
+  const auditFollowupEvent = async (eventType, severity, payload) => {
+    try {
+      if (typeof recordAuditEvent === "function") {
+        await recordAuditEvent({
+          traceId: followupTraceId,
+          component: audit_component_followup,
+          eventType,
+          severity,
+          userPhone: from,
+          payload: payload || {}
+        });
+      }
+    } catch (auditError) {
+      console.error("Erro ao auditar follow-up (ignorado):", auditError.message);
+    }
+  };
+
+  /*
+    Trava 1: lead encerrado em RAM (setTimeout antigo).
+  */
+  if (currentState.closed) {
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "state_closed_in_memory",
+      step: followup?.step || null
+    });
+    return false;
+  }
+
+  /*
+    Trava 2: versão do timer em RAM antiga (setTimeout antigo).
+    Só aplica se scheduleVersion foi passado (vindo do setTimeout).
+  */
+  if (typeof scheduleVersion === "number" &&
+      Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
+    console.log("🔕 Follow-up cancelado: versão antiga do timer (RAM).", {
       user: from,
       scheduleVersion,
       currentVersion: currentState.followupVersion
     });
-
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "ram_version_mismatch",
+      step: followup?.step || null,
+      scheduleVersion,
+      currentVersion: currentState.followupVersion
+    });
     return false;
   }
 
   const latestLead = await loadLeadProfile(from);
 
+  /*
+    Trava 3: versão do banco antiga (cron novo).
+    Se o lead respondeu uma nova mensagem enquanto o cron estava
+    rodando, a versão no banco subiu — esse disparo é obsoleto.
+  */
+  if (typeof dbVersion === "number" &&
+      Number(latestLead?.followupVersionDb || 0) !== Number(dbVersion || 0)) {
+    console.log("🔕 Follow-up cancelado: versão antiga no banco.", {
+      user: from,
+      dbVersionDoCron: dbVersion,
+      dbVersionAtualBanco: latestLead?.followupVersionDb
+    });
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "db_version_mismatch",
+      step: followup?.step || null,
+      dbVersionDoCron: dbVersion,
+      dbVersionAtualBanco: latestLead?.followupVersionDb
+    });
+    return false;
+  }
+
+  /*
+    Trava 4: lead em estado protegido/finalizado/coleta/humano.
+  */
   if (shouldStopBotByLifecycle(latestLead) || isLeadInProtectedFollowupState(latestLead)) {
     currentState.closed = shouldStopBotByLifecycle(latestLead) ? true : currentState.closed;
     clearTimers(from);
@@ -19959,6 +20093,14 @@ async function sendAutomaticFollowupIfStillValid({
       faseFunil: latestLead?.faseFunil || "-"
     });
 
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "lead_protegido_ou_finalizado",
+      step: followup?.step || null,
+      status: latestLead?.status,
+      faseFunil: latestLead?.faseFunil,
+      faseQualificacao: latestLead?.faseQualificacao,
+      statusOperacional: latestLead?.statusOperacional
+    });
     return false;
   }
 
@@ -19968,16 +20110,37 @@ async function sendAutomaticFollowupIfStillValid({
     ? followup.getMessage(latestLead, latestHistory)
     : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
 
+  /*
+    Trava 5: mensagem vazia (não deveria acontecer, mas protege).
+  */
   if (!messageToSend || !String(messageToSend).trim()) {
     console.log("🔕 Follow-up cancelado: mensagem vazia.", {
       user: from,
       step: followup.step || null
     });
-
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "mensagem_vazia",
+      step: followup?.step || null
+    });
     return false;
   }
 
-  await sendWhatsAppMessage(from, messageToSend);
+  /*
+    Envia a mensagem.
+    A partir daqui, qualquer erro é grave (lead pode receber e o banco
+    não saber). Por isso loga audit em sucesso/falha.
+  */
+  try {
+    await sendWhatsAppMessage(from, messageToSend);
+  } catch (sendError) {
+    console.error("Erro ao enviar follow-up no WhatsApp:", sendError.message);
+    await auditFollowupEvent("followup_failed", "high", {
+      motivo: "whatsapp_send_failed",
+      step: followup?.step || null,
+      error: sendError.message
+    });
+    return false;
+  }
 
   await saveAutomaticFollowupToHistory(from, messageToSend, {
     step: followup.step || null,
@@ -19992,122 +20155,467 @@ async function sendAutomaticFollowupIfStillValid({
     faseQualificacao: latestLead?.faseQualificacao || "-"
   });
 
-  if (followup.closeAfter) {
-    currentState.closed = true;
-    clearTimers(from);
+  await auditFollowupEvent("followup_sent", "low", {
+    step: followup.step || null,
+    closeAfter: followup.closeAfter === true,
+    respostaFinalSdr: messageToSend,
+    faseFunil: latestLead?.faseFunil,
+    faseQualificacao: latestLead?.faseQualificacao,
+    status: latestLead?.status
+  });
+
+  /*
+    Atualizar o banco para o PRÓXIMO step ou ENCERRAR se foi o último.
+  */
+  try {
+    const currentStep = followup.step || 1;
+    const nextStepIndex = currentStep; // arrays são 0-indexed, currentStep+1 - 1 = currentStep
+    const nextConfig = FOLLOWUP_CONFIG[nextStepIndex] || null;
+
+    if (followup.closeAfter || !nextConfig) {
+      // Foi o último — encerra.
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null,
+        statusOperacional: latestLead?.statusOperacional === "ativo" ? "encerrado_followup" : (latestLead?.statusOperacional || "encerrado_followup"),
+        ultimoFollowupEm: new Date()
+      });
+      currentState.closed = true;
+      clearTimers(from);
+
+      console.log("🏁 Follow-up final disparado — lead encerrado:", {
+        user: from,
+        step: currentStep
+      });
+    } else {
+      // Avança pro próximo step.
+      const nextDate = computeNextFollowupDate(nextConfig);
+      await saveLeadProfile(from, {
+        proximoFollowupEm: nextDate,
+        followupStep: nextConfig.step,
+        followupLockEm: null,
+        ultimoFollowupEm: new Date()
+      });
+
+      console.log("⏭️ Avançou para próximo step de follow-up:", {
+        user: from,
+        proximoStep: nextConfig.step,
+        proximoFollowupEm: nextDate.toISOString()
+      });
+    }
+  } catch (advanceError) {
+    console.error("Erro ao avançar follow-up para próximo step:", advanceError.message);
+    // Não bloqueia — o follow-up atual já foi enviado.
   }
 
   return true;
 }
 
-function scheduleLeadFollowups(from) {
-  const state = getState(from);
+/*
+  ===========================================================
+  CRON JOB DE FOLLOW-UPS (V2)
+  ===========================================================
+  Criado em 13/05/2026.
 
-  if (state.closed) return;
+  Substitui o modelo antigo de setTimeout em RAM (que era perdido
+  a cada deploy do Render). Agora um interval roda a cada 60 segundos,
+  varre o banco procurando leads com follow-up vencido e dispara.
 
-  clearTimers(from);
+  Como evita disparo duplo:
+    - findOneAndUpdate atômico pega o lead E seta followupLockEm
+      em uma operação só. Outro tick que tente pegar o mesmo lead
+      vai falhar no filter (porque followupLockEm já está setado).
 
-  const scheduleVersion = Number(state.followupVersion || 0);
+  Como recupera de falhas:
+    - Se o cron falhar em disparar (ex: WhatsApp fora do ar),
+      o lock fica vazio depois de 5 minutos e outro tick tenta.
 
-  state.inactivityFollowupCount = 0;
-  state.followupTimers = [];
-  state.followupScheduledAtMs = Date.now();
+  Como evita rodar duas instâncias paralelas:
+    - Variável global cronEmExecucao impede que um tick comece
+      antes do anterior terminar.
+*/
 
-  const followups = [
-    /*
-      PRODUÇÃO IQG:
-      - Follow-up de 6 minutos removido.
-      - Follow-up de 6 horas removido.
-      - Retomada começa em 30 minutos.
-      - Todos os follow-ups recebem histórico real.
-    */
-    {
-      step: 1,
-      delay: 30 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 1, history)
-    },
-    {
-      step: 2,
-      delay: 12 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 2, history),
-      businessOnly: true
-    },
-    {
-      step: 3,
-      delay: 18 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 3, history),
-      businessOnly: true
-    },
-    {
-      step: 4,
-      delay: 24 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 4, history),
-      businessOnly: true
-    },
-    {
-      step: 5,
-      delay: 30 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getFinalFollowupMessage(lead, history),
-      businessOnly: true,
-      closeAfter: true
-    }
-  ];
+let followupCronEmExecucao = false;
 
-  for (const followup of followups) {
-    const timer = setTimeout(async () => {
-      try {
-        const currentState = getState(from);
-
-        if (currentState.closed) return;
-
-        if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
-          console.log("🔕 Follow-up ignorado antes de rodar: timer antigo.", {
-            user: from,
-            step: followup.step,
-            scheduleVersion,
-            currentVersion: currentState.followupVersion
-          });
-
-          return;
-        }
-
-        if (followup.businessOnly && !isBusinessTime()) {
-          const nextBusinessDelay = getDelayUntilNextBusinessTime();
-
-          const businessTimer = setTimeout(async () => {
-            try {
-              await sendAutomaticFollowupIfStillValid({
-                from,
-                followup,
-                scheduleVersion
-              });
-            } catch (error) {
-              console.error("Erro no follow-up em horário comercial:", error);
-            }
-          }, nextBusinessDelay);
-
-          currentState.followupTimers.push(businessTimer);
-          return;
-        }
-
-        await sendAutomaticFollowupIfStillValid({
-          from,
-          followup,
-          scheduleVersion
-        });
-      } catch (error) {
-        console.error("Erro no follow-up:", error);
-      }
-    }, followup.delay);
-
-    state.followupTimers.push(timer);
+async function runFollowupCronTick() {
+  if (followupCronEmExecucao) {
+    // Tick anterior ainda rodando — ignora este pra evitar concorrência.
+    return;
   }
 
-  console.log("⏱️ Follow-ups agendados com versão segura:", {
-    user: from,
-    scheduleVersion,
-    totalTimers: followups.length
+  followupCronEmExecucao = true;
+
+  const cronStartedAt = Date.now();
+  let totalDisparados = 0;
+  let totalIgnorados = 0;
+  let totalErro = 0;
+
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+    const lockExpiradoEm = new Date(agora.getTime() - 5 * 60 * 1000); // locks com mais de 5min são considerados travados
+
+    /*
+      Filtro: leads cujo próximo follow-up está vencido E
+      que não estão travados por outro tick (ou cujo lock é antigo).
+    */
+    const filtro = {
+      proximoFollowupEm: { $ne: null, $lte: agora },
+      followupStep: { $gte: 1, $lte: 5 },
+      $or: [
+        { followupLockEm: null },
+        { followupLockEm: { $exists: false } },
+        { followupLockEm: { $lte: lockExpiradoEm } }
+      ]
+    };
+
+    /*
+      Busca todos os leads candidatos (até 50 por tick pra não sobrecarregar).
+      Cada lead será pego com lock atômico individual.
+    */
+    const candidatos = await db.collection("leads")
+      .find(filtro)
+      .limit(50)
+      .toArray();
+
+    if (candidatos.length === 0) {
+      return; // nada a fazer
+    }
+
+    console.log(`⏱️ Cron de follow-up: ${candidatos.length} candidato(s) encontrado(s)`);
+
+    for (const candidato of candidatos) {
+      const from = candidato.user || candidato.telefoneWhatsApp || candidato.telefone;
+
+      if (!from) {
+        totalIgnorados++;
+        continue;
+      }
+
+      try {
+        /*
+          Tenta pegar o lock de forma atômica.
+          findOneAndUpdate garante que só UM tick consegue setar o lock.
+          O filter inclui novamente o critério de proximoFollowupEm e lock
+          pra cobrir a janela entre o find() acima e o update agora.
+        */
+        const novoLock = new Date();
+        const lockResult = await db.collection("leads").findOneAndUpdate(
+          {
+            user: candidato.user,
+            proximoFollowupEm: { $ne: null, $lte: agora },
+            followupStep: { $gte: 1, $lte: 5 },
+            $or: [
+              { followupLockEm: null },
+              { followupLockEm: { $exists: false } },
+              { followupLockEm: { $lte: lockExpiradoEm } }
+            ]
+          },
+          {
+            $set: { followupLockEm: novoLock }
+          },
+          {
+            returnDocument: "after"
+          }
+        );
+
+        const lead = lockResult?.value || lockResult; // compatibilidade com versões do driver
+
+        if (!lead) {
+          // Outro tick pegou primeiro — ignora.
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          Encontrou a configuração do step atual.
+        */
+        const step = Number(lead.followupStep || 1);
+        const stepIndex = step - 1; // arrays são 0-indexed
+        const config = FOLLOWUP_CONFIG[stepIndex];
+
+        if (!config) {
+          console.warn(`⚠️ Step inválido no banco: ${step} para ${from}. Limpando.`);
+          await saveLeadProfile(from, {
+            proximoFollowupEm: null,
+            followupStep: 0,
+            followupLockEm: null
+          });
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          Monta o objeto followup compatível com sendAutomaticFollowupIfStillValid.
+          getMessage é a função que cria o texto baseado na fase do lead.
+        */
+        const followup = {
+          step: config.step,
+          businessOnly: config.businessOnly,
+          closeAfter: config.closeAfter,
+          getMessage: (leadObj, history) => {
+            if (config.step === 5) {
+              return getFinalFollowupMessage(leadObj, history);
+            }
+            return getSafeStageFollowupMessage(leadObj, config.step, history);
+          }
+        };
+
+        /*
+          Verifica businessOnly aqui também (defesa em profundidade).
+          Se for businessOnly e estamos fora do comercial, reagenda
+          pra próximo horário comercial e libera o lock.
+        */
+        if (config.businessOnly && typeof isBusinessTime === "function" && !isBusinessTime()) {
+          const nextDate = computeNextFollowupDate(config);
+          await saveLeadProfile(from, {
+            proximoFollowupEm: nextDate,
+            followupLockEm: null
+          });
+          console.log(`🕐 Follow-up step ${config.step} reagendado para horário comercial:`, {
+            user: from,
+            proximoFollowupEm: nextDate.toISOString()
+          });
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          Dispara o follow-up.
+          A função sendAutomaticFollowupIfStillValid faz todas as travas
+          (lifecycle, versão de banco, mensagem vazia, etc) e já avança
+          o step ou encerra dentro dela.
+        */
+        const sucesso = await sendAutomaticFollowupIfStillValid({
+          from,
+          followup,
+          dbVersion: Number(lead.followupVersionDb || 0)
+        });
+
+        if (sucesso) {
+          totalDisparados++;
+        } else {
+          totalIgnorados++;
+          /*
+            Se sendAutomaticFollowupIfStillValid retornou false (cancelou),
+            a função interna já cuidou de limpar/atualizar o banco.
+            Aqui só garantimos que o lock seja liberado caso ele tenha
+            ficado pendurado.
+          */
+          await db.collection("leads").updateOne(
+            { user: candidato.user, followupLockEm: novoLock },
+            { $set: { followupLockEm: null } }
+          );
+        }
+      } catch (leadError) {
+        totalErro++;
+        console.error(`Erro ao processar follow-up de ${from}:`, leadError.message);
+        /*
+          Libera o lock pra próxima tentativa daqui a 60s.
+        */
+        try {
+          await db.collection("leads").updateOne(
+            { user: candidato.user },
+            { $set: { followupLockEm: null } }
+          );
+        } catch (_) {
+          // ignora
+        }
+      }
+    }
+
+    const duracao = Date.now() - cronStartedAt;
+    console.log(`✅ Cron de follow-up concluído em ${duracao}ms:`, {
+      candidatos: candidatos.length,
+      disparados: totalDisparados,
+      ignorados: totalIgnorados,
+      erros: totalErro
+    });
+  } catch (cronError) {
+    console.error("❌ Erro fatal no cron de follow-up:", cronError.message);
+  } finally {
+    followupCronEmExecucao = false;
+  }
+}
+
+/*
+  Liga o cron pra rodar a cada 60 segundos.
+  Espera 30 segundos no boot pra dar tempo do app subir tranquilo.
+*/
+setTimeout(() => {
+  console.log("🚀 Iniciando cron de follow-ups (intervalo: 60s)");
+  runFollowupCronTick().catch(error => {
+    console.error("Erro no primeiro tick do cron:", error.message);
   });
+
+  setInterval(() => {
+    runFollowupCronTick().catch(error => {
+      console.error("Erro no tick periódico do cron:", error.message);
+    });
+  }, 60 * 1000);
+}, 30 * 1000);
+
+/*
+  ===========================================================
+  scheduleLeadFollowups (PERSISTÊNCIA EM BANCO — V2)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Modelo antigo: setTimeout em RAM. Quando Render reiniciava (deploys),
+  todos os timers eram perdidos. Resultado: zero follow-ups disparavam.
+
+  Modelo novo: salva no banco a próxima data de disparo. Um cron job
+  (runFollowupCronTick) varre o banco a cada 60 segundos e dispara o
+  que estiver vencido. Resiliente a reinicializações.
+
+  Campos persistidos no lead:
+    - proximoFollowupEm:  Date — quando o próximo follow-up deve disparar
+    - followupStep:       Number — qual etapa atual (1 a 5)
+    - followupLockEm:     Date — lock que evita disparo duplo
+    - followupVersionDb:  Number — versão de segurança (substitui state.followupVersion)
+*/
+
+/*
+  Configuração dos follow-ups.
+  Mantida idêntica ao modelo anterior pra preservar a lógica de cadência.
+
+  - step 1: 30 minutos depois (qualquer horário)
+  - step 2: 12 horas (só em horário comercial)
+  - step 3: 18 horas (só em horário comercial)
+  - step 4: 24 horas (só em horário comercial)
+  - step 5: 30 horas (só em horário comercial, encerra conversa)
+*/
+const FOLLOWUP_CONFIG = [
+  { step: 1, delayMs: 30 * 60 * 1000,                businessOnly: false, closeAfter: false },
+  { step: 2, delayMs: 12 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 3, delayMs: 18 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 4, delayMs: 24 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 5, delayMs: 30 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: true  }
+];
+
+/*
+  Calcula a próxima data de disparo do follow-up considerando businessOnly.
+
+  - Se businessOnly = false, retorna agora + delayMs.
+  - Se businessOnly = true e for horário comercial, retorna agora + delayMs.
+  - Se businessOnly = true e for fora do comercial, ajusta para o próximo
+    horário comercial após o delay.
+*/
+function computeNextFollowupDate(config) {
+  const base = Date.now() + config.delayMs;
+  const candidateDate = new Date(base);
+
+  if (!config.businessOnly) {
+    return candidateDate;
+  }
+
+  /*
+    Se o instante calculado cai fora do horário comercial,
+    empurra pra próxima abertura comercial.
+    Reaproveita getDelayUntilNextBusinessTime quando necessário.
+  */
+  const tempHours = candidateDate.getHours();
+  const isWeekend = candidateDate.getDay() === 0 || candidateDate.getDay() === 6;
+
+  // Ajuste simples: se for fim de semana ou fora do horário comercial,
+  // soma horas até abrir o expediente. Usamos BUSINESS_START_HOUR/END_HOUR
+  // se disponíveis; senão, fallback razoável (8h-18h, seg-sex).
+  const startHour = typeof BUSINESS_START_HOUR === "number" ? BUSINESS_START_HOUR : 8;
+  const endHour = typeof BUSINESS_END_HOUR === "number" ? BUSINESS_END_HOUR : 18;
+
+  const adjustToBusiness = (date) => {
+    const d = new Date(date.getTime());
+    let safety = 0;
+    while (safety < 14) {
+      const dow = d.getDay();
+      const hour = d.getHours();
+      const isBusinessDay = dow >= 1 && dow <= 5;
+      const isBusinessHour = hour >= startHour && hour < endHour;
+      if (isBusinessDay && isBusinessHour) return d;
+      // Se ainda no mesmo dia mas antes do start, pula direto pra start.
+      if (isBusinessDay && hour < startHour) {
+        d.setHours(startHour, 0, 0, 0);
+        continue;
+      }
+      // Senão, pula pro próximo dia às startHour.
+      d.setDate(d.getDate() + 1);
+      d.setHours(startHour, 0, 0, 0);
+      safety++;
+    }
+    return d;
+  };
+
+  return adjustToBusiness(candidateDate);
+}
+
+/*
+  Agenda o PRÓXIMO follow-up de um lead, salvando no banco.
+
+  Chamado depois da SDR responder o lead. Não usa setTimeout —
+  só persiste no Mongo. O cron faz o disparo no tempo certo.
+
+  Idempotente: pode ser chamado várias vezes seguidas; sempre
+  reagenda o step 1 com 30 minutos a partir de agora.
+*/
+async function scheduleLeadFollowups(from) {
+  if (!from) return;
+
+  try {
+    const lead = await loadLeadProfile(from);
+
+    /*
+      Não agenda se o lead já está em estado terminal ou em estado
+      protegido (humano, CRM, perdido, etc).
+    */
+    if (shouldStopBotByLifecycle(lead) || isLeadInProtectedFollowupState(lead)) {
+      // Limpa qualquer follow-up pendente desse lead.
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null
+      });
+
+      console.log("🔕 Follow-up não agendado: lead em estado protegido/finalizado.", {
+        user: from,
+        status: lead?.status || "-",
+        faseFunil: lead?.faseFunil || "-"
+      });
+
+      return;
+    }
+
+    const firstStep = FOLLOWUP_CONFIG[0];
+    const nextDate = computeNextFollowupDate(firstStep);
+
+    /*
+      Incrementa a versão pra invalidar qualquer execução do cron
+      que estivesse no meio do caminho. Próximo tick do cron vai
+      reler os campos novos.
+    */
+    const novaVersao = Number(lead?.followupVersionDb || 0) + 1;
+
+    await saveLeadProfile(from, {
+      proximoFollowupEm: nextDate,
+      followupStep: 1,
+      followupLockEm: null,
+      followupVersionDb: novaVersao,
+      followupAgendadoEm: new Date()
+    });
+
+    console.log("⏱️ Follow-up agendado no banco (modelo persistente V2):", {
+      user: from,
+      proximoFollowupEm: nextDate.toISOString(),
+      step: 1,
+      versao: novaVersao
+    });
+  } catch (error) {
+    console.error("Erro ao agendar follow-up no banco:", {
+      user: from,
+      error: error.message
+    });
+  }
 }
 
 app.get("/webhook", (req, res) => {
@@ -25102,8 +25610,7 @@ for (const key of fileKeys) {
 }
 
 // 🔥 follow-up sempre ativo após resposta da IA
-scheduleLeadFollowups(from);
-
+await scheduleLeadFollowups(from);
     markMessageIdsAsProcessed(bufferedMessageIds);
 
 return;
