@@ -2916,8 +2916,10 @@ async function runConversationContinuityAnalyzer({
   lead = {},
   history = [],
   lastUserText = "",
-  lastSdrText = ""
+  lastSdrText = "",
+  traceId = null
 } = {}) {
+   
   const fallback = {
     leadEntendeuUltimaExplicacao: false,
     leadQuerAvancar: false,
@@ -3565,7 +3567,7 @@ Se houver objeção, use:
 };
 
      await recordAuditEvent({
-  traceId: null,
+  traceId,
   component: AUDIT_COMPONENTS.GPT_SEMANTIC_CONTINUITY,
   eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
   payload: {
@@ -21817,7 +21819,8 @@ if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
       lead: currentLead || {},
       history,
       lastUserText: text,
-      lastSdrText: lastSdrTextForClassifiers
+      lastSdrText: lastSdrTextForClassifiers,
+      traceId: auditTraceId
     })
   ]);
 
@@ -22969,9 +22972,10 @@ if (semanticIntent?.mentionsOtherProductLine === true) {
   lead: currentLead || {},
   history,
   lastUserText: text,
-  lastSdrText: lastAssistantText
+  lastSdrText: lastAssistantText,
+  traceId: auditTraceId
 });
-
+   
 semanticContinuity = enforceSemanticContinuityHardLimits({
   semanticContinuity,
   lead: currentLead || {},
