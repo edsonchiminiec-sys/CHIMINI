@@ -26765,7 +26765,195 @@ function buildResumoQuantitativoTrafego(linhasLeads = []) {
   };
 }
 
-function buildCLevelDashboardSnapshot(allLeads = [], relatorioTrafego = null) {
+/* =========================
+   AMOSTRAS DE LEADS PARA O MULTI C-LEVEL GPT
+   Adicionado em 13/05/2026.
+
+   Em vez de mandar só números pro GPT, mandamos também
+   amostras concretas de leads divididos em 4 categorias:
+
+   1. NÃO chegou na taxa     → problema de TOPO do funil
+   2. Chegou na taxa, NÃO aceitou → problema de FIM do funil
+   3. Objetou e foi perdido  → problema de RECUPERAÇÃO
+   4. Leads bons             → referência de sucesso
+
+   Cada amostra contém telefone mascarado, intenção real
+   (2ª mensagem), última mensagem, fase máxima atingida e
+   um trecho-chave da conversa. Isso permite ao GPT dar
+   análise concreta e acionável, citando exemplos reais.
+========================= */
+
+/*
+  Monta uma amostra detalhada de UM lead para o Multi C-Level GPT.
+
+  Foco: dar contexto suficiente sem inflar o token a ponto de
+  explodir a chamada. Cada amostra fica em ~300-600 tokens.
+
+  Inclui:
+    - telefone mascarado (5554***75)
+    - 2ª mensagem do lead (intenção real, sem saudação)
+    - última mensagem do lead
+    - última resposta da SDR
+    - fase máxima atingida
+    - rota final, status final
+    - 3 mensagens-chave para o GPT inferir o que aconteceu
+*/
+function buildLeadSampleForCLevel(lead = {}, messages = []) {
+  const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+  const telefoneMasked = user.length >= 6
+    ? user.slice(0, 4) + "***" + user.slice(-2)
+    : (user || "-");
+
+  const msgsArray = Array.isArray(messages) ? messages : [];
+
+  /* 2ª mensagem real do lead (intenção verdadeira) */
+  const segundaMsg = extrairSegundaMensagemDoLead(msgsArray);
+
+  /* Última mensagem do lead e da SDR */
+  const ultimaMsgLead = [...msgsArray].reverse()
+    .find(m => m?.role === "user")?.content || "";
+  const ultimaRespSdr = [...msgsArray].reverse()
+    .find(m => m?.role === "assistant")?.content || "";
+
+  /* Fase máxima e rota */
+  const etapaMax = calcularEtapaMaxima(lead);
+  const rotaFinal = calcularRotaFinal(lead);
+  const statusFinal = calcularStatusFinal(lead);
+
+  /* 3 mensagens-chave do final da conversa para o GPT entender o desfecho */
+  const mensagensChave = msgsArray
+    .slice(-6)
+    .filter(m => m && typeof m.content === "string")
+    .map(m => ({
+      quem: m.role === "user" ? "lead" : m.role === "assistant" ? "sdr" : "sis",
+      texto: String(m.content || "").slice(0, 180)
+    }));
+
+  /* Cidade/estado (pra detectar padrão regional) */
+  const local = [lead.cidade, lead.estado].filter(Boolean).join("/") || "-";
+
+  return {
+    telefoneMasked,
+    local,
+    intencaoReal: (segundaMsg || "").slice(0, 200),
+    totalMsgsLead: msgsArray.filter(m => m?.role === "user").length,
+    etapaMaxima: etapaMax.label,
+    rotaFinal,
+    statusFinal,
+    taxaAlinhada: lead.taxaAlinhada === true,
+    taxaObjectionCount: Number(lead.taxaObjectionCount || 0),
+    ultimaMensagemLead: String(ultimaMsgLead || "").slice(0, 180),
+    ultimaRespostaSdr: String(ultimaRespSdr || "").slice(0, 180),
+    mensagensFinais: mensagensChave
+  };
+}
+
+/*
+  Separa todos os leads em 4 categorias e retorna amostras.
+
+  Configuração:
+    - 8 amostras de leads PROBLEMÁTICOS (3 cat + 3 cat + 2 cat)
+    - 2-3 amostras de leads BONS
+
+  Total: ~10-11 amostras por análise.
+*/
+function buildCLevelSamplesByCategory(allLeads = [], conversationsByUser = {}) {
+  if (!Array.isArray(allLeads) || allLeads.length === 0) {
+    return {
+      naoChegouNaTaxa: [],
+      chegouTaxaNaoAceitou: [],
+      objetouEFoiPerdido: [],
+      leadsBons: [],
+      totalAmostras: 0,
+      observacao: "Sem leads suficientes para gerar amostras."
+    };
+  }
+
+  /* Helper para pegar mensagens de um lead */
+  const getMsgs = (lead) => {
+    const user = lead.user || lead.telefoneWhatsApp || lead.telefone;
+    return user ? (conversationsByUser[user]?.messages || []) : [];
+  };
+
+  /* Categoria 1: NÃO chegou na taxa
+     Critério: nunca tocou no valor R$ 1.990 e tem >= 2 msgs (não é fantasma) */
+  const categoria1 = allLeads.filter(lead => {
+    const msgs = getMsgs(lead);
+    const tocouTaxa = conversaTocouNaTaxa(msgs) || leadAtingiuFaseTaxaDashboard(lead, []);
+    const temConversa = msgs.filter(m => m?.role === "user").length >= 2;
+    return !tocouTaxa && temConversa;
+  });
+
+  /* Categoria 2: chegou na taxa, NÃO aceitou
+     Critério: ouviu o valor mas taxaAlinhada=false E não está em coleta */
+  const categoria2 = allLeads.filter(lead => {
+    const msgs = getMsgs(lead);
+    const tocouTaxa = conversaTocouNaTaxa(msgs) || leadAtingiuFaseTaxaDashboard(lead, []);
+    const aceitou = lead.taxaAlinhada === true;
+    const emColeta = [
+      "coleta_dados", "confirmacao_dados", "pre_analise", "crm"
+    ].includes(lead.faseFunil) || lead.dadosConfirmadosPeloLead === true;
+    return tocouTaxa && !aceitou && !emColeta;
+  });
+
+  /* Categoria 3: objetou e foi perdido
+     Critério: taxaObjectionCount > 0 e status final = perdido/frio/morno sem avanço */
+  const categoria3 = allLeads.filter(lead => {
+    const objetou = Number(lead.taxaObjectionCount || 0) > 0 || lead.sinalObjecaoTaxa === true;
+    const foiPerdido = lead.status === "perdido" || lead.statusDashboard === "perdido";
+    const naoAvancou = !lead.dadosConfirmadosPeloLead && !lead.crmEnviado;
+    return objetou && (foiPerdido || naoAvancou);
+  });
+
+  /* Categoria 4: leads BONS (referência)
+     Critério: chegaram em coleta/CRM OU dados confirmados */
+  const categoria4 = allLeads.filter(lead => {
+    const sucessoComercial = Boolean(
+      lead.dadosConfirmadosPeloLead === true ||
+      lead.crmEnviado === true ||
+      lead.statusDashboard === "negociado" ||
+      lead.status === "fechado" ||
+      ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(lead.faseFunil)
+    );
+    return sucessoComercial;
+  });
+
+  /* Helper para pegar N amostras + ordenar por mais recente */
+  const pegarAmostras = (lista, n) => {
+    return lista
+      .sort((a, b) => {
+        const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return dateB - dateA;
+      })
+      .slice(0, n)
+      .map(lead => buildLeadSampleForCLevel(lead, getMsgs(lead)));
+  };
+
+  /* Distribuição: 3 + 3 + 2 problemáticos + 3 bons = 11 amostras */
+  const amostras = {
+    naoChegouNaTaxa: pegarAmostras(categoria1, 3),
+    chegouTaxaNaoAceitou: pegarAmostras(categoria2, 3),
+    objetouEFoiPerdido: pegarAmostras(categoria3, 2),
+    leadsBons: pegarAmostras(categoria4, 3),
+    totaisPorCategoria: {
+      naoChegouNaTaxa: categoria1.length,
+      chegouTaxaNaoAceitou: categoria2.length,
+      objetouEFoiPerdido: categoria3.length,
+      leadsBons: categoria4.length
+    }
+  };
+
+  amostras.totalAmostras =
+    amostras.naoChegouNaTaxa.length +
+    amostras.chegouTaxaNaoAceitou.length +
+    amostras.objetouEFoiPerdido.length +
+    amostras.leadsBons.length;
+
+  return amostras;
+}
+
+function buildCLevelDashboardSnapshot(allLeads = [], relatorioTrafego = null, amostrasLeads = null) {
   const now = new Date();
 
   const startOfToday = new Date(now);
@@ -26793,6 +26981,18 @@ function buildCLevelDashboardSnapshot(allLeads = [], relatorioTrafego = null) {
     hoje: buildKpiMetricsForCLevel(leadsHoje),
     ultimos7Dias: buildKpiMetricsForCLevel(leadsUltimos7Dias)
   };
+
+  /*
+    Amostras concretas de leads para o GPT analisar (em vez de só números).
+    Quando disponíveis, são divididas em 4 categorias:
+      1. Não chegou na taxa (problema de TOPO do funil / tráfego)
+      2. Chegou na taxa mas não aceitou (problema de FIM do funil / SDR)
+      3. Objetou e foi perdido (problema de RECUPERAÇÃO)
+      4. Leads bons (referência de sucesso)
+  */
+  if (amostrasLeads && amostrasLeads.totalAmostras > 0) {
+    snapshot.amostrasLeadsParaAnalise = amostrasLeads;
+  }
 
   /*
     Se o gestor pediu relatório de tráfego, anexa o bloco completo.
@@ -27075,6 +27275,47 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
+    /*
+      ===== AMOSTRAS DE LEADS PARA O MULTI C-LEVEL GPT =====
+      Busca as conversations de todos os leads (em uma única query)
+      e prepara amostras divididas em 4 categorias para o GPT analisar.
+
+      Esse bloco rodará SEMPRE (não só em relatório de tráfego), porque
+      a análise de KPIs com exemplos concretos é a evolução principal
+      do C-Level GPT a partir de hoje.
+    */
+    const usersParaAmostras = allLeads
+      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+      .filter(Boolean);
+
+    const conversationsParaAmostras = usersParaAmostras.length > 0
+      ? await db.collection("conversations").find({
+          user: { $in: usersParaAmostras }
+        }, {
+          projection: { user: 1, messages: 1 }
+        }).toArray()
+      : [];
+
+    const conversationsByUserForSamples = {};
+    for (const conv of conversationsParaAmostras) {
+      if (conv && conv.user) {
+        conversationsByUserForSamples[conv.user] = conv;
+      }
+    }
+
+    const amostrasLeadsParaCLevel = buildCLevelSamplesByCategory(
+      allLeads,
+      conversationsByUserForSamples
+    );
+
+    console.log("[C-Level GPT] Amostras montadas:", {
+      total: amostrasLeadsParaCLevel.totalAmostras,
+      naoChegouNaTaxa: amostrasLeadsParaCLevel.naoChegouNaTaxa.length,
+      chegouTaxaNaoAceitou: amostrasLeadsParaCLevel.chegouTaxaNaoAceitou.length,
+      objetouEFoiPerdido: amostrasLeadsParaCLevel.objetouEFoiPerdido.length,
+      leadsBons: amostrasLeadsParaCLevel.leadsBons.length
+    });
+
      
     /*
       ===== DETECÇÃO DE RELATÓRIO DE TRÁFEGO =====
@@ -27130,7 +27371,7 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
       );
     }
 
-    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads, relatorioTrafego);
+    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads, relatorioTrafego, amostrasLeadsParaCLevel);
 
     const analysis = await runMultiCLevelDashboardAnalysis({
       pergunta,
