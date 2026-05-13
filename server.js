@@ -404,7 +404,7 @@ async function updateLeadStatus(user, status) {
   - bloqueia o bot para não reabrir conversa
   - libera atendimento humano se estava ativo
   */
-  if (status === "fechado" || status === "perdido") {
+  if (status === "fechado" || status === "negociado" || status === "perdido") {
     // Toggle: se já está neste status, reverter para o anterior
     if (currentLead?.status === status) {
       const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
@@ -790,6 +790,7 @@ const STATUS_OPERACIONAL_VALUES = [
   "em_atendimento",
   "enviado_crm",
   "fechado",
+  "negociado",
   "perdido",
   "erro_dados",
   "erro_envio_crm"
@@ -26234,6 +26235,40 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
   }
 });
 
+app.get("/lead/:user/whatsapp-atender", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const user = decodeURIComponent(req.params.user || "");
+    const currentLead = await db.collection("leads").findOne({ user });
+
+    const phone = currentLead?.telefoneWhatsApp || currentLead?.telefone || user || "";
+    const waLink = phone ? `https://wa.me/${phone}` : "#";
+
+    const jaEmAtendimento =
+      currentLead?.humanoAssumiu === true ||
+      currentLead?.atendimentoHumanoAtivo === true ||
+      currentLead?.status === "em_atendimento";
+
+    const jaNegociadoOuPerdido =
+      currentLead?.status === "fechado" ||
+      currentLead?.status === "perdido" ||
+      currentLead?.statusDashboard === "negociado";
+
+    if (!jaEmAtendimento && !jaNegociadoOuPerdido) {
+      await updateLeadStatus(user, "em_atendimento");
+    }
+
+    return res.redirect(waLink);
+  } catch (error) {
+    console.error("Erro ao abrir WhatsApp + atender:", error);
+    return res.status(500).send("Erro ao processar.");
+  }
+});
+
+
 app.get("/lead/:user/status/:status", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
@@ -26252,7 +26287,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "pre_analise",
   "quente",
   "em_atendimento",
-  "fechado",
+  "negociado",
   "perdido",
   "erro_dados",
   "erro_envio_crm",
@@ -27587,12 +27622,18 @@ const precisaAtencaoHumana =
   ["alto", "critico", "crítico"].includes(String(supervisorRiscoPerda || "").toLowerCase()) ||
   ["alta", "critica", "crítica"].includes(String(supervisorPrioridadeHumana || "").toLowerCase());
 
-const humanoHtml = humanoAtivo
-  ? `<span class="badge em_atendimento">em atendimento</span>`
-  : precisaAtencaoHumana
-    ? `<span class="badge danger" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`
-    : `<span class="badge ativo">não</span>`;
-
+const statusVisual = (() => {
+  if (lead.status === "perdido" || lead.statusDashboard === "perdido")
+    return `<span class="badge badge-perdido">perdido</span>`;
+  if (lead.status === "fechado" || lead.statusDashboard === "negociado" || lead.statusDashboard === "fechado")
+    return `<span class="badge badge-negociado">negociado</span>`;
+  if (humanoAtivo)
+    return `<span class="badge badge-humano">humano</span>`;
+  if (precisaAtencaoHumana)
+    return `<span class="badge badge-atencao" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`;
+  return `<span class="badge badge-ia">IA</span>`;
+})();
+       
   return `
     <tr>
       <td>${escapeHtml(lead.nome || lead.nomeWhatsApp || "-")}</td>
@@ -27609,15 +27650,15 @@ const humanoHtml = humanoAtivo
       <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td>${humanoHtml}</td>
+      <td>${statusVisual}</td>
+      
       <td class="actions">
-        <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
-        <span class="action-divider"></span>
-        <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
-        <a class="btn" href="/conversation/${user}${senhaQuery}">Mensagem</a>
-        <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
-        <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}" onclick="return confirm('Confirma FECHAR este lead? O bot será bloqueado.')">Fechar</a>
-        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}" onclick="return confirm('Confirma marcar como PERDIDO? O bot será bloqueado.')">Perder</a>
+        <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados</a>
+        <a class="btn whatsapp" href="/lead/${user}/whatsapp-atender${senhaQuery}">WhatsApp</a>
+        <a class="btn btn-negociado" href="${baseStatusLink}/negociado${senhaQuery}" onclick="return confirm('Confirma marcar como NEGOCIADO?')">Negociado</a>
+        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}" onclick="return confirm('Confirma marcar como PERDIDO?')">Perder</a>
       </td>
+      
     </tr>
   `;
 }).join("");
@@ -28421,19 +28462,36 @@ tr:hover td {
   color: #374151;
 }
 
-.badge.ativo {
-  background: #dcfce7;
-  color: #166534;
+.badge.ativo,
+.badge-ia {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
-.badge.em_atendimento {
+.badge.em_atendimento,
+.badge-humano {
   background: #ffedd5;
   color: #c2410c;
 }
 
-.badge.danger {
+.badge.danger,
+.badge-perdido {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.badge-negociado {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-atencao {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.btn-negociado {
+  background: #16a34a;
 }
 
 .actions {
@@ -28920,7 +28978,7 @@ tr:hover td {
     <th><a href="${makeSortLink("taxaAlinhada", "Taxa")}">Taxa</a></th>
     <th><a href="${makeSortLink("compromisso", "Comp")}">Comp</a></th>
     <th><a href="${makeSortLink("afiliado", "Afil")}">Afil</a></th>
-    <th>Humano</th>
+    <th>Status</th>
     <th>Ação</th>
   </tr>
 </thead>
