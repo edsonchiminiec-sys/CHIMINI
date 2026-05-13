@@ -28155,21 +28155,104 @@ const leadCreatedAt = lead => lead.createdAt || lead.created_at || lead.dataEntr
 const leadsHoje = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), startOfToday)).length;
 const leadsUltimos7Dias = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), sevenDaysAgo)).length;
 
+/*
+      ===== TEMPERATURA E STATUS VISUAL (DASHBOARD) =====
+      Calculados na hora, sem alterar o motor.
+
+      Regras:
+        - "quente": chegou na taxa E (aceitou taxa OU está em coleta OU dados completos)
+        - "morno": chegou na taxa mas ainda não aceitou
+        - "qualificando": engajado (já trocou várias msgs) mas ainda longe da taxa
+        - "frio": pouco engajado ou desinteressado
+
+      Status visual: combinação de status do motor + temperatura calculada.
+    */
+    const computeDashboardTemperatura = (lead, tocouTaxa) => {
+      // Lead morto = sem temperatura útil
+      if (lead?.status === "perdido" || lead?.statusDashboard === "perdido") {
+        return "frio";
+      }
+
+      const aceitouTaxa = lead?.taxaAlinhada === true;
+      const estaEmColeta = Boolean(
+        ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(lead?.faseFunil) ||
+        ["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "dados_confirmados", "enviado_crm"].includes(lead?.faseQualificacao)
+      );
+      const dadosCompletos = Boolean(
+        lead?.dadosConfirmadosPeloLead === true ||
+        (lead?.nome && lead?.cpf && (lead?.telefone || lead?.telefoneWhatsApp || lead?.user) && lead?.cidade && lead?.estado)
+      );
+
+      // QUENTE: tocou na taxa E (aceitou OU está coletando OU tem dados completos)
+      if (tocouTaxa && (aceitouTaxa || estaEmColeta || dadosCompletos)) {
+        return "quente";
+      }
+
+      // MORNO: ouviu a taxa mas ainda não avançou
+      if (tocouTaxa) {
+        return "morno";
+      }
+
+      // QUALIFICANDO: engajou (passou da fase inicial), mas ainda não chegou na taxa
+      const etapas = lead?.etapas || {};
+      const passouFaseInicial = Boolean(
+        etapas.beneficios === true ||
+        etapas.estoque === true ||
+        etapas.responsabilidades === true ||
+        lead?.interesseReal === true
+      );
+      if (passouFaseInicial) {
+        return "qualificando";
+      }
+
+      // FRIO: pouco engajado
+      return "frio";
+    };
+
+    const computeDashboardStatusVisual = (lead, tocouTaxa) => {
+      // Status manuais têm prioridade absoluta
+      const statusManual = lead?.statusDashboard || lead?.status || "";
+      if (statusManual === "perdido") return { tipo: "perdido", temp: "frio" };
+      if (statusManual === "fechado" || statusManual === "negociado") return { tipo: "negociado", temp: "quente" };
+      if (statusManual === "em_atendimento") return { tipo: "humano", temp: computeDashboardTemperatura(lead, tocouTaxa) };
+
+      // Senão, calcula visualmente
+      return { tipo: "IA", temp: computeDashboardTemperatura(lead, tocouTaxa) };
+    };
+     
 const isQualifiedLead = lead => {
-  const status = getVisualStatus(lead);
+  /*
+    Critério apertado (13/05/2026):
+    Lead "qualificado" agora exige avanço REAL no funil:
+    - Ouviu a taxa OU
+    - Avançou pelo menos até responsabilidades OU
+    - Está em coleta de dados / pré-análise / CRM OU
+    - Negociado/fechado
+
+    Não basta mais ser "morno" pelo status — precisa ter avanço concreto.
+  */
+  const tocouTaxa = leadAtingiuFaseTaxaParaDashboard(lead);
   const faseFunil = lead?.faseFunil || "";
   const faseQualificacao = lead?.faseQualificacao || "";
-  const temperatura = lead?.temperaturaComercial || "";
+  const status = getVisualStatus(lead);
+  const etapas = lead?.etapas || {};
 
-  return Boolean(
-    ["morno", "qualificando", "pre_analise", "quente", "em_atendimento", "fechado"].includes(status) ||
-    ["beneficios", "estoque", "responsabilidades", "investimento", "compromisso", "coleta_dados", "pre_analise", "crm"].includes(faseFunil) ||
-    ["morno", "qualificando", "coletando_dados", "dados_parciais", "dados_confirmados", "em_atendimento", "enviado_crm"].includes(faseQualificacao) ||
-    ["morno", "quente"].includes(temperatura) ||
-    lead?.interesseReal === true
-  );
+  // Critério 1: chegou na taxa
+  if (tocouTaxa) return true;
+
+  // Critério 2: avançou até pelo menos responsabilidades (etapa 4 do funil)
+  if (etapas.responsabilidades === true || etapas.investimento === true || etapas.compromisso === true) return true;
+
+  // Critério 3: está em coleta ou pré-análise
+  if (["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(faseFunil)) return true;
+  if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "dados_confirmados", "enviado_crm"].includes(faseQualificacao)) return true;
+
+  // Critério 4: status final positivo
+  if (["fechado", "em_atendimento", "quente", "pre_analise"].includes(status)) return true;
+
+  return false;
 };
-
+     
 const hasTaxPresented = lead => {
   /*
     Lógica nova (13/05/2026):
@@ -28468,15 +28551,34 @@ const precisaAtencaoHumana =
   ["alta", "critica", "crítica"].includes(String(supervisorPrioridadeHumana || "").toLowerCase());
 
 const statusVisual = (() => {
-  if (lead.status === "perdido" || lead.statusDashboard === "perdido")
-    return `<span class="badge badge-perdido">perdido</span>`;
-  if (lead.status === "fechado" || lead.statusDashboard === "negociado" || lead.statusDashboard === "fechado")
-    return `<span class="badge badge-negociado">negociado</span>`;
-  if (humanoAtivo)
-    return `<span class="badge badge-humano">humano</span>`;
-  if (precisaAtencaoHumana)
-    return `<span class="badge badge-atencao" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`;
-  return `<span class="badge badge-ia">IA</span>`;
+  const tocouTaxa = leadAtingiuFaseTaxaParaDashboard(lead);
+  const temp = computeDashboardTemperatura(lead, tocouTaxa);
+
+  // Badge de temperatura (sempre aparece, ao lado)
+  const tempColors = {
+    quente: { bg: "#fee2e2", color: "#991b1b", label: "quente" },
+    morno: { bg: "#ffedd5", color: "#9a3412", label: "morno" },
+    qualificando: { bg: "#dbeafe", color: "#1e40af", label: "qualif." },
+    frio: { bg: "#f3f4f6", color: "#6b7280", label: "frio" }
+  };
+  const t = tempColors[temp] || tempColors.frio;
+  const tempBadge = `<span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:700;background:${t.bg};color:${t.color};margin-left:4px;">${t.label}</span>`;
+
+  // Status principal
+  let mainBadge = "";
+  if (lead.status === "perdido" || lead.statusDashboard === "perdido") {
+    mainBadge = `<span class="badge badge-perdido">perdido</span>`;
+  } else if (lead.status === "fechado" || lead.statusDashboard === "negociado" || lead.statusDashboard === "fechado") {
+    mainBadge = `<span class="badge badge-negociado">negociado</span>`;
+  } else if (humanoAtivo) {
+    mainBadge = `<span class="badge badge-humano">humano</span>`;
+  } else if (precisaAtencaoHumana) {
+    mainBadge = `<span class="badge badge-atencao" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`;
+  } else {
+    mainBadge = `<span class="badge badge-ia">IA</span>`;
+  }
+
+  return `<div style="display:flex;align-items:center;flex-wrap:wrap;">${mainBadge}${tempBadge}</div>`;
 })();
        
   return `
