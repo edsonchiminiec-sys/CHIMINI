@@ -26931,45 +26931,6 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
-/*
-      ===== DETECÇÃO DE TAXA NAS MENSAGENS (DASHBOARD) =====
-      Busca as conversations de todos os leads em uma única query
-      e monta um Map onde a chave é o "user" do lead e o valor é
-      true/false indicando se a conversa tocou no valor R$ 1.990.
-
-      Isso permite que a coluna "Taxa" e o KPI "Taxa apresentada"
-      reflitam a realidade da conversa, e não só as flags do motor.
-    */
-    const allUsers = allLeads
-      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
-      .filter(Boolean);
-
-    const conversationsForTaxDetection = allUsers.length > 0
-      ? await db.collection("conversations").find({
-          user: { $in: allUsers }
-        }, {
-          projection: { user: 1, messages: 1 }
-        }).toArray()
-      : [];
-
-    const leadTocouTaxaMap = new Map();
-    for (const conv of conversationsForTaxDetection) {
-      if (conv && conv.user) {
-        leadTocouTaxaMap.set(conv.user, conversaTocouNaTaxa(conv.messages || []));
-      }
-    }
-
-    /*
-      Função auxiliar para usar nas duas regiões abaixo
-      (KPIs e linhas da tabela). Devolve true se o lead tocou na taxa
-      pela conversa OU pelas flags antigas do motor.
-    */
-    const leadAtingiuFaseTaxaParaDashboard = lead => {
-      const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
-      const tocouNaConversa = leadTocouTaxaMap.get(user) === true;
-      if (tocouNaConversa) return true;
-      return leadAtingiuFaseTaxaDashboard(lead, []);
-    };
      
     /*
       ===== DETECÇÃO DE RELATÓRIO DE TRÁFEGO =====
@@ -28155,6 +28116,61 @@ const numberBr = value => {
 
 const leadCreatedAt = lead => lead.createdAt || lead.created_at || lead.dataEntrada || lead.updatedAt;
 
+/*
+      ===== DETECÇÃO DE TAXA NAS MENSAGENS (DASHBOARD) =====
+      Busca as conversations de todos os leads em uma única query
+      e monta um Map onde a chave é o "user" do lead e o valor é
+      true/false indicando se a conversa tocou no valor R$ 1.990.
+
+      Precisa estar ANTES de hasTaxPresented, isQualifiedLead etc.
+    */
+    const allUsers = allLeads
+      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+      .filter(Boolean);
+
+    const conversationsForTaxDetection = allUsers.length > 0
+      ? await db.collection("conversations").find({
+          user: { $in: allUsers }
+        }, {
+          projection: { user: 1, messages: 1 }
+        }).toArray()
+      : [];
+
+    const leadTocouTaxaMap = new Map();
+    for (const conv of conversationsForTaxDetection) {
+      if (conv && conv.user) {
+        leadTocouTaxaMap.set(conv.user, conversaTocouNaTaxa(conv.messages || []));
+      }
+    }
+
+    /* 🔍 DIAGNÓSTICO TEMPORÁRIO — REMOVER DEPOIS */
+    console.log("[DIAG TAXA] Total conversations buscadas:", conversationsForTaxDetection.length);
+    console.log("[DIAG TAXA] Total leads:", allLeads.length);
+    console.log("[DIAG TAXA] Leads com taxa detectada:", [...leadTocouTaxaMap.entries()].filter(([_, v]) => v).length);
+    if (conversationsForTaxDetection.length > 0) {
+      const primeiraConv = conversationsForTaxDetection[0];
+      const msgs = primeiraConv?.messages || [];
+      console.log("[DIAG TAXA] Estrutura da primeira conversa:");
+      console.log("  - user:", primeiraConv?.user);
+      console.log("  - total messages:", msgs.length);
+      console.log("  - primeira msg:", msgs[0] ? { role: msgs[0].role, contentPreview: String(msgs[0].content || "").slice(0, 80) } : "vazio");
+      console.log("  - ultima msg:", msgs[msgs.length-1] ? { role: msgs[msgs.length-1].role, contentPreview: String(msgs[msgs.length-1].content || "").slice(0, 80) } : "vazio");
+
+      const todasMsgsComTaxa = msgs.filter(m => m?.content && /(r\$\s*1[.\s]?990|1990|mil novecentos)/i.test(m.content));
+      console.log("  - msgs que contém algo de taxa:", todasMsgsComTaxa.length);
+      if (todasMsgsComTaxa[0]) {
+        console.log("  - exemplo:", String(todasMsgsComTaxa[0].content).slice(0, 200));
+      }
+    }
+    /* 🔍 FIM DIAGNÓSTICO */
+
+    const leadAtingiuFaseTaxaParaDashboard = lead => {
+      const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+      const tocouNaConversa = leadTocouTaxaMap.get(user) === true;
+      if (tocouNaConversa) return true;
+      return leadAtingiuFaseTaxaDashboard(lead, []);
+    };
+     
 const leadsHoje = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), startOfToday)).length;
 const leadsUltimos7Dias = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), sevenDaysAgo)).length;
 
