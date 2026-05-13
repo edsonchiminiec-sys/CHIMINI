@@ -26674,6 +26674,7 @@ Como responder:
 - Se houver poucos leads, não conclua com certeza. Fale em tendência inicial.
 - Sempre entregue estratégia prática.
 `;
+
 function buildDefaultCLevelAnalysis() {
   return {
     tituloDiagnostico: "Análise indisponível",
@@ -26694,16 +26695,16 @@ function buildDefaultCLevelAnalysis() {
     estrategiaMelhoria: [],
     planoProximos7Dias: [],
     prioridadeExecutiva: "media",
-    observacaoSobreAmostra: ""
+    observacaoSobreAmostra: "",
+    motivosDeSaida: []
   };
 }
 
 function parseCLevelAnalysisJson(rawText = "") {
   const fallback = buildDefaultCLevelAnalysis();
 
-  try {
-    const parsed = JSON.parse(rawText);
-
+  const tryParse = text => {
+    const parsed = JSON.parse(text);
     return {
       ...fallback,
       ...parsed,
@@ -26719,36 +26720,19 @@ function parseCLevelAnalysisJson(rawText = "") {
       indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
       possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
       estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
-      planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
+      planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : [],
+      motivosDeSaida: Array.isArray(parsed.motivosDeSaida) ? parsed.motivosDeSaida : []
     };
+  };
+
+  try {
+    return tryParse(rawText);
   } catch (error) {
     try {
       const start = rawText.indexOf("{");
       const end = rawText.lastIndexOf("}");
-
-      if (start === -1 || end === -1 || end <= start) {
-        return fallback;
-      }
-
-      const parsed = JSON.parse(rawText.slice(start, end + 1));
-
-      return {
-        ...fallback,
-        ...parsed,
-        qualidadeTrafego: {
-          ...fallback.qualidadeTrafego,
-          ...(parsed.qualidadeTrafego || {})
-        },
-        saudeFunil: {
-          ...fallback.saudeFunil,
-          ...(parsed.saudeFunil || {})
-        },
-        indicadoresBons: Array.isArray(parsed.indicadoresBons) ? parsed.indicadoresBons : [],
-        indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
-        possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
-        estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
-        planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
-      };
+      if (start === -1 || end === -1 || end <= start) return fallback;
+      return tryParse(rawText.slice(start, end + 1));
     } catch (secondError) {
       return fallback;
     }
@@ -26819,17 +26803,110 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
     await connectMongo();
 
     const allLeads = await db.collection("leads").find({}).toArray();
-    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads);
+
+    /*
+      ===== DETECÇÃO DE RELATÓRIO DE TRÁFEGO =====
+      Olha a pergunta. Se o gestor pediu relatório, monta os dados
+      detalhados; senão, segue fluxo normal (barato).
+    */
+    const deteccao = detectaPedidoRelatorioTrafego(pergunta);
+
+    let relatorioTrafego = null;
+
+    if (deteccao.isPedido) {
+      const cutoff = new Date(Date.now() - deteccao.horas * 60 * 60 * 1000);
+
+      /* Filtra leads da janela temporal */
+      const leadsNaJanela = allLeads.filter(lead => {
+        const dt = getLeadDateForKpi(lead);
+        return dt && dt.getTime() >= cutoff.getTime();
+      });
+
+      /* Busca conversations APENAS dos leads da janela (não a coleção inteira) */
+      const usersNaJanela = leadsNaJanela
+        .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+        .filter(Boolean);
+
+      const conversationsDocs = usersNaJanela.length > 0
+        ? await db.collection("conversations").find({
+            user: { $in: usersNaJanela }
+          }).toArray()
+        : [];
+
+      /* Index por user para lookup rápido */
+      const conversationsByUser = {};
+      for (const c of conversationsDocs) {
+        if (c.user) conversationsByUser[c.user] = c;
+      }
+
+      /* Monta as linhas e o resumo quantitativo */
+      const linhasLeads = buildLinhasTrafegoLeads(leadsNaJanela, conversationsByUser);
+      const resumoQuantitativo = buildResumoQuantitativoTrafego(linhasLeads);
+
+      relatorioTrafego = {
+        horas: deteccao.horas,
+        periodoLabel: deteccao.label,
+        dataInicio: cutoff.toISOString(),
+        dataFim: new Date().toISOString(),
+        linhasLeads,
+        resumoQuantitativo
+      };
+
+      console.log(
+        `[Relatório Tráfego] Pedido detectado: ${deteccao.label} | ` +
+        `${leadsNaJanela.length} leads | ${conversationsDocs.length} conversas`
+      );
+    }
+
+    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads, relatorioTrafego);
 
     const analysis = await runMultiCLevelDashboardAnalysis({
       pergunta,
       kpiSnapshot
     });
 
+    /*
+      Se foi relatório de tráfego, devolve também as linhas completas
+      (com cidade, hora, etc) pro front renderizar a tabela.
+      O GPT só entrega `motivosDeSaida` (idLead → motivo).
+      O backend ENRIQUECE cada linha com o motivo inferido.
+    */
+    let relatorioTrafegoResposta = null;
+
+    if (relatorioTrafego) {
+      const motivosPorIdLead = {};
+      for (const m of (analysis.motivosDeSaida || [])) {
+        if (m && m.idLead) {
+          motivosPorIdLead[m.idLead] = {
+            motivo: m.motivo || "Indeterminado",
+            observacao: m.observacao || ""
+          };
+        }
+      }
+
+      const linhasEnriquecidas = relatorioTrafego.linhasLeads.map(l => ({
+        ...l,
+        motivoSaida: motivosPorIdLead[l.idLead]?.motivo || "Indeterminado",
+        observacaoMotivo: motivosPorIdLead[l.idLead]?.observacao || "",
+        /* remove campo grande que o front não precisa */
+        ultimasMensagens: undefined
+      }));
+
+      relatorioTrafegoResposta = {
+        periodoLabel: relatorioTrafego.periodoLabel,
+        horas: relatorioTrafego.horas,
+        dataInicio: relatorioTrafego.dataInicio,
+        dataFim: relatorioTrafego.dataFim,
+        resumoQuantitativo: relatorioTrafego.resumoQuantitativo,
+        linhas: linhasEnriquecidas
+      };
+    }
+
     return res.json({
       ok: true,
       analysis,
-      kpiSnapshot
+      kpiSnapshot,
+      relatorioTrafego: relatorioTrafegoResposta
     });
   } catch (error) {
     console.error("Erro na rota Multi C-Level GPT:", error);
@@ -29288,7 +29365,7 @@ tr:hover td {
     ].join("");
   }
 
-  function renderCLevelAnalysis(analysis) {
+  function renderCLevelAnalysis(analysis, relatorioTrafego) {
     if (!analysis) {
       return "<p>Não foi possível montar a análise.</p>";
     }
@@ -29296,7 +29373,7 @@ tr:hover td {
     const qualidadeTrafego = analysis.qualidadeTrafego || {};
     const saudeFunil = analysis.saudeFunil || {};
 
-    return [
+    const partes = [
       "<div class='c-level-response-title'>Resposta estratégica</div>",
       "<h4>" + escapeHtmlClient(analysis.tituloDiagnostico || "Diagnóstico executivo") + "</h4>",
       "<div>",
@@ -29314,9 +29391,73 @@ tr:hover td {
       renderCLevelList("Estratégia de melhoria", analysis.estrategiaMelhoria),
       renderCLevelList("Plano dos próximos 7 dias", analysis.planoProximos7Dias),
       analysis.observacaoSobreAmostra ? "<h5>Observação sobre a amostra</h5><p>" + escapeHtmlClient(analysis.observacaoSobreAmostra) + "</p>" : ""
-    ].join("");
+    ];
+
+    if (relatorioTrafego && Array.isArray(relatorioTrafego.linhas) && relatorioTrafego.linhas.length > 0) {
+      partes.push(renderTabelaTrafego(relatorioTrafego));
+    }
+
+    return partes.join("");
   }
 
+  function renderTabelaTrafego(rel) {
+    const resumo = rel.resumoQuantitativo || {};
+
+    const kvList = obj => {
+      if (!obj || Object.keys(obj).length === 0) return "<em>sem dados</em>";
+      return Object.entries(obj)
+        .map(([k, v]) => "<strong>" + escapeHtmlClient(k) + "</strong>: " + v)
+        .join(" · ");
+    };
+
+    const rows = rel.linhas.map(l => {
+      return "<tr>" +
+        "<td style='padding:6px 8px;font-family:monospace;font-size:11px;'>" + escapeHtmlClient(l.telefoneMasked) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.dataEntrada) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.cidade) + "/" + escapeHtmlClient(l.estado) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;max-width:280px;'>" + escapeHtmlClient(l.segundaMensagem || "-") + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;text-align:center;'>" + (l.engajou ? "\u2705" : "\u00b7") + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.etapaMaximaLabel) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.rotaFinal) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.statusFinal) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.motivoSaida) + "</td>" +
+      "</tr>";
+    }).join("");
+
+    return [
+      "<div style='margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.15);'>",
+        "<h5 style='color:#fde68a;font-size:14px;'>\ud83d\udcca Relatório de Tráfego \u2014 " + escapeHtmlClient(rel.periodoLabel) + "</h5>",
+        "<div style='background:rgba(255,255,255,0.06);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;line-height:1.6;'>",
+          "<div><strong>Volume:</strong> " + resumo.volumeTotal + " leads | <strong>Engajados:</strong> " + resumo.engajados + " (" + resumo.taxaEngajamento + ") | <strong>Média de msgs/lead:</strong> " + resumo.mediaMsgsPorLead + "</div>",
+          "<div style='margin-top:6px;'><strong>Top estados:</strong> " + kvList(resumo.porEstado) + "</div>",
+          "<div style='margin-top:6px;'><strong>Top cidades:</strong> " + kvList(resumo.porCidade) + "</div>",
+          "<div style='margin-top:6px;'><strong>Por hora de entrada:</strong> " + kvList(resumo.porHora) + "</div>",
+          "<div style='margin-top:6px;'><strong>Rota final:</strong> " + kvList(resumo.porRotaFinal) + "</div>",
+          "<div style='margin-top:6px;'><strong>Status final:</strong> " + kvList(resumo.porStatusFinal) + "</div>",
+          "<div style='margin-top:6px;'><strong>Etapa máxima atingida:</strong> " + kvList(resumo.porEtapaMaxima) + "</div>",
+        "</div>",
+        "<div style='overflow-x:auto;background:rgba(255,255,255,0.04);border-radius:8px;'>",
+          "<table style='width:100%;border-collapse:collapse;color:#e2e8f0;'>",
+            "<thead>",
+              "<tr style='background:rgba(255,255,255,0.10);'>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Telefone</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Entrada</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Cidade/UF</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>2\u00aa msg (inten\u00e7\u00e3o real)</th>",
+                "<th style='padding:8px;text-align:center;font-size:11px;'>Engajou</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Etapa m\u00e1x</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Rota</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Status</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Motivo de sa\u00edda</th>",
+              "</tr>",
+            "</thead>",
+            "<tbody>" + rows + "</tbody>",
+          "</table>",
+        "</div>",
+      "</div>"
+    ].join("");
+  }
+  
   async function askCLevel(questionOverride) {
     const questionBox = document.getElementById("cLevelQuestion");
     const responseBox = document.getElementById("cLevelResponse");
@@ -29375,7 +29516,7 @@ tr:hover td {
       }
 
       responseBox.classList.remove("loading");
-      responseBox.innerHTML = renderCLevelAnalysis(data.analysis);
+      responseBox.innerHTML = renderCLevelAnalysis(data.analysis, data.relatorioTrafego);
     } catch (error) {
       responseBox.classList.remove("loading");
       responseBox.classList.add("error");
