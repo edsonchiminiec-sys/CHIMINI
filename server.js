@@ -8027,6 +8027,89 @@ function isClearlyHomologadoOnlyReply({
   );
 }
 
+/*
+  Aprovação local — fase de coleta de dados no Homologado.
+
+  Quando a SDR está pedindo nome, CPF, telefone, cidade ou estado dentro
+  do fluxo do Programa Parceiro Homologado, não faz sentido chamar o GPT
+  anti-mistura: a resposta é só uma pergunta de cadastro, não há contexto
+  de Afiliado. O GPT estava dando falso positivo nesses casos.
+
+  Critérios para aprovar localmente (TODOS precisam ser verdadeiros):
+    1. A rota comercial é homologado (ou indefinida apontando pra homologado).
+    2. O lead NÃO está pedindo Afiliado nem mencionou afiliado/link/minhaiqg.
+    3. A fase do lead é de coleta/confirmação de dados (faseQualificacao
+       ou faseFunil correspondente).
+    4. A resposta da SDR NÃO contém elementos reais de Afiliado
+       (link minhaiqg.com.br, "programa de afiliados", "cadastro de afiliado").
+
+  Se todos os critérios baterem, é coleta legítima do Homologado.
+*/
+function isSafeCollectionPhaseReply({
+  lead = {},
+  leadText = "",
+  respostaFinal = "",
+  commercialRouteDecision = null
+} = {}) {
+  /* 1. Rota é homologado? */
+  const rotaLead = String(lead?.rotaComercial || "").toLowerCase();
+  const rotaDecisao = String(commercialRouteDecision?.rotaSugerida || "").toLowerCase();
+  const rotaEhAfiliado =
+    rotaLead === "afiliado" ||
+    rotaDecisao === "afiliado" ||
+    lead?.interesseAfiliado === true ||
+    lead?.faseFunil === "afiliado" ||
+    lead?.faseQualificacao === "afiliado";
+
+  if (rotaEhAfiliado) return false;
+
+  /* 2. Lead NÃO mencionou nada de Afiliado na mensagem atual? */
+  const textoLead = String(leadText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const leadFalouAfiliado =
+    /afiliad|minhaiqg|link de divulga|programa de afiliad/i.test(textoLead);
+
+  if (leadFalouAfiliado) return false;
+
+  /* 3. Está em fase de coleta/confirmação de dados? */
+  const faseQualificacao = String(lead?.faseQualificacao || "");
+  const faseFunil = String(lead?.faseFunil || "");
+
+  const estaEmColeta = Boolean(
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "dados_confirmados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(faseQualificacao) ||
+    ["coleta_dados", "confirmacao_dados"].includes(faseFunil) ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    Boolean(lead?.campoEsperado) ||
+    Boolean(lead?.campoPendente)
+  );
+
+  if (!estaEmColeta) return false;
+
+  /* 4. A resposta da SDR NÃO contém elementos reais de Afiliado? */
+  const respostaLower = String(respostaFinal || "").toLowerCase();
+  const respostaTemAfiliado =
+    respostaLower.includes("minhaiqg.com") ||
+    respostaLower.includes("programa de afiliados") ||
+    respostaLower.includes("cadastro de afiliado") ||
+    respostaLower.includes("link de afiliado") ||
+    respostaLower.includes("link exclusivo");
+
+  if (respostaTemAfiliado) return false;
+
+  /* Tudo certo: é coleta legítima do Homologado, não chama o GPT. */
+  return true;
+}
+
 async function runFinalRouteMixGuard({
   lead = {},
   leadText = "",
@@ -8081,6 +8164,27 @@ async function runFinalRouteMixGuard({
     };
   }
 
+// ETAPA 14.5B — aprovação local para coleta de dados legítima do Homologado.
+  // Detecta turnos onde a SDR está só pedindo nome/CPF/telefone/cidade/estado
+  // dentro do fluxo correto do Parceiro Homologado. Sem isso, o GPT anti-mistura
+  // estava dando falso positivo em coleta normal (causa: confunde coleta com
+  // tentativa de cadastro de Afiliado).
+  if (
+    isSafeCollectionPhaseReply({
+      lead,
+      leadText,
+      respostaFinal,
+      commercialRouteDecision
+    })
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      motivo:
+        "Resposta aprovada localmente: lead em coleta de dados do Programa Parceiro Homologado, sem contexto de Afiliado."
+    };
+  }
+   
   try {
      
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
