@@ -28143,51 +28143,7 @@ const leadCreatedAt = lead => lead.createdAt || lead.created_at || lead.dataEntr
       }
     }
 
-/* 🔍 DIAGNÓSTICO TEMPORÁRIO V2 — REMOVER DEPOIS */
-    const totalLeadsComTaxaPelaConversa = [...leadTocouTaxaMap.entries()].filter(([_, v]) => v).length;
-    const leadsComTaxaPeloFallback = allLeads.filter(l => {
-      const u = l.user || l.telefoneWhatsApp || l.telefone || "";
-      const tocouConversa = leadTocouTaxaMap.get(u) === true;
-      if (tocouConversa) return false;
-      return leadAtingiuFaseTaxaDashboard(l, []);
-    });
 
-    console.log("========== [DIAG TAXA V2] ==========");
-    console.log("Total leads:", allLeads.length);
-    console.log("Total conversations buscadas:", conversationsForTaxDetection.length);
-    console.log("Leads com taxa PELA CONVERSA:", totalLeadsComTaxaPelaConversa);
-    console.log("Leads com taxa SO pelo fallback (flags antigas):", leadsComTaxaPeloFallback.length);
-    console.log("Total combinado esperado no dashboard:", totalLeadsComTaxaPelaConversa + leadsComTaxaPeloFallback.length);
-
-    console.log("\n--- AMOSTRA: 5 leads com taxa detectada pela conversa ---");
-    const leadsComTaxa = [...leadTocouTaxaMap.entries()].filter(([_, v]) => v).slice(0, 5);
-    for (const [user, _] of leadsComTaxa) {
-      const conv = conversationsForTaxDetection.find(c => c.user === user);
-      const msgs = conv?.messages || [];
-      const msgsComTaxa = msgs.filter(m => m?.content && REGEX_VALOR_TAXA_1990.test(m.content));
-      console.log(`  Lead ${user.slice(0,4)}***${user.slice(-2)} (${msgs.length} msgs, ${msgsComTaxa.length} com taxa):`);
-      if (msgsComTaxa[0]) {
-        console.log(`    Ex: "${String(msgsComTaxa[0].content).slice(0, 150)}"`);
-      }
-    }
-
-    console.log("\n--- AMOSTRA: 5 leads SEM taxa detectada pela conversa ---");
-    const leadsSemTaxa = [...leadTocouTaxaMap.entries()].filter(([_, v]) => !v).slice(0, 5);
-    for (const [user, _] of leadsSemTaxa) {
-      const conv = conversationsForTaxDetection.find(c => c.user === user);
-      const msgs = conv?.messages || [];
-      const ultimasMsgs = msgs.slice(-3).map(m => ({
-        role: m?.role,
-        preview: String(m?.content || "").slice(0, 100)
-      }));
-      console.log(`  Lead ${user.slice(0,4)}***${user.slice(-2)} (${msgs.length} msgs total):`);
-      for (const m of ultimasMsgs) {
-        console.log(`    [${m.role}] "${m.preview}"`);
-      }
-    }
-    console.log("========== FIM DIAG V2 ==========\n");
-    /* 🔍 FIM DIAGNÓSTICO V2 */
-     
 
     const leadAtingiuFaseTaxaParaDashboard = lead => {
       const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
