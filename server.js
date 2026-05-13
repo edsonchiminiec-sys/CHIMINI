@@ -26809,7 +26809,7 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
       Olha a pergunta. Se o gestor pediu relatório, monta os dados
       detalhados; senão, segue fluxo normal (barato).
     */
-    const deteccao = detectaPedidoRelatorioTrafego(pergunta);
+    const deteccao = { isPedido: false };
 
     let relatorioTrafego = null;
 
