@@ -5273,19 +5273,42 @@ function buildTurnPolicy({
   }
 
   if (pediuHomologado && !pediuAfiliado) {
+    const etapaAtualFunil = getCurrentFunnelStage(lead || {});
+    const podeColetarAgora = canStartDataCollection(lead || {});
+    const etapaJaChegouEmTaxa = etapaAtualFunil >= 5;
+    const etapaJaPassouTaxa = etapaAtualFunil >= 7;
+
     return {
       ...base,
-      modo: "homologado_escolhido",
+      modo: etapaJaPassouTaxa && podeColetarAgora
+        ? "coleta_dados_liberada"
+        : etapaJaChegouEmTaxa
+          ? "homologado_fase_taxa"
+          : "homologado_escolhido",
       ofertaPermitida: "homologado",
       podeFalarAfiliado: false,
       podeMandarLinkAfiliado: false,
       podeCompararProgramas: false,
-      estrategiaObrigatoria: "reforcar_valor",
-      proximaMelhorAcao:
-        "Responder focando somente no Programa Parceiro Homologado e conduzir para a próxima etapa pendente.",
-      cuidadoPrincipal:
-        "Não comparar com Afiliado, não mandar link de Afiliado, não falar taxa cedo e não pedir dados.",
-      motivo: "Lead escolheu ou reforçou preferência pelo Homologado."
+      podeFalarTaxa: etapaJaChegouEmTaxa,
+      podePedirDados: etapaJaPassouTaxa && podeColetarAgora,
+      estrategiaObrigatoria: etapaJaPassouTaxa && podeColetarAgora
+        ? "avancar_pre_analise"
+        : etapaJaChegouEmTaxa
+          ? "reforcar_valor"
+          : "reforcar_valor",
+      proximaMelhorAcao: etapaJaPassouTaxa && podeColetarAgora
+        ? "Conduzir para o início da pré-análise, pedindo o próximo dado faltante."
+        : etapaJaChegouEmTaxa
+          ? "Explicar o investimento/taxa com transparência e conduzir para validação."
+          : "Responder focando somente no Programa Parceiro Homologado e conduzir para a próxima etapa pendente.",
+      cuidadoPrincipal: etapaJaChegouEmTaxa
+        ? "Não comparar com Afiliado. Não pedir dados antes de alinhar taxa. Explicar valor percebido antes do número."
+        : "Não comparar com Afiliado, não mandar link de Afiliado, não falar taxa cedo e não pedir dados.",
+      motivo: etapaJaPassouTaxa && podeColetarAgora
+        ? "Lead no Homologado com todas etapas concluídas e coleta liberada."
+        : etapaJaChegouEmTaxa
+          ? "Lead no Homologado na etapa de investimento/taxa. Liberado para falar de taxa."
+          : "Lead escolheu ou reforçou preferência pelo Homologado."
     };
   }
 
