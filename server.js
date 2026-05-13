@@ -27649,8 +27649,7 @@ const statusVisual = (() => {
       <td style="text-align:center">${lead.taxaAlinhada ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
-      <td>${humanoHtml}</td>
-      <td>${statusVisual}</td>
+     <td>${statusVisual}</td>
       
       <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados</a>
