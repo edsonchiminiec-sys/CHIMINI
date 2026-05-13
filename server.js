@@ -26121,7 +26121,380 @@ function buildKpiMetricsForCLevel(leads = []) {
   };
 }
 
-function buildCLevelDashboardSnapshot(allLeads = []) {
+/* =========================
+   FUNÇÕES AUXILIARES — RELATÓRIO DE TRÁFEGO PRO GESTOR
+   Adicionado em 13/05/2026.
+   Usadas por buildCLevelDashboardSnapshot e pela rota
+   /dashboard/c-level-consultor quando o gestor pede
+   relatório de tráfego.
+========================= */
+
+/*
+  Detecta se a pergunta do gestor é um pedido de relatório de tráfego
+  e extrai o período em horas. Retorna { isPedido, horas, label }.
+
+  Exemplos que ativam:
+    "me dá o relatório de tráfego dos últimos 3 dias"
+    "relatório de tráfego de hoje"
+    "como foi o tráfego dessa semana"
+    "leads que entraram nas últimas 48 horas"
+*/
+function detectaPedidoRelatorioTrafego(pergunta = "") {
+  const texto = String(pergunta || "").toLowerCase().trim();
+
+  const palavrasChaveTrafego = [
+    "relatório de tráfego",
+    "relatorio de trafego",
+    "relatório do tráfego",
+    "relatorio do trafego",
+    "relatório de leads",
+    "relatorio de leads",
+    "como foi o tráfego",
+    "como foi o trafego",
+    "como está o tráfego",
+    "como esta o trafego",
+    "leads que entraram",
+    "leads entraram",
+    "qualidade do tráfego dos",
+    "qualidade do trafego dos",
+    "tráfego de hoje",
+    "trafego de hoje",
+    "tráfego de ontem",
+    "trafego de ontem",
+    "tráfego da semana",
+    "trafego da semana",
+    "tráfego dessa semana",
+    "trafego dessa semana",
+    "tráfego desse mês",
+    "trafego desse mes",
+    "tráfego dos últimos",
+    "trafego dos ultimos"
+  ];
+
+  const isPedido = palavrasChaveTrafego.some(chave => texto.includes(chave));
+
+  if (!isPedido) {
+    return { isPedido: false, horas: 0, label: "" };
+  }
+
+  let horas = 24;
+  let label = "últimas 24 horas";
+
+  const matchDias = texto.match(/(\d{1,3})\s*dia/);
+  if (matchDias) {
+    const n = Math.min(Math.max(Number(matchDias[1]), 1), 60);
+    horas = n * 24;
+    label = `últimos ${n} dia${n > 1 ? "s" : ""}`;
+    return { isPedido: true, horas, label };
+  }
+
+  const matchHoras = texto.match(/(\d{1,4})\s*hora/);
+  if (matchHoras) {
+    const n = Math.min(Math.max(Number(matchHoras[1]), 1), 1440);
+    horas = n;
+    label = `últimas ${n} hora${n > 1 ? "s" : ""}`;
+    return { isPedido: true, horas, label };
+  }
+
+  if (texto.includes("hoje")) {
+    horas = 24;
+    label = "hoje (últimas 24h)";
+  } else if (texto.includes("ontem")) {
+    horas = 48;
+    label = "ontem e hoje (últimas 48h)";
+  } else if (texto.includes("semana")) {
+    horas = 168;
+    label = "última semana (7 dias)";
+  } else if (texto.includes("mês") || texto.includes("mes")) {
+    horas = 720;
+    label = "último mês (30 dias)";
+  }
+
+  return { isPedido: true, horas, label };
+}
+
+/*
+  Extrai a 2ª mensagem real do lead (intenção verdadeira),
+  ignorando saudações curtas como "oi", "olá", "bom dia".
+  Se a 2ª for genérica, tenta a 3ª.
+*/
+function extrairSegundaMensagemDoLead(messages = []) {
+  if (!Array.isArray(messages)) return "";
+
+  const msgsDoLead = messages
+    .filter(m => m && m.role === "user" && typeof m.content === "string")
+    .map(m => m.content.trim())
+    .filter(Boolean);
+
+  if (msgsDoLead.length === 0) return "";
+  if (msgsDoLead.length === 1) return msgsDoLead[0];
+
+  const padraoGenerico = /^(oi+|ol[áa]|opa|bom\s*dia|boa\s*tarde|boa\s*noite|tudo\s*bem|e\s*a[ií]|hey|hi|hello|tudo\s*bom|td\s*bem|td\s*bm|alguem|alguém|tem\s*alguem|tem\s*alguém)[\s!?.,]*$/i;
+
+  for (let i = 1; i < msgsDoLead.length; i++) {
+    const m = msgsDoLead[i];
+    if (m.length < 4) continue;
+    if (padraoGenerico.test(m)) continue;
+    return m;
+  }
+
+  return msgsDoLead[1];
+}
+
+/*
+  Calcula a etapa máxima atingida pelo lead no funil.
+  Retorna { idx: 0-8, label: string }.
+*/
+function calcularEtapaMaxima(lead = {}) {
+  const etapas = lead.etapas || {};
+  const ordem = [
+    { idx: 1, key: "programa", label: "Programa" },
+    { idx: 2, key: "beneficios", label: "Benefícios" },
+    { idx: 3, key: "estoque", label: "Estoque" },
+    { idx: 4, key: "responsabilidades", label: "Responsabilidades" },
+    { idx: 5, key: "investimento", label: "Investimento/Taxa" },
+    { idx: 6, key: "compromisso", label: "Compromisso" }
+  ];
+
+  let maxIdx = 0;
+  let maxLabel = "Sem avanço";
+
+  for (const etapa of ordem) {
+    if (etapas[etapa.key] === true) {
+      maxIdx = etapa.idx;
+      maxLabel = etapa.label;
+    }
+  }
+
+  if (lead.taxaAlinhada === true && maxIdx < 6) {
+    maxIdx = 6;
+    maxLabel = "Taxa alinhada";
+  }
+  if (
+    lead.faseFunil === "coleta_dados" ||
+    lead.faseQualificacao === "coletando_dados" ||
+    lead.faseQualificacao === "dados_parciais"
+  ) {
+    maxIdx = 7;
+    maxLabel = "Coleta de dados";
+  }
+  if (
+    lead.dadosConfirmadosPeloLead === true ||
+    lead.crmEnviado === true ||
+    lead.status === "fechado" ||
+    lead.statusDashboard === "negociado"
+  ) {
+    maxIdx = 8;
+    maxLabel = "Dados confirmados/CRM";
+  }
+
+  return { idx: maxIdx, label: maxLabel };
+}
+
+/*
+  Determina a rota final do lead (Homologado, Afiliado, Indefinido).
+*/
+function calcularRotaFinal(lead = {}) {
+  if (
+    lead.rotaComercial === "afiliado" ||
+    lead.faseFunil === "afiliado" ||
+    lead.afiliadoInstrucoesEnviadas === true ||
+    lead.interesseAfiliado === true
+  ) {
+    return "Afiliado";
+  }
+  if (
+    lead.etapas?.programa === true ||
+    lead.taxaAlinhada === true ||
+    lead.rotaComercial === "homologado"
+  ) {
+    return "Homologado";
+  }
+  return "Indefinido";
+}
+
+/*
+  Engajamento: lead enviou mais de 3 mensagens.
+*/
+function leadEngajou(messages = []) {
+  if (!Array.isArray(messages)) return false;
+  const msgsDoLead = messages.filter(m => m && m.role === "user");
+  return msgsDoLead.length > 3;
+}
+
+/*
+  Pega as últimas N mensagens da conversa (para o GPT inferir motivo de saída).
+  Limita tamanho de cada msg pra economizar tokens.
+*/
+function ultimasMensagensParaInferencia(messages = [], n = 3) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .slice(-n * 2)
+    .filter(m => m && typeof m.content === "string")
+    .map(m => ({
+      role: m.role === "user" ? "lead" : m.role === "assistant" ? "sdr" : "sis",
+      texto: String(m.content || "").slice(0, 200)
+    }));
+}
+
+/*
+  Status final visual do lead (para coluna "Status" da tabela).
+*/
+function calcularStatusFinal(lead = {}) {
+  const status = lead.statusDashboard || lead.status || "";
+
+  if (status === "fechado" || status === "negociado") return "Negociado";
+  if (status === "perdido") return "Perdido";
+  if (status === "em_atendimento") return "Humano";
+  if (lead.crmEnviado === true) return "Enviado CRM";
+  if (
+    lead.dadosConfirmadosPeloLead === true ||
+    lead.faseQualificacao === "dados_confirmados"
+  ) {
+    return "Dados confirmados";
+  }
+  if (lead.taxaAlinhada === true) return "Taxa aceita";
+
+  const dataAtualizacao = lead.updatedAt ? new Date(lead.updatedAt).getTime() : 0;
+  const horasInativo = dataAtualizacao
+    ? (Date.now() - dataAtualizacao) / (1000 * 60 * 60)
+    : 0;
+
+  if (horasInativo > 24) return "Esfriou";
+  return "Em conversa";
+}
+
+/*
+  Monta o array lead-a-lead com dados determinísticos.
+  Para CADA lead da janela temporal, devolve um objeto com:
+   - identificação (telefone mascarado)
+   - 2ª mensagem (intenção real)
+   - engajou
+   - etapa máxima
+   - rota final
+   - status final
+   - últimas mensagens (para o GPT inferir motivo de saída)
+*/
+function buildLinhasTrafegoLeads(leads = [], conversationsByUser = {}) {
+  if (!Array.isArray(leads)) return [];
+
+  return leads.map(lead => {
+    const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+    const conv = conversationsByUser[user] || {};
+    const messages = Array.isArray(conv.messages) ? conv.messages : [];
+
+    const segundaMsg = extrairSegundaMensagemDoLead(messages);
+    const engajou = leadEngajou(messages);
+    const etapaMax = calcularEtapaMaxima(lead);
+    const rotaFinal = calcularRotaFinal(lead);
+    const statusFinal = calcularStatusFinal(lead);
+    const ultimasMsgs = ultimasMensagensParaInferencia(messages, 3);
+
+    const telefone = lead.telefoneWhatsApp || lead.telefone || user || "-";
+    const telefoneMasked = telefone.length >= 6
+      ? telefone.slice(0, 4) + "*****" + telefone.slice(-2)
+      : telefone;
+
+    const dataEntrada = lead.createdAt || lead.dataEntrada || lead.updatedAt || null;
+    const dataFormatada = dataEntrada
+      ? new Date(dataEntrada).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+      : "-";
+
+    return {
+      idLead: telefoneMasked,
+      telefoneMasked,
+      dataEntrada: dataFormatada,
+      dataEntradaIso: dataEntrada ? new Date(dataEntrada).toISOString() : null,
+      cidade: lead.cidade || "-",
+      estado: lead.estado || "-",
+      segundaMensagem: (segundaMsg || "").slice(0, 250),
+      engajou,
+      totalMsgsLead: messages.filter(m => m?.role === "user").length,
+      etapaMaximaIdx: etapaMax.idx,
+      etapaMaximaLabel: etapaMax.label,
+      rotaFinal,
+      statusFinal,
+      ultimasMensagens: ultimasMsgs
+    };
+  });
+}
+
+/*
+  Resumos quantitativos do tráfego (números crus pro GPT só interpretar,
+  não calcular). Mais barato e mais confiável.
+*/
+function buildResumoQuantitativoTrafego(linhasLeads = []) {
+  if (!Array.isArray(linhasLeads) || linhasLeads.length === 0) {
+    return {
+      volumeTotal: 0,
+      engajados: 0,
+      naoEngajados: 0,
+      taxaEngajamento: "0%",
+      porEstado: {},
+      porCidade: {},
+      porHora: {},
+      porRotaFinal: {},
+      porStatusFinal: {},
+      porEtapaMaxima: {},
+      mediaMsgsPorLead: 0,
+      leadsSemSegundaMsg: 0
+    };
+  }
+
+  const volumeTotal = linhasLeads.length;
+  const engajados = linhasLeads.filter(l => l.engajou).length;
+  const naoEngajados = volumeTotal - engajados;
+
+  const porEstado = {};
+  const porCidade = {};
+  const porHora = {};
+  const porRotaFinal = {};
+  const porStatusFinal = {};
+  const porEtapaMaxima = {};
+  let somaMsgs = 0;
+  let semSegundaMsg = 0;
+
+  for (const l of linhasLeads) {
+    porEstado[l.estado] = (porEstado[l.estado] || 0) + 1;
+    porCidade[l.cidade] = (porCidade[l.cidade] || 0) + 1;
+    porRotaFinal[l.rotaFinal] = (porRotaFinal[l.rotaFinal] || 0) + 1;
+    porStatusFinal[l.statusFinal] = (porStatusFinal[l.statusFinal] || 0) + 1;
+    porEtapaMaxima[l.etapaMaximaLabel] = (porEtapaMaxima[l.etapaMaximaLabel] || 0) + 1;
+
+    if (l.dataEntradaIso) {
+      const hora = new Date(l.dataEntradaIso).getHours();
+      const chaveHora = `${String(hora).padStart(2, "0")}h`;
+      porHora[chaveHora] = (porHora[chaveHora] || 0) + 1;
+    }
+
+    somaMsgs += Number(l.totalMsgsLead || 0);
+    if (!l.segundaMensagem) semSegundaMsg++;
+  }
+
+  const top5 = obj => Object.fromEntries(
+    Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  );
+
+  return {
+    volumeTotal,
+    engajados,
+    naoEngajados,
+    taxaEngajamento: `${((engajados / volumeTotal) * 100).toFixed(1)}%`,
+    porEstado: top5(porEstado),
+    porCidade: top5(porCidade),
+    porHora: Object.fromEntries(
+      Object.entries(porHora).sort((a, b) => a[0].localeCompare(b[0]))
+    ),
+    porRotaFinal,
+    porStatusFinal,
+    porEtapaMaxima,
+    mediaMsgsPorLead: Number((somaMsgs / volumeTotal).toFixed(1)),
+    leadsSemSegundaMsg: semSegundaMsg
+  };
+}
+
+function buildCLevelDashboardSnapshot(allLeads = [], relatorioTrafego = null) {
   const now = new Date();
 
   const startOfToday = new Date(now);
@@ -26140,7 +26513,7 @@ function buildCLevelDashboardSnapshot(allLeads = []) {
     return date && date.getTime() >= sevenDaysAgo.getTime();
   });
 
-  return {
+  const snapshot = {
     geradoEm: now.toISOString(),
     periodoPrincipal: "ultimos_7_dias",
     observacao:
@@ -26149,6 +26522,36 @@ function buildCLevelDashboardSnapshot(allLeads = []) {
     hoje: buildKpiMetricsForCLevel(leadsHoje),
     ultimos7Dias: buildKpiMetricsForCLevel(leadsUltimos7Dias)
   };
+
+  /*
+    Se o gestor pediu relatório de tráfego, anexa o bloco completo.
+    Sem isso, perguntas normais continuam baratas (sem inflar payload).
+  */
+  if (relatorioTrafego && relatorioTrafego.linhasLeads) {
+    snapshot.trafegoDetalhado = {
+      periodoAnalisado: relatorioTrafego.periodoLabel,
+      janelaHoras: relatorioTrafego.horas,
+      dataInicio: relatorioTrafego.dataInicio,
+      dataFim: relatorioTrafego.dataFim,
+      resumoQuantitativo: relatorioTrafego.resumoQuantitativo,
+      totalLeadsNaJanela: relatorioTrafego.linhasLeads.length,
+      /*
+        Enviamos apenas os campos necessários para o GPT INFERIR o motivo
+        de saída. O resto (tabela completa) é renderizado pelo backend
+        e devolvido junto na resposta — não passa pelo GPT.
+      */
+      leadsParaInferenciaMotivoSaida: relatorioTrafego.linhasLeads.map(l => ({
+        idLead: l.idLead,
+        segundaMensagem: l.segundaMensagem,
+        etapaMaxima: l.etapaMaximaLabel,
+        rotaFinal: l.rotaFinal,
+        statusFinal: l.statusFinal,
+        ultimasMensagens: l.ultimasMensagens
+      }))
+    };
+  }
+
+  return snapshot;
 }
 
 const MULTI_C_LEVEL_SYSTEM_PROMPT = `
@@ -26184,6 +26587,46 @@ Você NÃO pode:
 
 Se a amostra for pequena, diga claramente que a leitura ainda é inicial.
 
+=== MODO RELATÓRIO DE TRÁFEGO ===
+
+Quando o payload incluir o campo "trafegoDetalhado", você entra em modo
+ANALISTA DE TRÁFEGO PAGO. Neste modo, sua tarefa é:
+
+1. Ler "resumoQuantitativo" e construir um RESUMO EXECUTIVO do tráfego:
+   - volume total e taxa de engajamento;
+   - regiões dominantes (top estados/cidades);
+   - horários de pico de entrada;
+   - perfil de entrada (rotas finais, etapa máxima atingida);
+   - desperdício (leads que não engajaram, esfriaram cedo).
+
+2. Para CADA lead em "leadsParaInferenciaMotivoSaida", você deve inferir
+   o MOTIVO DE SAÍDA (por que ele parou onde parou). Use:
+   - a "segundaMensagem" (intenção real declarada pelo lead);
+   - a "etapaMaxima" (até onde avançou);
+   - o "statusFinal" (situação atual);
+   - as "ultimasMensagens" (últimas 3 trocas — observe o tom e o assunto).
+
+   Motivos típicos a usar (escolha o mais provável):
+   - "Não engajou após primeira resposta"
+   - "Saudação genérica sem intenção clara"
+   - "Esfriou após explicação dos benefícios"
+   - "Saiu ao ouvir sobre estoque/comodato"
+   - "Saiu ao ouvir o valor da taxa"
+   - "Objetou taxa e não retornou"
+   - "Pediu para falar com humano"
+   - "Não confirmou os dados"
+   - "Negociado/fechado"
+   - "Migrou para Afiliado"
+   - "Ainda em conversa ativa"
+   - "Lead sem perfil (curioso, errou número, etc)"
+
+   Se não der pra inferir, use: "Indeterminado — exige análise manual".
+
+3. Devolva os motivos em "motivosDeSaida" no JSON (formato abaixo).
+   NÃO repita todos os campos do lead — apenas idLead + motivo + observação curta.
+
+=== FORMATO DE RESPOSTA ===
+
 Responda SEMPRE em JSON válido, sem markdown e sem texto fora do JSON.
 
 Formato obrigatório:
@@ -26206,26 +26649,31 @@ Formato obrigatório:
   "estrategiaMelhoria": [],
   "planoProximos7Dias": [],
   "prioridadeExecutiva": "baixa | media | alta | critica",
-  "observacaoSobreAmostra": ""
+  "observacaoSobreAmostra": "",
+  "motivosDeSaida": [
+    {
+      "idLead": "",
+      "motivo": "",
+      "observacao": ""
+    }
+  ]
 }
+
+REGRAS DO CAMPO motivosDeSaida:
+- Se NÃO houver trafegoDetalhado no payload, devolva motivosDeSaida como [].
+- Se houver, devolva UM item para CADA lead em leadsParaInferenciaMotivoSaida.
+- O campo "idLead" deve ser EXATAMENTE igual ao que veio no payload.
+- "observacao" é opcional e deve ter no máximo 1 frase curta.
 
 Como responder:
 - Seja consultivo, direto e executivo.
 - Explique o que os indicadores significam.
 - Separe tráfego ruim de problema de atendimento quando possível.
-- Analise especialmente:
-  1. leads dos últimos 7 dias;
-  2. qualificados;
-  3. taxa apresentada;
-  4. objeção à taxa;
-  5. recuperação pós-objeção;
-  6. pré-análise iniciada;
-  7. dados completos;
-  8. recuperação por Afiliados.
+- Em modo relatório de tráfego, foque em diagnóstico de QUALIDADE DA FONTE
+  (campanhas, criativos, segmentação) e não em correções da SDR IA.
 - Se houver poucos leads, não conclua com certeza. Fale em tendência inicial.
 - Sempre entregue estratégia prática.
 `;
-
 function buildDefaultCLevelAnalysis() {
   return {
     tituloDiagnostico: "Análise indisponível",
