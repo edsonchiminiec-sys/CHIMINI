@@ -28735,9 +28735,9 @@ const statusVisual = (() => {
       <td style="text-align:center">${lead.etapas?.programa ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
-      <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
-      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+     <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${leadAtingiuFaseTaxaParaDashboard(lead) ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
      <td>${statusVisual}</td>
@@ -30128,8 +30128,8 @@ tr:hover td {
     <th><a href="${makeSortLink("beneficios", "Benef")}">Benef</a></th>
     <th><a href="${makeSortLink("estoque", "Estoq")}">Estoq</a></th>
     <th><a href="${makeSortLink("responsabilidades", "Resp")}">Resp</a></th>
-    <th><a href="${makeSortLink("investimento", "Invest")}">Invest</a></th>
-    <th><a href="${makeSortLink("taxaAlinhada", "Taxa")}">Taxa</a></th>
+    <th><a href="${makeSortLink("taxaAlinhada", "Taxa Iniciada")}">Taxa Iniciada</a></th>
+    <th><a href="${makeSortLink("investimento", "Taxa Finalizada")}">Taxa Finalizada</a></th>
     <th><a href="${makeSortLink("compromisso", "Comp")}">Comp</a></th>
     <th><a href="${makeSortLink("afiliado", "Afil")}">Afil</a></th>
     <th>Status</th>
