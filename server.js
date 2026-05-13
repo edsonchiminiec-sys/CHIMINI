@@ -10233,6 +10233,19 @@ BORDAS SUJAS: Limpa Bordas com esponja + filtrar 6h.
 function sanitizeWhatsAppText(text = "") {
   let cleanText = String(text || "");
 
+// Converte markdown **negrito** para WhatsApp *negrito*
+// GPT usa **texto** mas WhatsApp só reconhece *texto*
+cleanText = cleanText.replace(/\*\*([^*]+)\*\*/g, "*$1*");
+
+// Remove headers markdown (## Título → Título)
+cleanText = cleanText.replace(/^#{1,4}\s+/gm, "");
+
+// Converte listas numeradas markdown (1. item) para formato limpo
+// Mantém o número mas remove o estilo de lista markdown
+cleanText = cleanText.replace(/^\d+\.\s\*\*/gm, function(match) {
+  return match.replace("**", "*");
+});
+   
   // Corrige links em Markdown:
   // [https://minhaiqg.com.br/](https://minhaiqg.com.br/)
   // vira:
@@ -14123,18 +14136,20 @@ function classifyTaxPhaseDecision({
     semanticIntent?.positiveCommitment === true ||
     semanticIntent?.paymentIntent === true;
 
-  const weakButContextualAcceptance =
-    taxDecisionMessageIsShortPositive(text) &&
-    !taxDecisionMessageIsQuestionAboutTax(text) &&
-    !taxDecisionMessageIsPriceObjection(text) &&
-    !/\?/.test(String(lastUserText || "").trim()) &&
-    taxExplained &&
-    valueAnchored &&
-    (
-      semanticContinuity?.leadQuerAvancar === true ||
-      semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
-      /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
-    );
+  // Mensagens que expressam dúvida NÃO podem ser aceite fraco da taxa
+const mensagemExpressaDuvida =
+  /\b(preciso entender|preciso entender melhor|preciso saber mais|quero entender melhor|quero saber mais|nao entendi|não entendi|me explica|explica melhor|como funciona|tenho duvida|tenho dúvida|ainda nao sei|ainda não sei|nao ficou claro|não ficou claro)\b/i.test(text || "");
+
+const weakButContextualAcceptance =
+  taxDecisionMessageIsShortPositive(text) &&
+  taxExplained &&
+  valueAnchored &&
+  !mensagemExpressaDuvida &&
+  (
+    semanticContinuity?.leadQuerAvancar === true ||
+    semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
+    /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
+  );
 
   /*
     Ordem importante:
@@ -22354,6 +22369,38 @@ if (
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
+
+// AUTO-PROMOÇÃO DE FASE: se o lead tem 3+ etapas concluídas no funil
+  // mas faseQualificacao ainda é "morno", promover para "qualificando"
+  // Isso evita que leads engajados fiquem presos em "morno" enquanto
+  // o Pré-SDR repete etapas já concluídas em vez de avançar
+  const etapasDoLead = currentLead?.etapas || {};
+  const etapasConcluidas = [
+    etapasDoLead.programa,
+    etapasDoLead.beneficios,
+    etapasDoLead.estoque,
+    etapasDoLead.responsabilidades
+  ].filter(Boolean).length;
+
+  if (
+    etapasConcluidas >= 3 &&
+    (currentLead?.faseQualificacao === "morno" || currentLead?.status === "morno") &&
+    !currentLead?.aguardandoConfirmacaoCampo &&
+    !currentLead?.aguardandoConfirmacao
+  ) {
+    await saveLeadProfile(from, {
+      faseQualificacao: "qualificando",
+      status: "qualificando"
+    });
+    currentLead = await loadLeadProfile(from);
+
+    console.log("📈 Lead promovido de morno para qualificando por progresso no funil:", {
+      user: from,
+      etapasConcluidas,
+      etapas: etapasDoLead
+    });
+  }
+   
     const statusMap = {
     frio: "morno",
     morno: "morno",
