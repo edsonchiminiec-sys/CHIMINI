@@ -1392,12 +1392,29 @@ async function recordRequestCompleted({
         respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
         actions: Array.isArray(actions) ? actions : [],
         sdrReviewFindingsCount: Array.isArray(sdrReviewFindings) ? sdrReviewFindings.length : 0,
-        sdrReviewFindings: Array.isArray(sdrReviewFindings)
-          ? sdrReviewFindings.slice(0, 5).map(f => ({
-              tipo: f.tipo,
-              prioridade: f.prioridade
-            }))
+        
+         sdrReviewFindings: Array.isArray(sdrReviewFindings)
+          ? sdrReviewFindings.slice(0, 5).map(f => {
+              const motivoTexto = (() => {
+                if (typeof f.motivo === "string" && f.motivo.trim()) return f.motivo.trim();
+                if (typeof f.reason === "string" && f.reason.trim()) return f.reason.trim();
+                if (f.reason && typeof f.reason === "object") {
+                  try { return JSON.stringify(f.reason).slice(0, 500); }
+                  catch (_) { return ""; }
+                }
+                return "";
+              })();
+
+              return {
+                tipo: f.tipo,
+                prioridade: f.prioridade,
+                motivo: motivoTexto,
+                orientacao: String(f.orientacao || "").slice(0, 800),
+                detalhes: f.reason && typeof f.reason === "object" ? f.reason : undefined
+              };
+            })
           : [],
+         
         estadoLead: {
           status: currentLead?.status || "-",
           faseQualificacao: currentLead?.faseQualificacao || "-",
@@ -24753,10 +24770,25 @@ await recordAuditEvent({
     respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
     actions: syncedFinalReply.actions || actions || [],
     sdrReviewFindingsCount: sdrReviewFindings.length,
-    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => ({
-      tipo: f.tipo,
-      prioridade: f.prioridade
-    })),
+    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => {
+      const motivoTexto = (() => {
+        if (typeof f.motivo === "string" && f.motivo.trim()) return f.motivo.trim();
+        if (typeof f.reason === "string" && f.reason.trim()) return f.reason.trim();
+        if (f.reason && typeof f.reason === "object") {
+          try { return JSON.stringify(f.reason).slice(0, 500); }
+          catch (_) { return ""; }
+        }
+        return "";
+      })();
+
+      return {
+        tipo: f.tipo,
+        prioridade: f.prioridade,
+        motivo: motivoTexto,
+        orientacao: String(f.orientacao || "").slice(0, 800),
+        detalhes: f.reason && typeof f.reason === "object" ? f.reason : undefined
+      };
+    }),
     estadoLead: {
       status: currentLead?.status || "-",
       faseQualificacao: currentLead?.faseQualificacao || "-",
