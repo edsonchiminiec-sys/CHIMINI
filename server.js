@@ -16732,11 +16732,17 @@ function applyAntiRepetitionGuard({
     };
   }
 
-  const continuation = buildContinuationAfterRepeatedTheme({
-    lastTheme,
-    currentLead
-  });
+  /*
+    Correção crítica (13/05/2026):
+    A chamada antiga a buildContinuationAfterRepeatedTheme foi removida
+    porque essa função não existia no código atual e quebrava o webhook
+    com ReferenceError toda vez que a trava disparava.
 
+    Quem usa applyAntiRepetitionGuard só lê os campos `changed` e `reason`
+    para empilhar em sdrReviewFindings (que depois é tratado pelo
+    regenerador da SDR via GPT). Os campos `respostaFinal` e `fileKey`
+    nunca eram consumidos — então removê-los é seguro.
+  */
   return {
     changed: true,
     reason: {
@@ -16744,9 +16750,7 @@ function applyAntiRepetitionGuard({
       lastTheme,
       currentTheme,
       repeatedSameTheme
-    },
-    respostaFinal: continuation.message,
-    fileKey: continuation.fileKey
+    }
   };
 }
 
