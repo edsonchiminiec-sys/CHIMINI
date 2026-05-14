@@ -21257,6 +21257,53 @@ if (noMeansNoDoubt) {
 let backendStrategicGuidance = [];
 let dataFlowQuestionAlreadyGuided = false;
 
+// ANTI-REPETIÇÃO: extrair temas das últimas 3 respostas da SDR
+  // e enviar ao Pré-SDR para que oriente a SDR a NÃO repetir
+  const ultimasRespostasSdr = (Array.isArray(history) ? history : [])
+    .filter(m => m.role === "assistant")
+    .slice(-3)
+    .map(m => m.content || "");
+
+  if (ultimasRespostasSdr.length > 0) {
+    const temasJaAbordados = [];
+    const textoUltimasRespostas = ultimasRespostasSdr.join(" ").toLowerCase();
+
+    if (/programa parceiro homologado|parceria comercial|como funciona o programa/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("explicação do programa");
+    }
+    if (/benefício|beneficio|suporte|treinamento|comissão|comissao|margem/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("benefícios e suporte");
+    }
+    if (/comodato|lote inicial|estoque|cedido|r\$ 5\.000|5000/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("estoque em comodato");
+    }
+    if (/responsabilidade|conservar|atuação|atuacao|dedicação|dedicacao/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("responsabilidades");
+    }
+    if (/1\.990|1990|taxa de adesão|taxa de adesao|investimento.*ativação|investimento.*ativacao/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("taxa/investimento R$ 1.990");
+    }
+    if (/afiliado|divulgar por link|minhaiqg\.com/i.test(textoUltimasRespostas)) {
+      temasJaAbordados.push("programa de afiliados");
+    }
+
+    if (temasJaAbordados.length > 0) {
+      backendStrategicGuidance.push({
+        tipo: "anti_repeticao",
+        prioridade: "alta",
+        motivo: "Evitar repetição de conteúdo já explicado nas últimas respostas.",
+        orientacaoParaPreSdr: [
+          "ATENÇÃO — ANTI-REPETIÇÃO:",
+          `Os seguintes temas JÁ FORAM abordados nas últimas respostas da SDR: ${temasJaAbordados.join(", ")}.`,
+          "A SDR NÃO deve repetir esses temas.",
+          "Se o lead confirmar com 'Sim', 'Ok', 'Entendi', a SDR deve AVANÇAR para o PRÓXIMO tema pendente.",
+          "Se todos os temas já foram abordados, a SDR deve conduzir para a taxa/investimento (se não explicada) ou para a coleta de dados (se já explicada).",
+          "Mensagens curtas e diretas. NÃO repetir explicações já dadas."
+        ].join("\n")
+      });
+    }
+  }
+     
      const homologadoIndicationBenefitGuidance =
   buildHomologadoIndicationBenefitGuidance({
     lead: currentLead || {},
@@ -23451,6 +23498,12 @@ if (
       etapasConcluidas,
       etapas: etapasDoLead
     });
+  }
+
+// Se o lead foi promovido para qualificando, forçar leadStatusSeguro
+  // para que o statusMap abaixo NÃO sobrescreva com "morno"
+  if (currentLead?.faseQualificacao === "qualificando") {
+    leadStatusSeguro = "qualificando";
   }
    
     const statusMap = {
