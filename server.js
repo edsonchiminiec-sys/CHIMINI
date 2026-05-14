@@ -20444,7 +20444,127 @@ async function runFollowupCronTick() {
   Liga o cron pra rodar a cada 60 segundos.
   Espera 30 segundos no boot pra dar tempo do app subir tranquilo.
 */
-setTimeout(() => {
+
+/*
+  ===========================================================
+  BOOTSTRAP DE CADÊNCIA — LEADS EXISTENTES SEM FOLLOW-UP
+  ===========================================================
+  Roda UMA VEZ no boot do servidor.
+  Varre o banco procurando leads que:
+  - Estão ativos (não enviados ao CRM, não perdidos, não afiliados já encerrados)
+  - Não têm proximoFollowupEm agendado
+  - Última interação foi há mais de 30 minutos e menos de 7 dias
+  
+  Para cada lead encontrado, agenda o step 1 de follow-up.
+  O cron regular cuida do resto.
+*/
+async function bootstrapFollowupsParaLeadsExistentes() {
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+    const limite30min = new Date(agora.getTime() - 30 * 60 * 1000);
+    const limite7dias = new Date(agora.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const leadsInativos = await db.collection("leads").find({
+      // Não tem follow-up agendado
+      $or: [
+        { proximoFollowupEm: null },
+        { proximoFollowupEm: { $exists: false } }
+      ],
+      // Não está em estado terminal
+      status: { $nin: ["enviado_crm", "em_atendimento", "fechado", "perdido"] },
+      statusOperacional: { $nin: ["enviado_crm", "em_atendimento", "encerrado_followup"] },
+      // Não é afiliado que já recebeu instruções
+      afiliadoInstrucoesEnviadas: { $ne: true },
+      // Tem pelo menos uma interação
+      updatedAt: { $gte: limite7dias, $lte: limite30min },
+      // Tem telefone
+      user: { $exists: true, $ne: "" },
+      // Bot não bloqueado por humano
+      botBloqueadoPorHumano: { $ne: true }
+    }).toArray();
+
+    if (leadsInativos.length === 0) {
+      console.log("🔍 Bootstrap: nenhum lead inativo para agendar follow-up.");
+      return;
+    }
+
+    console.log(`🔍 Bootstrap: ${leadsInativos.length} lead(s) inativo(s) encontrado(s). Agendando follow-ups...`);
+
+    let agendados = 0;
+
+    for (const lead of leadsInativos) {
+      const from = lead.user || lead.telefoneWhatsApp || lead.telefone;
+      if (!from) continue;
+
+      // Verificar se não deve parar o bot
+      if (shouldStopBotByLifecycle(lead) || isLeadInProtectedFollowupState(lead)) {
+        continue;
+      }
+
+      // Calcular qual step agendar baseado no tempo de inatividade
+      const lastActivity = lead.updatedAt ? new Date(lead.updatedAt).getTime() : 0;
+      const horasInativo = (agora.getTime() - lastActivity) / (1000 * 60 * 60);
+
+      // Se inativo há mais de 30h, vai direto pro step 5 (final com Afiliado)
+      // Se inativo há mais de 24h, step 4
+      // Se inativo há mais de 18h, step 3
+      // Se inativo há mais de 12h, step 2
+      // Senão, step 1
+      let stepInicial;
+      if (horasInativo >= 30) {
+        stepInicial = 5;
+      } else if (horasInativo >= 24) {
+        stepInicial = 4;
+      } else if (horasInativo >= 18) {
+        stepInicial = 3;
+      } else if (horasInativo >= 12) {
+        stepInicial = 2;
+      } else {
+        stepInicial = 1;
+      }
+
+      const config = FOLLOWUP_CONFIG[stepInicial - 1];
+      if (!config) continue;
+
+      // Agendar para daqui 2-5 minutos (espaçar para não mandar tudo de uma vez)
+      const delayAleatorio = (2 + Math.random() * 3) * 60 * 1000;
+      const proximoFollowupEm = new Date(agora.getTime() + delayAleatorio);
+
+      // Ajustar para horário comercial se necessário
+      const dataAjustada = config.businessOnly ? computeNextFollowupDate({ ...config, delayMs: delayAleatorio }) : proximoFollowupEm;
+
+      const novaVersao = Number(lead.followupVersionDb || 0) + 1;
+
+      await db.collection("leads").updateOne(
+        { user: from },
+        {
+          $set: {
+            proximoFollowupEm: dataAjustada,
+            followupStep: stepInicial,
+            followupLockEm: null,
+            followupVersionDb: novaVersao,
+            followupBootstrapEm: agora,
+            followupBootstrapStep: stepInicial,
+            followupBootstrapHorasInativo: Math.round(horasInativo)
+          }
+        }
+      );
+
+      agendados++;
+    }
+
+    console.log(`✅ Bootstrap concluído: ${agendados} follow-ups agendados de ${leadsInativos.length} candidatos.`);
+  } catch (error) {
+    console.error("❌ Erro no bootstrap de follow-ups:", error.message);
+  }
+}
+
+setTimeout(async () => {
+  // Primeiro roda o bootstrap para leads existentes sem follow-up
+  await bootstrapFollowupsParaLeadsExistentes();
+
   console.log("🚀 Iniciando cron de follow-ups (intervalo: 60s)");
   runFollowupCronTick().catch(error => {
     console.error("Erro no primeiro tick do cron:", error.message);
