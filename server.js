@@ -6000,8 +6000,7 @@ const canEvaluateInvestmentUnderstanding = lastReplyActuallyExplainedInvestment;
     responsabilidades ou atuação.
   */
   const lastReplyActuallyExplainedCommitment =
-    /\b(compromisso|responsabilidade|responsabilidades|atuacao|atuação|vendas|conservar|conservacao|conservação|comunicar vendas|resultado depende|dedicacao|dedicação)\b/i.test(lastSdrText || "") ||
-    semanticListIncludesAny(lastSdrTopics, [
+    /\b(compromisso|responsabilidade|responsabilidades|atuacao|atuação|conservar|conservacao|conservação|comunicar vendas|resultado depende|dedicacao|dedicação)\b/i.test(lastSdrText || "") ||    semanticListIncludesAny(lastSdrTopics, [
       "compromisso",
       "responsabilidade",
       "responsabilidades",
@@ -6083,7 +6082,15 @@ if (shouldConfirmInvestmentComValor && lead?.taxaAlinhada !== true) {
       leadShowedProgress
     );
 
-  if (shouldConfirmCommitment && updatedEtapas.compromisso !== true) {
+ // Compromisso só pode ser marcado se benefícios E estoque já estão concluídos.
+  // Sem isso, o compromisso é marcado prematuramente e as etapas ficam incoerentes
+  // (compromisso=True com beneficios=False e estoque=False), o que trava o funil.
+  const etapasPreRequisitosCompromisso =
+    updatedEtapas.programa === true &&
+    updatedEtapas.beneficios === true &&
+    updatedEtapas.estoque === true;
+
+  if (shouldConfirmCommitment && updatedEtapas.compromisso !== true && etapasPreRequisitosCompromisso) {
     updatedEtapas.compromisso = true;
     updatedEtapas.compromissoPerguntado = true;
     patch.compromissoConfirmadoEm = new Date();
