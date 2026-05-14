@@ -6554,7 +6554,9 @@ O JSON deve ter exatamente esta estrutura:
   "objecaoPrincipal": "sem_objecao_detectada",
   "confiancaClassificacao": "nao_analisado",
   "sinaisObservados": [],
-  "resumoPerfil": ""
+  "resumoPerfil": "",
+  "leadHostilOuAgressivo": false,
+  "leadPediuParaParar": false
 }
 `;
 
@@ -7214,6 +7216,27 @@ Lead:
 Resposta correta do Supervisor:
 necessitaHumano=true
 prioridadeHumana="alta" ou "urgente"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+DETECÇÃO DE HOSTILIDADE E PEDIDO PARA PARAR
+━━━━━━━━━━━━━━━━━━━━━━━
+
+leadHostilOuAgressivo (true/false):
+Marque true se o lead demonstrar hostilidade, agressividade, irritação extrema,
+xingamento, ofensa pessoal, tom ameaçador ou desrespeito claro na mensagem atual.
+Exemplos: "tá louco", "ficou doido", "cala a boca", "vai te catar", "que inferno",
+"pirou?", "endoidou", xingamentos, provocações, tons agressivos.
+NÃO marque true para insatisfação educada, crítica construtiva ou reclamação normal.
+A análise deve ser SEMÂNTICA: entenda o TOM e a INTENÇÃO, não dependa de palavras exatas.
+
+leadPediuParaParar (true/false):
+Marque true se o lead pediu explicitamente para parar de receber mensagens,
+ser removido, não ser mais contactado ou encerrar o contato de forma definitiva.
+Exemplos: "esquece meu zap", "para de me mandar mensagem", "me tira dessa lista",
+"não me manda mais nada", "me remove", "me bloqueia", "sai do meu whatsapp",
+"para de me perturbar", "não quero mais receber mensagem".
+NÃO marque true para "agora não", "depois", "vou pensar" — isso é adiamento, não pedido de parar.
+A análise deve ser SEMÂNTICA: entenda a INTENÇÃO real do lead.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 FORMATO DE SAÍDA OBRIGATÓRIO
@@ -13023,6 +13046,83 @@ const VALID_UFS = [
 
 const MAX_REENGAGEMENT_ATTEMPTS_BEFORE_AFFILIATE = 3;
 const MAX_TOTAL_RECOVERY_ATTEMPTS = 6;
+
+/*
+  Detecta se o lead está sendo HOSTIL ou pedindo EXPLICITAMENTE para parar.
+  Diferente de isLeadRejectingOrCooling que cobre rejeições brandas.
+  Esta função só retorna true para casos extremos onde continuar seria invasivo.
+*/
+/*
+  Detecta hostilidade ou pedido para parar via classificador semântico.
+  O GPT analisa o contexto e o tom — não depende de palavras-chave.
+  Fallback mínimo apenas para padrões inequívocos de remoção.
+*/
+function isLeadHostileOrRequestingStop(text = "", semanticIntent = null) {
+  // Classificador semântico detectou hostilidade ou pedido de parar
+  if (
+    semanticIntent?.leadHostilOuAgressivo === true ||
+    semanticIntent?.leadPediuParaParar === true
+  ) {
+    return true;
+  }
+
+  // Fallback mínimo: apenas padrões de remoção de lista (obrigação legal)
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const removalPatterns = [
+    "me tira dessa lista",
+    "me tire dessa lista",
+    "me remove",
+    "me exclui"
+  ];
+
+  return removalPatterns.some(pattern => t.includes(pattern));
+}
+
+function detectAutoLossReason(text = "", lead = {}, semanticIntent = null) {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // 1. Lead hostil ou pediu para parar → perda imediata
+  if (isLeadHostileOrRequestingStop(text, semanticIntent)) {
+    return "hostilidade_ou_pedido_parar";
+  }
+
+  // 2. Lead já recebeu Afiliado e rejeita tudo
+  const jaRecebeuAfiliado =
+    lead?.afiliadoInstrucoesEnviadas === true ||
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado";
+
+  if (jaRecebeuAfiliado) {
+    const rejeitaTudo =
+      /\b(nao quero nada|nao estou interessado em nada|sem interesse|nao quero mais|nao me interessa mais|desisto|desisto de tudo|nao preciso|nao preciso de nada)\b/i.test(t);
+
+    const despedida =
+      /\b(obrigado|obrigada|valeu|vlw|falou|ate mais|tchau|bye|adeus|grato|grata)\b/i.test(t) &&
+      !/\b(quero|preciso|duvida|pergunta|como|quando|onde|qual|pode)\b/i.test(t);
+
+    if (rejeitaTudo) {
+      return "rejeicao_total_apos_afiliado";
+    }
+
+    if (despedida) {
+      return "despedida_apos_afiliado";
+    }
+  }
+
+  return null;
+}
 
 function isLeadRejectingOrCooling(text = "") {
   const t = String(text || "")
@@ -20285,14 +20385,19 @@ async function sendAutomaticFollowupIfStillValid({
     const nextConfig = FOLLOWUP_CONFIG[nextStepIndex] || null;
 
     if (followup.closeAfter || !nextConfig) {
-      // Foi o último — encerra.
+      // Foi o último — marca como perdido (cadência completa sem resposta).
       await saveLeadProfile(from, {
         proximoFollowupEm: null,
         followupStep: 0,
         followupLockEm: null,
-        statusOperacional: latestLead?.statusOperacional === "ativo" ? "encerrado_followup" : (latestLead?.statusOperacional || "encerrado_followup"),
+        status: "perdido",
+        faseQualificacao: "perdido",
+        statusOperacional: "perdido_cadencia_completa",
+        motivoPerda: "cadencia_completa_sem_resposta",
+        perdidoEm: new Date(),
         ultimoFollowupEm: new Date()
       });
+       
       currentState.closed = true;
       clearTimers(from);
 
@@ -23057,6 +23162,85 @@ if (
 
     currentLead = await loadLeadProfile(from);
 }
+
+     // 🚫 AUTO-PERDA: detecta leads que devem ser marcados como perdido
+  // Roda ANTES da recuperação comercial para interceptar casos extremos
+     
+  const motivoAutoPerda = detectAutoLossReason(text, currentLead, semanticIntent);
+
+  if (motivoAutoPerda) {
+    const nome = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+    const prefixo = nome ? `${nome}, ` : "";
+
+    const jaRecebeuAfiliado =
+      currentLead?.afiliadoInstrucoesEnviadas === true ||
+      currentLead?.rotaComercial === "afiliado" ||
+      currentLead?.faseQualificacao === "afiliado";
+
+    // Montar mensagem final
+    let mensagemFinal;
+
+    if (motivoAutoPerda === "despedida_apos_afiliado") {
+      // Despedida educada, sem repetir Afiliado (já recebeu)
+      mensagemFinal = `${prefixo}foi um prazer conversar com você! 😊\n\nSe precisar de algo no futuro, é só me chamar por aqui. Sucesso!`;
+    } else if (jaRecebeuAfiliado) {
+      // Já recebeu Afiliado, só despede
+      mensagemFinal = `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe mudar de ideia, o cadastro de Afiliado continua disponível em:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+    } else {
+      // Não recebeu Afiliado ainda — apresentar resumidamente antes de encerrar
+      mensagemFinal = `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe no futuro quiser uma alternativa mais simples, sem estoque e sem taxa, existe o Programa de Afiliados IQG. Você divulga por link e ganha comissão sobre as vendas.\n\nO cadastro é por aqui:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+    }
+
+    // Enviar mensagem final
+    await sendWhatsAppMessage(from, mensagemFinal);
+
+    // Salvar como perdido
+    await saveLeadProfile(from, {
+      status: "perdido",
+      faseQualificacao: "perdido",
+      statusOperacional: "perdido_auto",
+      motivoPerda: motivoAutoPerda,
+      mensagemQueGeroupPerda: text,
+      perdidoEm: new Date(),
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null
+    });
+
+    // Salvar no histórico
+    await saveAutomaticFollowupToHistory(from, mensagemFinal, {
+      step: "auto_perda",
+      faseFunil: currentLead?.faseFunil || "",
+      faseQualificacao: "perdido"
+    });
+
+    // Limpar timers
+    const state = getState(from);
+    state.closed = true;
+    clearTimers(from);
+
+    console.log("🚫 Lead marcado como PERDIDO automaticamente:", {
+      user: from,
+      motivo: motivoAutoPerda,
+      mensagemLead: text,
+      jaRecebeuAfiliado
+    });
+
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: mensagemFinal,
+      currentLead: { ...(currentLead || {}), status: "perdido" },
+      extras: { tipoSaida: "auto_perda", motivo: motivoAutoPerda }
+    });
+
+    return res.sendStatus(200);
+  }
 
      // 🔥 RECUPERAÇÃO COMERCIAL ANTES DE QUALQUER CADASTRO
 // Se o lead esfriou, rejeitou, achou caro, quis deixar para depois
