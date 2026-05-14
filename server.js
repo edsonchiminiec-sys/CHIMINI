@@ -22687,6 +22687,33 @@ if (
 
 let semanticIntent = null;
 
+// Mesmo durante coleta, verificar hostilidade explícita no texto
+// para não continuar coletando dados de um lead que quer parar
+if (estaEmColetaOuConfirmacao && isLeadHostileOrRequestingStop(text, null)) {
+  const motivoAutoPerda = detectAutoLossReason(text, currentLead, null);
+  if (motivoAutoPerda) {
+    const nome = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+    const prefixo = nome ? `${nome}, ` : "";
+    const jaRecebeuAfiliado = currentLead?.afiliadoInstrucoesEnviadas === true || currentLead?.rotaComercial === "afiliado";
+    const mensagemFinal = jaRecebeuAfiliado
+      ? `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe mudar de ideia, o cadastro de Afiliado continua disponível em:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`
+      : `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe no futuro quiser uma alternativa mais simples, sem estoque e sem taxa, existe o Programa de Afiliados IQG.\n\nO cadastro é por aqui:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+
+    await sendWhatsAppMessage(from, mensagemFinal);
+    await saveLeadProfile(from, {
+      status: "perdido", faseQualificacao: "perdido", statusOperacional: "perdido_auto",
+      motivoPerda: motivoAutoPerda, mensagemQueGeroupPerda: text, perdidoEm: new Date(),
+      proximoFollowupEm: null, followupStep: 0, followupLockEm: null
+    });
+    const state = getState(from);
+    state.closed = true;
+    clearTimers(from);
+    console.log("🚫 Lead marcado como PERDIDO durante coleta:", { user: from, motivo: motivoAutoPerda });
+    if (messageId) { markMessageAsProcessed(messageId); }
+    return res.sendStatus(200);
+  }
+}
+     
 if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
   console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (sem interrupção comercial):", {
     user: from,
@@ -23213,6 +23240,9 @@ if (
      // 🚫 AUTO-PERDA: detecta leads que devem ser marcados como perdido
   // Roda ANTES da recuperação comercial para interceptar casos extremos
      
+  // Se semanticIntent ainda é null (coleta/confirmação), verificar hostilidade
+  // apenas pelo fallback mínimo da função (pedidos de remoção inequívocos)
+  // O classificador semântico roda depois e cobre os casos semânticos
   const motivoAutoPerda = detectAutoLossReason(text, currentLead, semanticIntent);
 
   if (motivoAutoPerda) {
@@ -23500,6 +23530,10 @@ if (
     });
   }
 
+if (currentLead?.faseQualificacao === "qualificando") {
+    leadStatusSeguro = "qualificando";
+  }
+   
 // Se o lead foi promovido para qualificando, forçar leadStatusSeguro
   // para que o statusMap abaixo NÃO sobrescreva com "morno"
   if (currentLead?.faseQualificacao === "qualificando") {
@@ -25573,9 +25607,15 @@ if (funnelProgressFromLead.changed) {
     }
   };
 
+  // Terceiro caminho: só marca taxaAlinhada se R$ 1.990 foi mencionado
+  // na última resposta da SDR (consistente com correções 20-21)
+  const lastSdrForFunnel = [...(history || [])].reverse().find(m => m.role === "assistant")?.content || "";
+  const funnelMencionouValorReal = /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199)\b/i.test(lastSdrForFunnel);
+
   if (
     funnelProgressFromLead.understoodSteps.includes("investimento") &&
-    currentLead?.taxaAlinhada !== true
+    currentLead?.taxaAlinhada !== true &&
+    funnelMencionouValorReal
   ) {
     patchEntendimentoLead.taxaAlinhada = true;
     patchEntendimentoLead.taxaObjectionCount = 0;
