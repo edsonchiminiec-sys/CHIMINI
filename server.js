@@ -19815,6 +19815,100 @@ function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, historyText 
   );
 }
 
+/*
+  Gera mensagem de cadência usando os GPTs (Pré-SDR + SDR).
+  Em vez de texto hardcoded, os GPTs analisam o histórico completo
+  e geram uma mensagem contextual de reengajamento.
+*/
+async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
+  try {
+    const history = await loadConversation(from);
+    const auditTraceId = generateTraceId();
+
+    const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+    const faseFunil = lead.faseFunil || "esclarecimento";
+    const etapas = lead.etapas || {};
+
+    // Montar contexto de cadência para o Pré-SDR
+    const contextoCadencia = [
+      `CONTEXTO DE CADÊNCIA AUTOMÁTICA (Step ${step} de 5):`,
+      `Esta NÃO é uma resposta a uma mensagem do lead.`,
+      `É uma mensagem de retomada/reengajamento porque o lead parou de responder.`,
+      `O lead está inativo. A SDR deve enviar UMA mensagem curta e consultiva para reengajar.`,
+      "",
+      "REGRAS DA CADÊNCIA:",
+      "- Mensagem CURTA (máximo 2-3 frases)",
+      "- Tom leve e consultivo, sem pressão",
+      "- NÃO repetir o que já foi dito no histórico",
+      "- NÃO falar de temas que ainda não foram abordados",
+      "- NÃO pedir dados pessoais (nome, CPF, telefone)",
+      "- Retomar a conversa de onde parou, baseado no histórico",
+      "- Se o lead já viu benefícios, perguntar sobre dúvidas dos benefícios",
+      "- Se o lead já viu estoque, perguntar se fez sentido o comodato",
+      "- Se o lead já viu responsabilidades, perguntar se ficou alguma dúvida",
+      "- Se a taxa já foi explicada, perguntar se faz sentido o investimento",
+      "- NÃO mencionar taxa se ela nunca foi explicada no histórico",
+      "- NÃO usar **negrito** nem listas numeradas",
+      "- Usar *negrito* (1 asterisco) se precisar destacar algo",
+      "",
+      `Step ${step}/5: ${step <= 2 ? "retomada leve" : step <= 4 ? "retomada consultiva" : "última tentativa — mencionar Afiliado como alternativa"}`,
+      step === 5 ? "ÚLTIMO FOLLOW-UP: mencionar brevemente o Programa de Afiliados como alternativa e incluir o link https://minhaiqg.com.br/ no final" : ""
+    ].filter(Boolean).join("\n");
+
+    // Rodar o Pré-SDR com contexto de cadência
+    const lastSdrText = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+
+    const preSdrResult = await runConsultantAssistant({
+      lead: lead,
+      history,
+      lastUserText: "[CADÊNCIA AUTOMÁTICA — lead inativo]",
+      lastSdrText,
+      backendStrategicGuidance: [{
+        tipo: "cadencia_automatica",
+        prioridade: "alta",
+        motivo: `Follow-up automático step ${step}/5. Lead está inativo.`,
+        orientacaoParaPreSdr: contextoCadencia
+      }],
+      auditTraceId
+    });
+
+    // Rodar a SDR com orientação do Pré-SDR
+    const sdrResult = await runSdrAssistant({
+      lead: lead,
+      history,
+      lastUserText: "[CADÊNCIA AUTOMÁTICA — lead inativo]",
+      consultantAdvice: preSdrResult,
+      backendStrategicGuidance: [{
+        tipo: "cadencia_automatica",
+        prioridade: "alta",
+        orientacaoParaPreSdr: contextoCadencia
+      }],
+      auditTraceId
+    });
+
+    const mensagem = sdrResult?.resposta || sdrResult?.content || "";
+
+    if (!mensagem || !String(mensagem).trim()) {
+      console.log("⚠️ GPTs não geraram mensagem de cadência. Usando fallback.", { user: from, step });
+      return null; // vai cair no fallback hardcoded
+    }
+
+    // Sanitizar para WhatsApp
+    const mensagemLimpa = sanitizeWhatsAppText(mensagem);
+
+    console.log("🤖 Cadência gerada via GPTs:", {
+      user: from,
+      step,
+      mensagem: mensagemLimpa.slice(0, 100)
+    });
+
+    return mensagemLimpa;
+  } catch (error) {
+    console.error("Erro ao gerar cadência via GPTs:", { user: from, step, error: error.message });
+    return null; // fallback para texto hardcoded
+  }
+}
+
 function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
   const prefixo = nome ? `${nome}, ` : "";
@@ -20106,9 +20200,20 @@ async function sendAutomaticFollowupIfStillValid({
 
   const latestHistory = await loadConversation(from);
 
-  const messageToSend = followup.getMessage
-    ? followup.getMessage(latestLead, latestHistory)
-    : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  // Tentar gerar a mensagem via GPTs (contextual, baseada no histórico)
+  // Se falhar, cair no fallback hardcoded
+  let messageToSend = await generateFollowupViaGPTs(
+    from,
+    latestLead,
+    followup.step || 1
+  );
+
+  // Fallback: se GPTs falharam, usar mensagem hardcoded
+  if (!messageToSend) {
+    messageToSend = followup.getMessage
+      ? followup.getMessage(latestLead, latestHistory)
+      : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  }
 
   /*
     Trava 5: mensagem vazia (não deveria acontecer, mas protege).
