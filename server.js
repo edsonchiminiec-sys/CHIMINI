@@ -24249,6 +24249,45 @@ if (Array.isArray(backendStrategicGuidance)) {
     detalhes: turnPolicy
   });
 }
+
+   // ORIENTAÇÃO DE AVANÇO: quando 4/4 etapas estão concluídas e taxa não foi apresentada,
+// orientar o Pré-SDR a conduzir para o investimento como próximo passo natural
+const etapasAtual = currentLead?.etapas || {};
+const todasEtapasConcluidas =
+  etapasAtual.programa === true &&
+  etapasAtual.beneficios === true &&
+  etapasAtual.estoque === true &&
+  etapasAtual.responsabilidades === true;
+
+const taxaAindaNaoApresentada =
+  etapasAtual.investimento !== true &&
+  etapasAtual.taxaPerguntada !== true &&
+  currentLead?.taxaAlinhada !== true;
+
+if (todasEtapasConcluidas && taxaAindaNaoApresentada) {
+  backendStrategicGuidance.push({
+    tipo: "avancar_para_investimento",
+    prioridade: "critica",
+    motivo: "Todas as 4 etapas do funil foram concluídas. Próximo passo obrigatório: apresentar o investimento.",
+    orientacaoParaPreSdr: [
+      "ATENÇÃO — TODAS AS ETAPAS CONCLUÍDAS:",
+      "O lead já entendeu: programa, benefícios, estoque em comodato e responsabilidades.",
+      "NÃO repetir nenhum desses temas. NÃO perguntar se ficou dúvida sobre estoque ou responsabilidades.",
+      "O ÚNICO próximo passo agora é apresentar o investimento (taxa de adesão R$ 1.990).",
+      "A SDR deve conduzir de forma natural para o tema do investimento.",
+      "Exemplo: 'Agora que você já conhece a estrutura do programa, vou te explicar sobre o investimento para a ativação.'",
+      "Depois de apresentar o valor, explicar que NÃO é compra de mercadoria, NÃO é caução, NÃO é garantia.",
+      "Mencionar que o lote inicial em comodato vale mais de R$ 5.000 em preço de venda.",
+      "Mencionar que pode ser parcelado em até 10x de R$ 199.",
+      "NÃO pedir dados pessoais ainda. Apenas apresentar o investimento e aguardar a reação do lead."
+    ].join("\n")
+  });
+
+  console.log("🎯 Orientação de avanço para investimento adicionada:", {
+    user: from,
+    etapas: etapasAtual
+  });
+}
    
 preSdrConsultantAdvice = await runConsultantAssistant({
   lead: currentLead || {},
