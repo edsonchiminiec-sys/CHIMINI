@@ -23069,17 +23069,39 @@ await auditSystemEvent("auto_perda", "medium", from, {
   }
 }
      
-if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
-  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (sem interrupção comercial):", {
+/*
+  Antes de pular os GPTs na coleta, verifica se a mensagem do lead
+  realmente parece um dado cadastral. Se ela parece um pedido de
+  humano, uma pergunta ou uma reclamação, os GPTs DEVEM rodar —
+  senão o lead fica preso na coleta sem conseguir ser ouvido.
+*/
+const textoColeta = String(text || "").toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+// Mensagem parece pedido de humano / interrupção (não é dado cadastral)
+const pareceInterrupcaoNaColeta =
+  /\b(atendente|humano|pessoa|consultor|vendedor|representante|alguem|gerente|supervisor)\b/.test(textoColeta) ||
+  /\b(ja.*(passei|enviei|mandei|forneci|dei).*(dado|cadastro|cpf|nome))\b/.test(textoColeta) ||
+  /\b(voce.*ja.*tem|vcs.*ja.*tem|ja.*tenho.*cadastro|ja.*fiz.*cadastro|ja.*sou.*cadastrado)\b/.test(textoColeta) ||
+  /\b(nao.*quero|nao.*vou|para.*com|cancela|desisto|reclam)\b/.test(textoColeta) ||
+  /\?\s*$/.test(String(text || "").trim());
+
+const devePularGptsNaColeta =
+  estaEmColetaOuConfirmacao &&
+  !dataFlowQuestionAlreadyGuided &&
+  !pareceInterrupcaoNaColeta;
+
+if (devePularGptsNaColeta) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (mensagem tratada como dado cadastral):", {
     user: from,
     ultimaMensagemLead: text,
     statusAtual: currentLead?.status || "-",
     faseAtual: currentLead?.faseQualificacao || "-",
-    faseFunilAtual: currentLead?.faseFunil || "-",
-    motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
+    faseFunilAtual: currentLead?.faseFunil || "-"
   });
 } else {
-  const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+   
+   const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
 
   const [classifierResult, continuityResult] = await Promise.all([
     runLeadSemanticIntentClassifier({
@@ -29104,14 +29126,56 @@ app.get("/lead/:user/janela/:janela", async (req, res) => {
     };
 
     if (janela === 1) {
-      // IA gerindo sozinha — IA reassume e cadência recomeça
+      // IA gerindo sozinha — IA reassume e cadência recomeça.
+      // A fase de retorno reflete o ponto MAIS AVANÇADO que o lead
+      // realmente alcançou, lido dos campos que nunca são apagados
+      // (etapas, crmEnviado, taxaAlinhada, dados de cadastro).
+      // Assim a IA não rebobina um lead que já concluiu o funil.
+      const etapasLead = lead.etapas || {};
+
+      const temDadosCompletos = Boolean(
+        lead.nome &&
+        lead.cpf &&
+        (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+        lead.cidade &&
+        lead.estado
+      );
+
+      const estavaEmColeta = [
+        "coletando_dados", "dados_parciais", "aguardando_dados",
+        "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+        "dados_confirmados"
+      ].includes(lead.faseQualificacao);
+
+      let statusRetorno, faseRetorno;
+
+      if (lead.crmEnviado === true) {
+        statusRetorno = "enviado_crm";
+        faseRetorno = "enviado_crm";
+      } else if (lead.dadosConfirmadosPeloLead === true) {
+        statusRetorno = "dados_confirmados";
+        faseRetorno = "dados_confirmados";
+      } else if (temDadosCompletos) {
+        statusRetorno = "dados_confirmados";
+        faseRetorno = "dados_confirmados";
+      } else if (estavaEmColeta) {
+        statusRetorno = lead.faseQualificacao;
+        faseRetorno = lead.faseQualificacao;
+      } else if (etapasLead.compromisso === true || lead.taxaAlinhada === true) {
+        statusRetorno = "qualificando";
+        faseRetorno = "qualificando";
+      } else {
+        statusRetorno = "morno";
+        faseRetorno = "morno";
+      }
+
       patch = {
         ...patch,
-        status: "morno",
-        faseQualificacao: "morno",
+        status: statusRetorno,
+        faseQualificacao: faseRetorno,
         statusOperacional: "ativo",
-        statusDashboard: "morno",
-        statusVisualDashboard: "morno",
+        statusDashboard: statusRetorno,
+        statusVisualDashboard: statusRetorno,
         humanoAssumiu: false,
         atendimentoHumanoAtivo: false,
         botBloqueadoPorHumano: false,
@@ -29128,7 +29192,16 @@ app.get("/lead/:user/janela/:janela", async (req, res) => {
         proximoFollowupEm: computeNextFollowupDate(FOLLOWUP_CONFIG[0]),
         reativadoPeloDashboardEm: new Date()
       };
+
+      console.log("🔀 Migração Janela 1 — estado preservado:", {
+        user,
+        statusRetorno,
+        temDadosCompletos,
+        estavaEmColeta,
+        crmEnviado: lead.crmEnviado === true
+      });
     } else if (janela === 2) {
+       
       // Humano precisa assumir
       patch = {
         ...patch,
