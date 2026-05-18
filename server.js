@@ -30310,34 +30310,37 @@ const query =
     const allLeads = await db.collection("leads").find({}).toArray();
 
 const getVisualStatus = lead => {
-  // Prioridade: statusDashboard (ação do humano) > faseQualificacao (progressão real) > status > fallback
   const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
   const fase = lead.faseQualificacao || "";
   const status = lead.status || "";
+  const etapas = lead.etapas || {};
+  const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
 
-  // Se o humano marcou pelo dashboard, respeita
+  // 1. Ação do humano no dashboard tem prioridade
   if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
 
-  // Se o lead perdido, fechado, em_atendimento — usar status direto
+  // 2. Estados terminais
   if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
   if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
 
-  // Mapear faseQualificacao para os buckets do funil
+  // 3. Coleta de dados ativa = Pré-análise
   if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+
+  // 4. Dados confirmados ou CRM = Quente
   if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+
+  // 5. Fase explicitamente qualificando
   if (fase === "qualificando") return "qualificando";
-  if (fase === "morno") return "morno";
-  if (fase === "afiliado") return "morno";
 
-  // Fallback: se tem etapas avançadas mas fase nunca atualizou
-  const etapas = lead.etapas || {};
-  const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+  // 6. Fallback por etapas — ANTES de morno, para não engolir leads avançados
   if (etapasConcluidas >= 3) return "qualificando";
+
+  // 7. Morno (fase ou afiliado)
+  if (fase === "morno" || fase === "afiliado") return "morno";
   if (etapasConcluidas >= 1) return "morno";
+  if (status === "morno") return "morno";
 
-  // Se nem etapas tem, olha se ao menos interagiu
-  if (status === "morno" || fase === "morno") return "morno";
-
+  // 8. Novo real
   return status || "novo";
 };
      
