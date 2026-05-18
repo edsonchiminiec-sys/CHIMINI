@@ -14411,13 +14411,21 @@ function classifyTaxPhaseDecision({
 const mensagemExpressaDuvida =
   /\b(preciso entender|preciso entender melhor|preciso saber mais|quero entender melhor|quero saber mais|nao entendi|não entendi|me explica|explica melhor|como funciona|tenho duvida|tenho dúvida|ainda nao sei|ainda não sei|nao ficou claro|não ficou claro)\b/i.test(text || "");
 
+// Mensagens que CONDICIONAM ou ADIAM o aceite NÃO são aceite da taxa.
+// Ex: "posso fazer o investimento sim, mas antes preciso ver os produtos"
+//     "depois de conhecer os produtos eu pago"
+//     "quando eu ver o catálogo eu faço"
+const mensagemCondicionaOuAdia =
+  /\b(mas antes|mas primeiro|antes preciso|antes eu preciso|antes de|depois de|depois que|so depois|só depois|quando eu|assim que eu|primeiro preciso|primeiro quero|preciso ver|preciso conhecer|quero ver primeiro|quero conhecer primeiro|preciso analisar|vou analisar|deixa eu ver|deixa eu pensar|preciso pensar)\b/i.test(text || "");
+   
 const weakButContextualAcceptance =
   taxDecisionMessageIsShortPositive(text) &&
   taxExplained &&
   valueAnchored &&
   !mensagemExpressaDuvida &&
+  !mensagemCondicionaOuAdia &&
   (
-    semanticContinuity?.leadQuerAvancar === true ||
+     semanticContinuity?.leadQuerAvancar === true ||
     semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
     /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
   );
@@ -14486,7 +14494,7 @@ const weakButContextualAcceptance =
     };
   }
 
-  if (strongAcceptance && valueAnchored) {
+  if (strongAcceptance && valueAnchored && !mensagemCondicionaOuAdia) {
     return {
       categoria: "ACEITE_CLARO",
       acao: "LIBERAR_PRE_CADASTRO",
@@ -14495,6 +14503,16 @@ const weakButContextualAcceptance =
     };
   }
 
+  // Lead sinalizou aceite MAS condicionou/adiou (ex: "sim mas antes preciso ver os produtos")
+  if (strongAcceptance && mensagemCondicionaOuAdia) {
+    return {
+      categoria: "ACEITE_CONDICIONADO",
+      acao: "RESPONDER_DUVIDA",
+      shouldSave: false,
+      motivo: "Lead sinalizou aceite, mas condicionou a uma etapa anterior (conhecer produtos, analisar, pensar). Não liberar coleta — atender a condição primeiro."
+    };
+  }
+   
   if (weakButContextualAcceptance) {
     return {
       categoria: "ACEITE_FRACO_MAS_SUFFICIENTE",
