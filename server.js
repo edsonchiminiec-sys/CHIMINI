@@ -19773,18 +19773,44 @@ function getGreetingByBrazilTime() {
 ========================= */
 
 const SCHEDULE_REQUEST_PATTERNS = [
+  // "me chama/liga/retorna" + referência temporal
   /me\s+(chame|chama|ligue|liga|retorne|retorna|responde|responda)\s+.{0,30}(amanh[aã]|depois|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|daqui|em\s+\d+|mais\s+tarde|noite|tarde|manh[aã])/i,
+  // "estou ocupado/trabalhando" + "me chama"
   /estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o|em\s+call|atendendo|dirigindo|no\s+trabalho|correndo).{0,60}(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna|retorn[ao]|depois)/i,
+  // "me chama" + "estou ocupado"
   /(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna).{0,60}estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o)/i,
+  // "pode ser amanhã/depois/à noite"
   /pode\s+(ser|ficar\s+pra?)\s+(amanh[aã]|depois|à?\s*noite|de\s+noite|mais\s+tarde|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "depois de amanhã"
   /(depois|dps)\s+de\s+amanh[aã]/i,
+  // "amanhã à noite/de manhã"
   /amanh[aã]\s+(à?\s*noite|de\s+noite|à?\s*tarde|de\s+tarde|de\s+manh[aã]|cedo|cedinho)/i,
+  // "à noite te respondo/falo"
   /(à?\s*noite|de\s+noite|mais\s+tarde|depois)\s+(te\s+respondo|te\s+falo|eu\s+respondo|eu\s+falo|a\s+gente\s+conversa|conversamos|vejo)/i,
+  // "na próxima segunda/semana"
   /n[ao]\s+pr[oó]xim[ao]\s+(segunda|ter[cç]a|quarta|quinta|sexta|semana)/i,
+  // "agora não dá/posso" + tempo
   /(agora\s+n[aã]o\s+(d[aá]|posso|consigo)|n[aã]o\s+(d[aá]|posso|consigo)\s+agora).{0,40}(depois|amanh[aã]|mais\s+tarde|noite)/i,
+  // "daqui X horas/dias"
   /daqui\s+(a\s+)?\d+\s*(hora|min|dia|semana)/i,
+  // "me chama às 19h"
   /(me\s+chame?|me\s+ligue?|retorn[ae]?).{0,30}([àa]s\s+)?\d{1,2}\s*(h|hora|:\d{2})/i,
-  /depois\s+d[ao]s?\s+\d{1,2}\s*(h|hora|:\d{2})/i
+  // "depois das 18h"
+  /depois\s+d[ao]s?\s+\d{1,2}\s*(h|hora|:\d{2})/i,
+  // "agendar/marcar conversa/ligação para amanhã/segunda/horário"
+  /(agendar|agenda|marcar|marca|remarcar|remarca)\s+.{0,40}(conversa|conversar|ligação|ligacao|call|reuni[aã]o|papo|hor[aá]rio|amanh[aã]|depois|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "conversar/falar/continuar amanhã/depois/segunda"
+  /(conversar|conversamos|falar|continuar|prosseguir|retomar|seguir)\s+.{0,15}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|outro\s+momento|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "vamos/podemos conversar/falar amanhã" (com palavra no meio)
+  /(vamos|podemos|poderia|consegue|conseguimos|d[aá]\s+pra|tem\s+como|seria\s+possível|seria\s+possivel)\s+.{0,30}(conversar|falar|agendar|marcar|continuar|retomar|seguir).{0,30}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|segunda|ter[cç]a|quarta|quinta|sexta|\d{1,2}\s*(h|hora|:\d{2}))/i,
+  // "amanhã às Xh" / "segunda às Xh"
+  /(amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)\s+([àa]s\s+)?\d{1,2}\s*(h|hora|:\d{2})/i,
+  // "antes de [qualquer coisa], vamos/podemos conversar/falar amanhã"
+  /antes\s+de\s+.{0,40}(conversar|falar|continuar|seguir|conversamos)\s+.{0,15}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "só consigo/posso amanhã/à noite"
+  /(só|so)\s+(consigo|posso|d[aá]|tenho\s+tempo)\s+.{0,20}(amanh[aã]|depois|mais\s+tarde|noite|tarde|manh[aã]|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "vamos deixar pra amanhã/depois"
+  /(vamos|bora|melhor)\s+(deixar|adiar|remarcar|empurrar)\s+.{0,20}(amanh[aã]|depois|pr[oó]xim|segunda|outro\s+dia|outro\s+hor[aá]rio)/i
 ];
 
 function detectScheduleRequest(text) {
