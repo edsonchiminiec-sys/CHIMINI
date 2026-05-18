@@ -30591,6 +30591,14 @@ const statusVisual = (() => {
             }
           });
         }
+        // Ao carregar a página, abrir a janela indicada na URL (se houver)
+        (function() {
+          var params = new URLSearchParams(window.location.search);
+          var janelaUrl = Number(params.get("janela"));
+          if (janelaUrl >= 1 && janelaUrl <= 5) {
+            trocarJanela(janelaUrl);
+          }
+        })();
       </script>
     `;
 
@@ -31583,9 +31591,19 @@ tr:hover td {
       return;
     }
 
-    const baseUrl = "/dashboard?sort=updatedAt&dir=desc" + (dashboardSenha ? "&senha=" + encodeURIComponent(dashboardSenha) : "");
+    // Preserva a janela ativa no refresh, lendo qual aba está visível
+    var janelaAtiva = 1;
+    document.querySelectorAll(".janela-bloco").forEach(function(b) {
+      if (b.style.display !== "none") {
+        janelaAtiva = Number(b.dataset.janela) || 1;
+      }
+    });
+
+    var baseUrl = "/dashboard?sort=updatedAt&dir=desc&janela=" + janelaAtiva +
+      (dashboardSenha ? "&senha=" + encodeURIComponent(dashboardSenha) : "");
     window.location.href = baseUrl;
-  }, 30000);
+  }, 90000);
+  
   
   function printCRM() {
     window.print();
