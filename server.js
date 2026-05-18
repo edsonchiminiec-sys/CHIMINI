@@ -23136,7 +23136,8 @@ if (
   podeExtrairDadosPessoais &&
   pendingFields.length > 0 &&
   !currentLead?.aguardandoConfirmacaoCampo &&
-  !isOnlyConfirmationText
+  !isOnlyConfirmationText &&
+  !dataFlowQuestionAlreadyGuided
 ) {
    
   const field = pendingFields[0];
