@@ -27023,13 +27023,30 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
     if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
     if (leadFilter) query.userMasked = { $regex: leadFilter, $options: "i" };
 
-    const events = await db
+    /*
+      Ordena do MAIS RECENTE para o mais antigo e aplica o limite.
+      Assim, quando há mais eventos que o teto, mantém os mais recentes
+      (antes o sort ascendente cortava justamente os dias recentes).
+      Depois reordena de forma crescente para a leitura cronológica.
+    */
+    const limiteEventos = wantsFullHistory ? 8000 : 6000;
+
+    const eventsRaw = await db
       .collection("audit_events")
       .find(query)
-      .sort({ timestamp: 1 })
-      .limit(wantsFullHistory ? 5000 : 2000)
+      .sort({ timestamp: -1 })
+      .limit(limiteEventos)
       .toArray();
 
+    const events = eventsRaw.sort(
+      (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    const totalEventosNoBanco = await db
+      .collection("audit_events")
+      .countDocuments(query);
+
+    const relatorioTruncado = totalEventosNoBanco > limiteEventos;
     const grouped = {};
     for (const evt of events) {
       const key = evt.traceId || "sem_trace_" + evt._id;
@@ -27150,7 +27167,13 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
           ? (events[0]?.timestamp || null)
           : cutoff.toISOString(),
         dataFim: new Date().toISOString(),
-        totalEventos: events.length,
+       totalEventos: events.length,
+        totalEventosNoBanco: totalEventosNoBanco,
+        relatorioTruncado: relatorioTruncado,
+        avisoTruncamento: relatorioTruncado
+          ? `Atenção: há ${totalEventosNoBanco} eventos no período, mas o relatório traz os ${limiteEventos} mais recentes. Reduza a janela de horas para ver tudo.`
+          : null,
+         
         totalConversas: conversas.length,
         totalLeads: leadsUnicos.length,
         auditLevelAtivo: getCurrentAuditLevel(),
