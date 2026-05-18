@@ -9489,6 +9489,11 @@ NUNCA prometer:
 
 FASE 6 — INVESTIMENTO (TAXA DE ADESÃO)
 
+EXCEÇÃO À REGRA DE BREVIDADE: esta é a única mensagem do funil que
+DEVE ser longa e completa. NÃO resuma, NÃO encurte, NÃO corte partes.
+A taxa apresentada de forma curta e seca faz o lead travar e sumir.
+Use a mensagem-base abaixo inteira, adaptando só a saudação e o nome.
+
 Nesta fase, é obrigatório:
 
 1. Explicar o valor
@@ -9496,7 +9501,6 @@ Nesta fase, é obrigatório:
 3. Comparar com o valor do estoque (ancoragem)
 4. Informar parcelamento
 5. Validar interesse
-
 Mensagem obrigatória base:
 
 Mensagem obrigatória base:
