@@ -20966,15 +20966,102 @@ await auditSystemEvent("ciclo_followup", "low", null, {
       agendados: agendados
     });
   
-  } catch (error) {
+ } catch (error) {
     console.error("❌ Erro no bootstrap de follow-ups:", error.message);
   }
 }
 
+/*
+  ===========================================================
+  BACKFILL — CLASSIFICAÇÃO DE PERDIMENTO DOS LEADS ANTIGOS
+  ===========================================================
+  Roda UMA VEZ no boot. Leads perdidos ANTES da correção 46
+  não têm o campo "encerradoPor". Este backfill infere a origem:
+
+  - statusOperacional "perdido_auto" ou "perdido_cadencia_completa"
+    → foi a IA (esses sufixos a IA já gravava antes)
+  - statusOperacional "perdido" sem sufixo
+    → provavelmente foi o humano pelo dashboard
+
+  É uma inferência, não certeza absoluta. Marca "inferido: true"
+  para deixar claro que não foi registrado em tempo real.
+*/
+async function backfillClassificacaoPerdimento() {
+  try {
+    await connectMongo();
+
+    const perdidosSemClassificacao = await db.collection("leads").find({
+      status: "perdido",
+      $or: [
+        { encerradoPor: null },
+        { encerradoPor: { $exists: false } }
+      ]
+    }).toArray();
+
+    if (perdidosSemClassificacao.length === 0) {
+      console.log("🔍 Backfill perdimento: nenhum lead antigo para classificar.");
+      return;
+    }
+
+    let classificadosIA = 0;
+    let classificadosHumano = 0;
+
+    for (const lead of perdidosSemClassificacao) {
+      const statusOp = String(lead.statusOperacional || "");
+      const from = lead.user;
+      if (!from) continue;
+
+      let encerradoPor;
+      let origemEncerramento;
+
+      if (statusOp === "perdido_auto" || statusOp === "perdido_cadencia_completa") {
+        encerradoPor = "ia";
+        origemEncerramento = statusOp === "perdido_cadencia_completa"
+          ? "ia_cadencia_completa"
+          : "ia_auto_perda";
+        classificadosIA++;
+      } else {
+        encerradoPor = "humano";
+        origemEncerramento = "humano";
+        classificadosHumano++;
+      }
+
+      await db.collection("leads").updateOne(
+        { user: from },
+        {
+          $set: {
+            encerradoPor: encerradoPor,
+            origemEncerramento: origemEncerramento,
+            classificacaoPerdimentoInferida: true
+          }
+        }
+      );
+    }
+
+    console.log(`✅ Backfill perdimento concluído: ${perdidosSemClassificacao.length} lead(s) classificado(s).`, {
+      ia: classificadosIA,
+      humano: classificadosHumano
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("evento_geral", "low", null, {
+        evento: "backfill_classificacao_perdimento",
+        total: perdidosSemClassificacao.length,
+        classificadosIA: classificadosIA,
+        classificadosHumano: classificadosHumano
+      });
+    }
+  } catch (error) {
+    console.error("❌ Erro no backfill de classificação de perdimento:", error.message);
+  }
+}
+
 setTimeout(async () => {
+  // Backfill da classificação de perdimento dos leads antigos
+  await backfillClassificacaoPerdimento();
+
   // Primeiro roda o bootstrap para leads existentes sem follow-up
   await bootstrapFollowupsParaLeadsExistentes();
-
   console.log("🚀 Iniciando cron de follow-ups (intervalo: 60s)");
   runFollowupCronTick().catch(error => {
     console.error("Erro no primeiro tick do cron:", error.message);
