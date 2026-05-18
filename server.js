@@ -16487,6 +16487,56 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
   const lastAssistantText = iqgGetLastAssistantMessageForFunnel(history);
   const explainedPreviously = iqgDetectFunnelStepsExplainedInText(lastAssistantText);
 
+/*
+    Se a última mensagem da SDR PROMETEU explicar um tema
+    (ex: "Quer saber mais sobre estoque e responsabilidades?"),
+    esse tema ainda NÃO foi explicado de verdade — só foi oferecido.
+    Não deve ser marcado como concluído quando o lead diz "Sim".
+    O "Sim" nesse contexto é "sim, quero saber", não "sim, entendi".
+  */
+  const lastSdrText = String(lastAssistantText || "").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  const lastReplyActuallyExplainedCommitment =
+    lastSdrText.includes("resultado depende") ||
+    lastSdrText.includes("sua atuacao") ||
+    lastSdrText.includes("sua atuação") ||
+    lastSdrText.includes("vendas realizadas") ||
+    lastSdrText.includes("dedicacao") ||
+    lastSdrText.includes("dedicação");
+
+  const lastReplyIsOfferToExplain =
+    /\b(quer saber|quer que eu|posso te explicar|posso explicar|vou te explicar|gostaria de saber|quer entender)\b/i.test(lastAssistantText || "");
+
+  if (lastReplyIsOfferToExplain) {
+    // A SDR ofereceu explicar — os temas mencionados nessa oferta
+    // NÃO devem ser marcados como concluídos. "Sim" do lead = "quero ouvir".
+    // Desmarca as detecções para os temas que foram só oferecidos, não explicados.
+    const offerText = String(lastAssistantText || "").toLowerCase();
+
+    if (/estoque|comodato|lote/.test(offerText) && !currentEtapas.estoque) {
+      explainedPreviously.estoque = false;
+    }
+    if (/responsabilidade/.test(offerText) && !currentEtapas.responsabilidades) {
+      explainedPreviously.responsabilidades = false;
+    }
+    if (/beneficio|suporte|treinamento/.test(offerText) && !currentEtapas.beneficios) {
+      explainedPreviously.beneficios = false;
+    }
+    if (/programa|parceiro homologado/.test(offerText) && !currentEtapas.programa) {
+      explainedPreviously.programa = false;
+    }
+    if (/investimento|taxa|1.990|1990/.test(offerText) && !currentEtapas.investimento) {
+      explainedPreviously.investimento = false;
+    }
+  }
+
+  // Compromisso exige que a SDR tenha realmente explicado o tema,
+  // não apenas mencionado "responsabilidades do parceiro" de passagem
+  if (!lastReplyActuallyExplainedCommitment) {
+    explainedPreviously.compromisso = false;
+  }
+   
   const hasStrongUnderstanding = iqgLeadHasStrongUnderstandingSignal(leadText, semanticIntent);
   const hasBlockingDoubtOrObjection = iqgLeadHasBlockingDoubtOrObjection(leadText, semanticIntent);
 
