@@ -30309,12 +30309,38 @@ const query =
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
-const getVisualStatus = lead =>
-  lead.statusDashboard ||
-  lead.statusVisualDashboard ||
-  lead.status ||
-  "novo";
+const getVisualStatus = lead => {
+  // Prioridade: statusDashboard (ação do humano) > faseQualificacao (progressão real) > status > fallback
+  const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+  const fase = lead.faseQualificacao || "";
+  const status = lead.status || "";
 
+  // Se o humano marcou pelo dashboard, respeita
+  if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+
+  // Se o lead perdido, fechado, em_atendimento — usar status direto
+  if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+  if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+
+  // Mapear faseQualificacao para os buckets do funil
+  if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+  if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+  if (fase === "qualificando") return "qualificando";
+  if (fase === "morno") return "morno";
+  if (fase === "afiliado") return "morno";
+
+  // Fallback: se tem etapas avançadas mas fase nunca atualizou
+  const etapas = lead.etapas || {};
+  const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+  if (etapasConcluidas >= 3) return "qualificando";
+  if (etapasConcluidas >= 1) return "morno";
+
+  // Se nem etapas tem, olha se ao menos interagiu
+  if (status === "morno" || fase === "morno") return "morno";
+
+  return status || "novo";
+};
+     
 const countByStatus = status =>
   allLeads.filter(lead => getVisualStatus(lead) === status).length;
 
