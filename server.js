@@ -4840,6 +4840,8 @@ REGRAS:
 - Se o lead fala em pagar, pagamento, pix, cartão ou boleto, marque paymentIntent true.
 - Se o lead pede atendente, pessoa, humano, consultor ou vendedor, marque humanRequest true.
 - Se o lead diz que algum dado está errado ou quer corrigir CPF, telefone, cidade, estado ou nome, marque dataCorrectionIntent true.
+- Se o lead pede para conversar/falar/ser contatado em outro momento, adiar a conversa, agendar, marcar, remarcar ou alterar um horário (ex: "vamos conversar amanhã", "me chama segunda", "melhor às 14h", "deixa pra semana que vem", "podemos falar depois"), marque schedulingRequest true.
+
 - Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
 
 IMPORTANTE:
@@ -4853,6 +4855,7 @@ Responda somente JSON válido neste formato:
   "greetingOnly": false,
   "asksQuestion": false,
   "questionTopics": [],
+  "schedulingRequest": false,
     "mentionsOtherProductLine": false,
   "otherProductLineTopics": [],
   "wantsAffiliate": false,
@@ -4920,6 +4923,7 @@ Responda somente JSON válido neste formato:
   ...fallback,
   ...parsed,
   questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
+  schedulingRequest: parsed?.schedulingRequest === true,
   otherProductLineTopics: Array.isArray(parsed?.otherProductLineTopics)
     ? parsed.otherProductLineTopics
     : [],
