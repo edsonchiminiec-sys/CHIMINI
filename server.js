@@ -29066,6 +29066,172 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   }
 });
 
+/*
+  ===========================================================
+  MIGRAÇÃO DE LEAD ENTRE JANELAS DO DASHBOARD
+  ===========================================================
+  Move um lead para uma das 5 janelas, aplicando os efeitos
+  técnicos corretos no bot:
+    1 = IA gerindo sozinha   → IA reassume + cadência recomeça
+    2 = Humano precisa assumir → marca atenção humana
+    3 = Humano atendendo     → bloqueia o bot
+    4 = Perdido              → encerra
+    5 = Fechado              → encerra como negócio fechado
+*/
+app.get("/lead/:user/janela/:janela", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const { user } = req.params;
+    const janela = Number(req.params.janela);
+    const senha = req.query.senha ? `?senha=${req.query.senha}` : "";
+
+    if (![1, 2, 3, 4, 5].includes(janela)) {
+      return res.status(400).send("Janela inválida.");
+    }
+
+    const lead = await db.collection("leads").findOne({ user });
+    if (!lead) {
+      return res.status(404).send("Lead não encontrado.");
+    }
+
+    let patch = {
+      statusDashboardAtualizadoEm: new Date(),
+      atualizadoPeloDashboard: true,
+      updatedAt: new Date()
+    };
+
+    if (janela === 1) {
+      // IA gerindo sozinha — IA reassume e cadência recomeça
+      patch = {
+        ...patch,
+        status: "morno",
+        faseQualificacao: "morno",
+        statusOperacional: "ativo",
+        statusDashboard: "morno",
+        statusVisualDashboard: "morno",
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        botBloqueadoPorHumano: false,
+        leadPediuHumano: false,
+        solicitouAtendimentoHumano: false,
+        necessitaAtencaoHumanaDashboard: false,
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null,
+        // Reativa a cadência do zero
+        followupStep: 1,
+        followupVersionDb: Number(lead.followupVersionDb || 0) + 1,
+        followupLockEm: null,
+        proximoFollowupEm: computeNextFollowupDate(FOLLOWUP_CONFIG[0]),
+        reativadoPeloDashboardEm: new Date()
+      };
+    } else if (janela === 2) {
+      // Humano precisa assumir
+      patch = {
+        ...patch,
+        status: "qualificando",
+        faseQualificacao: "qualificando",
+        statusOperacional: "ativo",
+        statusDashboard: "qualificando",
+        statusVisualDashboard: "qualificando",
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        botBloqueadoPorHumano: false,
+        necessitaAtencaoHumanaDashboard: true,
+        motivoAtencaoHumanaDashboard: "Movido manualmente para a Janela 2 pelo dashboard.",
+        prioridadeAtencaoHumanaDashboard: "alta",
+        atencaoHumanaDashboardEm: new Date(),
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null
+      };
+    } else if (janela === 3) {
+      // Humano atendendo — bloqueia o bot
+      patch = {
+        ...patch,
+        status: "em_atendimento",
+        faseQualificacao: "em_atendimento",
+        statusOperacional: "em_atendimento",
+        statusDashboard: "em_atendimento",
+        statusVisualDashboard: "em_atendimento",
+        humanoAssumiu: true,
+        atendimentoHumanoAtivo: true,
+        botBloqueadoPorHumano: true,
+        assumidoPorHumanoEm: new Date(),
+        // Cancela cadência — humano está no controle
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null,
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null
+      };
+    } else if (janela === 4) {
+      // Perdido — encerrado por decisão humana
+      patch = {
+        ...patch,
+        status: "perdido",
+        faseQualificacao: "perdido",
+        statusOperacional: "perdido",
+        statusDashboard: "perdido",
+        statusVisualDashboard: "perdido",
+        faseFunil: "encerrado",
+        botBloqueadoPorHumano: true,
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        encerradoPor: "humano",
+        origemEncerramento: "humano",
+        encerradoEm: new Date(),
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null
+      };
+    } else if (janela === 5) {
+      // Fechado
+      patch = {
+        ...patch,
+        status: "fechado",
+        faseQualificacao: "fechado",
+        statusOperacional: "fechado",
+        statusDashboard: "fechado",
+        statusVisualDashboard: "fechado",
+        faseFunil: "encerrado",
+        botBloqueadoPorHumano: true,
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        encerradoPor: "humano",
+        origemEncerramento: "humano",
+        fechadoEm: new Date(),
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null
+      };
+    }
+
+    await db.collection("leads").updateOne({ user }, { $set: patch });
+
+    console.log("🔀 Lead migrado de janela pelo dashboard:", {
+      user,
+      janelaDestino: janela
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("decisao_backend", "low", user, {
+        evento: "migracao_janela_dashboard",
+        janelaDestino: janela
+      });
+    }
+
+    return res.redirect(`/dashboard${senha}${senha ? "&" : "?"}janela=${janela}`);
+  } catch (error) {
+    console.error("Erro ao migrar lead de janela:", error);
+    return res.status(500).send("Erro ao migrar lead de janela.");
+  }
+});
+
 app.get("/conversation/:user", async (req, res) => {
   try {
     if (!requireDashboardAuth(req, res)) return;
@@ -30621,12 +30787,20 @@ const statusVisual = (() => {
         return '<span style="color:#94a3b8;">—</span>';
       })()}</td>
       
-      <td class="actions">
+     <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados</a>
-        
         <a class="btn whatsapp" href="/lead/${user}/whatsapp-atender${senhaQuery}">WhatsApp</a>
-        <a class="btn btn-negociado" href="${baseStatusLink}/negociado${senhaQuery}" onclick="return confirm('Confirma marcar como NEGOCIADO?')">Negociado</a>
-        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}" onclick="return confirm('Confirma marcar como PERDIDO?')">Perder</a>
+        <div style="margin-top:6px;">
+          <select onchange="if(this.value){if(confirm('Mover este lead para: '+this.options[this.selectedIndex].text+'?')){window.location.href=this.value;}else{this.selectedIndex=0;}}"
+            style="font-size:11px;padding:4px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;">
+            <option value="">↪ Mover para...</option>
+            <option value="/lead/${user}/janela/1${senhaQuery}">🤖 IA gerindo sozinha</option>
+            <option value="/lead/${user}/janela/2${senhaQuery}">🙋 Humano precisa assumir</option>
+            <option value="/lead/${user}/janela/3${senhaQuery}">💬 Humano atendendo</option>
+            <option value="/lead/${user}/janela/4${senhaQuery}">❌ Perdido</option>
+            <option value="/lead/${user}/janela/5${senhaQuery}">✅ Fechado</option>
+          </select>
+        </div>
       </td>
       
     </tr>
