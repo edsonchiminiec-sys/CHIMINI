@@ -3016,6 +3016,29 @@ auditLog("Resposta do Consultor Pre-SDR", {
 return parsedConsultantAdvice;
 }
 
+/* =========================================================
+   DATA/HORA ATUAL — FONTE ÚNICA (fuso de Brasília)
+   Função utilitária usada por todos os GPTs que precisam
+   calcular datas relativas ("amanhã", "quinta que vem").
+   Definida uma vez, no escopo global, para qualquer função
+   poder chamar sem depender de variável de outra função.
+========================================================= */
+function obterDataHojeBrasil() {
+  const agoraBrasil = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+  );
+  const diasSemanaPt = [
+    "domingo", "segunda-feira", "terça-feira", "quarta-feira",
+    "quinta-feira", "sexta-feira", "sábado"
+  ];
+  return {
+    agoraBrasil,
+    dataHojeISO: `${agoraBrasil.getFullYear()}-${String(agoraBrasil.getMonth() + 1).padStart(2, "0")}-${String(agoraBrasil.getDate()).padStart(2, "0")}`,
+    diaSemanaHoje: diasSemanaPt[agoraBrasil.getDay()],
+    horaAgora: `${String(agoraBrasil.getHours()).padStart(2, "0")}:${String(agoraBrasil.getMinutes()).padStart(2, "0")}`
+  };
+}
+
 async function runConversationContinuityAnalyzer({
   lead = {},
   history = [],
@@ -3034,7 +3057,7 @@ async function runConversationContinuityAnalyzer({
     proximaAcaoSemantica: "nao_analisado",
     orientacaoParaPreSdr: "",
     confidence: "baixa",
-    reason: "Fallback local. Analisador de continuidade não executado ou falhou."
+   reason: "Fallback local. Analisador de continuidade não executado ou falhou."
   };
 
   const recentHistory = Array.isArray(history)
@@ -3043,6 +3066,9 @@ async function runConversationContinuityAnalyzer({
         content: message.content
       }))
     : [];
+
+  // Data atual (fonte única) — para o Historiador entender datas relativas
+  const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -18199,19 +18225,9 @@ async function runDataFlowSemanticRouter({
       }))
     : [];
 
-  // Data/hora atual no fuso de Brasília — usada para o classificador
-  // calcular datas relativas ("amanhã", "quinta que vem") corretamente.
-  const agoraBrasil = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
-  );
-  const diasSemanaPt = [
-    "domingo", "segunda-feira", "terça-feira", "quarta-feira",
-    "quinta-feira", "sexta-feira", "sábado"
-  ];
-  const dataHojeISO = `${agoraBrasil.getFullYear()}-${String(agoraBrasil.getMonth() + 1).padStart(2, "0")}-${String(agoraBrasil.getDate()).padStart(2, "0")}`;
-  const diaSemanaHoje = diasSemanaPt[agoraBrasil.getDay()];
-  const horaAgora = `${String(agoraBrasil.getHours()).padStart(2, "0")}:${String(agoraBrasil.getMinutes()).padStart(2, "0")}`;
-
+  // Data/hora atual (fonte única) — para o classificador calcular datas relativas
+  const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
+   
   try {
      
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
