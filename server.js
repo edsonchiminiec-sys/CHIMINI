@@ -4945,6 +4945,8 @@ Responda somente JSON válido neste formato:
   ...parsed,
   questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
   schedulingRequest: parsed?.schedulingRequest === true,
+  schedulingDate: typeof parsed?.schedulingDate === "string" ? parsed.schedulingDate.trim() : "",
+  schedulingTime: typeof parsed?.schedulingTime === "string" ? parsed.schedulingTime.trim() : "",
   otherProductLineTopics: Array.isArray(parsed?.otherProductLineTopics)
     ? parsed.otherProductLineTopics
     : [],
@@ -23945,11 +23947,48 @@ if (devePularGptsNaColeta) {
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "");
 
+      // Data calculada pelo classificador GPT (formato AAAA-MM-DD e HH:MM).
+      // Se o GPT devolveu uma data válida e futura, usamos ela diretamente.
+      // Caso contrário, caímos no cálculo antigo por extração de texto.
+      let dataAgendamentoFinal = null;
+
+      const gptDate = String(semanticIntent?.schedulingDate || "").trim();
+      const gptTime = String(semanticIntent?.schedulingTime || "").trim();
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(gptDate)) {
+        const horaValida = /^\d{1,2}:\d{2}$/.test(gptTime) ? gptTime : "09:00";
+        const [anoG, mesG, diaG] = gptDate.split("-").map(Number);
+        const [horaG, minG] = horaValida.split(":").map(Number);
+
+        const dataCandidata = new Date(anoG, mesG - 1, diaG, horaG, minG, 0, 0);
+        const agoraValidacao = new Date(
+          new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+        );
+
+        // Só aceita se for uma data válida e no futuro
+        if (!isNaN(dataCandidata.getTime()) && dataCandidata.getTime() > agoraValidacao.getTime()) {
+          dataAgendamentoFinal = dataCandidata;
+          console.log("📅 Data de agendamento usada do classificador GPT:", {
+            user: from,
+            schedulingDate: gptDate,
+            schedulingTime: horaValida,
+            dataFinal: dataCandidata.toISOString()
+          });
+        } else {
+          console.log("⚠️ Data do GPT inválida ou no passado. Usando fallback de extração:", {
+            user: from,
+            schedulingDate: gptDate,
+            schedulingTime: gptTime
+          });
+        }
+      }
+
       const scheduleDetectionSemantica = {
         detected: true,
         periodo: extractRequestedPeriod(normalizedScheduleText),
         horario: extractRequestedTime(normalizedScheduleText),
         motivacao: extractMotivation(normalizedScheduleText),
+        scheduledDateOverride: dataAgendamentoFinal,
         patternMatched: "deteccao_semantica_classificador",
         originalText: String(text || "").slice(0, 200),
         detectedAt: new Date()
