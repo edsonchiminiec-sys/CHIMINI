@@ -3674,7 +3674,10 @@ Se houver objeção, use:
           },
           {
             role: "user",
-            content: JSON.stringify({
+           content: JSON.stringify({
+              dataDeHoje: dataHojeISO,
+              diaSemanaHoje: diaSemanaHoje,
+              horaAgora: horaAgora,
               ultimaMensagemLead: lastUserText || "",
               ultimaRespostaSdr: lastSdrText || "",
               historicoRecente: recentHistory,
@@ -4366,10 +4369,13 @@ otherProductLineTopics: [],
     humanRequest: false,
     dataCorrectionIntent: false,
     requestedFile: "",
+    schedulingRequest: false,
+    schedulingDate: "",
+    schedulingTime: "",
     confidence: "baixa",
     reason: "Fallback local. Classificador semântico não executado ou falhou."
   };
-
+   
   const recentHistory = Array.isArray(history)
     ? history.slice(-8).map(message => ({
         role: message.role,
@@ -4842,6 +4848,19 @@ REGRAS:
 - Se o lead diz que algum dado está errado ou quer corrigir CPF, telefone, cidade, estado ou nome, marque dataCorrectionIntent true.
 - Se o lead pede para conversar/falar/ser contatado em outro momento, adiar a conversa, agendar, marcar, remarcar ou alterar um horário (ex: "vamos conversar amanhã", "me chama segunda", "melhor às 14h", "deixa pra semana que vem", "podemos falar depois"), marque schedulingRequest true.
 
+REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
+- Quando schedulingRequest for true, calcule a data e a hora pedidas pelo lead.
+- O payload do usuário traz "dataDeHoje" (formato AAAA-MM-DD), "diaSemanaHoje" e "horaAgora". Use esses valores como referência absoluta para calcular qualquer data relativa.
+- Preencha "schedulingDate" no formato AAAA-MM-DD e "schedulingTime" no formato HH:MM (24 horas).
+- "amanhã" = dataDeHoje + 1 dia. "depois de amanhã" = dataDeHoje + 2 dias.
+- "quinta-feira" / "na quinta" sem mais contexto = a próxima ocorrência dessa quinta a partir de amanhã.
+- "quinta que vem" / "quinta da semana que vem" / "próxima quinta" = a quinta-feira da SEMANA SEGUINTE (não a desta semana). O mesmo vale para os outros dias.
+- "semana que vem" sem dia definido = a segunda-feira da semana seguinte.
+- Se o lead não disse a hora, use "09:00" como padrão. Se não disse o dia mas só a hora, use amanhã.
+- "de manhã" = 09:00. "de tarde" / "à tarde" = 14:00. "de noite" / "à noite" = 19:00. "cedo" = 08:00.
+- A data calculada NUNCA pode ser hoje ou no passado. Se o cálculo der hoje ou antes, use o próximo dia válido.
+- Se schedulingRequest for false, deixe schedulingDate e schedulingTime como "".
+
 - Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
 
 IMPORTANTE:
@@ -4856,6 +4875,8 @@ Responda somente JSON válido neste formato:
   "asksQuestion": false,
   "questionTopics": [],
   "schedulingRequest": false,
+  "schedulingDate": "",
+  "schedulingTime": "",
     "mentionsOtherProductLine": false,
   "otherProductLineTopics": [],
   "wantsAffiliate": false,
@@ -18084,7 +18105,21 @@ async function runDataFlowSemanticRouter({
       }))
     : [];
 
+  // Data/hora atual no fuso de Brasília — usada para o classificador
+  // calcular datas relativas ("amanhã", "quinta que vem") corretamente.
+  const agoraBrasil = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+  );
+  const diasSemanaPt = [
+    "domingo", "segunda-feira", "terça-feira", "quarta-feira",
+    "quinta-feira", "sexta-feira", "sábado"
+  ];
+  const dataHojeISO = `${agoraBrasil.getFullYear()}-${String(agoraBrasil.getMonth() + 1).padStart(2, "0")}-${String(agoraBrasil.getDate()).padStart(2, "0")}`;
+  const diaSemanaHoje = diasSemanaPt[agoraBrasil.getDay()];
+  const horaAgora = `${String(agoraBrasil.getHours()).padStart(2, "0")}:${String(agoraBrasil.getMinutes()).padStart(2, "0")}`;
+
   try {
+     
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
