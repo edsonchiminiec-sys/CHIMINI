@@ -23894,6 +23894,80 @@ if (devePularGptsNaColeta) {
       });
     }
   }
+/*
+    DETECÇÃO SEMÂNTICA DE AGENDAMENTO.
+    Se o classificador detectou que o lead quer conversar depois,
+    adiar, agendar, remarcar ou alterar horário, o backend cria
+    o recontato de verdade no banco (scheduled_callbacks) e o cron
+    de recontatos vai chamar o lead no horário combinado.
+    Substitui a antiga detecção por regex, que falhava com frases novas.
+  */
+  if (semanticIntent?.schedulingRequest === true) {
+    try {
+      // Extrai data/hora da mensagem reusando as funções já existentes
+      const normalizedScheduleText = String(text || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+      const scheduleDetectionSemantica = {
+        detected: true,
+        periodo: extractRequestedPeriod(normalizedScheduleText),
+        horario: extractRequestedTime(normalizedScheduleText),
+        motivacao: extractMotivation(normalizedScheduleText),
+        patternMatched: "deteccao_semantica_classificador",
+        originalText: String(text || "").slice(0, 200),
+        detectedAt: new Date()
+      };
+
+      console.log("📅 Solicitação de agendamento detectada (semântica):", {
+        user: from,
+        periodo: scheduleDetectionSemantica.periodo,
+        horario: scheduleDetectionSemantica.horario,
+        motivacao: scheduleDetectionSemantica.motivacao,
+        texto: String(text || "").slice(0, 100)
+      });
+
+      const leadParaAgendamentoSemantico = await loadLeadProfile(from);
+
+      if (leadParaAgendamentoSemantico) {
+        // Cancela qualquer recontato pendente anterior (lead pode estar remarcando)
+        await db.collection("scheduled_callbacks").updateMany(
+          { user: from, status: "pendente" },
+          {
+            $set: {
+              status: "cancelado",
+              cancelledAt: new Date(),
+              motivoCancelamento: "lead_remarcou"
+            }
+          }
+        );
+
+        const resultadoAgendamentoSemantico = await scheduleClientCallback(
+          from,
+          leadParaAgendamentoSemantico,
+          scheduleDetectionSemantica
+        );
+
+        if (resultadoAgendamentoSemantico.success) {
+          console.log("✅ Recontato agendado via detecção semântica:", {
+            user: from,
+            scheduledDate: resultadoAgendamentoSemantico.scheduledDate?.toISOString?.() || ""
+          });
+        } else {
+          console.log("⚠️ Falha ao agendar recontato (semântico). Seguindo fluxo normal.", {
+            user: from
+          });
+        }
+      }
+    } catch (erroAgendamentoSemantico) {
+      console.error("❌ Erro na detecção semântica de agendamento:", {
+        user: from,
+        erro: erroAgendamentoSemantico.message
+      });
+    }
+  }
+   
 }
      
 const podeConfirmarInteresseRealAgora =
