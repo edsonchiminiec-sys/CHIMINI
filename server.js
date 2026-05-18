@@ -20070,7 +20070,19 @@ async function scheduleClientCallback(from, lead, detection) {
   try {
     await connectMongo();
 
-    const scheduledDate = computeScheduledCallbackDate(detection);
+    // Se a detecção trouxe uma data já calculada pelo classificador GPT
+    // (scheduledDateOverride), usa ela. Senão, calcula por extração de texto.
+    let scheduledDate;
+    if (detection.scheduledDateOverride instanceof Date && !isNaN(detection.scheduledDateOverride.getTime())) {
+      scheduledDate = detection.scheduledDateOverride;
+      console.log("📅 scheduleClientCallback usando data do classificador GPT:", {
+        user: from,
+        scheduledDate: scheduledDate.toISOString()
+      });
+    } else {
+      scheduledDate = computeScheduledCallbackDate(detection);
+    }
+
     const nome = getFirstName(lead?.nomeWhatsApp || lead?.nome || "");
 
     // 1) Pausar cadência
