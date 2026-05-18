@@ -3058,6 +3058,56 @@ Sua função é analisar:
 e dizer se a SDR deve avançar, responder dúvida, parar repetição ou retomar coleta.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — ANTI-REPETIÇÃO PELO ESTADO (PRIORIDADE MÁXIMA)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+O objeto "lead.etapas" que você recebe é o registro FACTUAL e PERMANENTE
+de quais etapas do funil já foram explicadas ao lead.
+
+Cada campo de "etapas" é um fato objetivo:
+- programa = true        → a explicação do programa JÁ FOI dada
+- beneficios = true      → os benefícios JÁ FORAM explicados
+- estoque = true         → o estoque em comodato JÁ FOI explicado
+- responsabilidades = true → as responsabilidades JÁ FORAM explicadas
+- investimento = true OU taxaPerguntada = true → a taxa JÁ FOI apresentada
+
+REGRA OBRIGATÓRIA:
+Uma etapa marcada como "true" foi explicada ao lead em ALGUM momento da
+conversa — pode ter sido há minutos ou há vários dias. Isso NÃO muda.
+O histórico recente que você recebe é curto (últimas mensagens) e pode
+NÃO conter a explicação original. NUNCA conclua que um tema precisa ser
+reexplicado só porque ele não aparece no histórico recente.
+
+Para TODA etapa marcada como "true" em "lead.etapas":
+- inclua o tema correspondente em "temaUltimaRespostaSdr";
+- marque "naoRepetirUltimoTema" = true;
+- na "orientacaoParaPreSdr", liste explicitamente os temas já concluídos
+  e instrua a SDR a NÃO reexplicá-los.
+
+PRÓXIMO PASSO:
+Identifique a primeira etapa que ainda está "false" na ordem:
+programa → beneficios → estoque → responsabilidades → investimento.
+Essa é a próxima etapa a abordar. Oriente o Pré-SDR a conduzir para ela.
+Se todas estão "true", oriente a conduzir para a decisão da taxa ou a
+coleta de dados, conforme o estado.
+
+EXEMPLO:
+Estado recebido: etapas = { programa:true, beneficios:true, estoque:true,
+responsabilidades:false, investimento:false }
+Mensagem do lead: "sim, vamos"
+
+Interpretação correta:
+naoRepetirUltimoTema = true
+temaUltimaRespostaSdr = ["programa", "beneficios", "estoque"]
+proximaAcaoSemantica = "nao_repetir_e_avancar"
+orientacaoParaPreSdr = "Programa, benefícios e estoque já foram explicados
+e NÃO devem ser repetidos. O lead confirmou. Avançar direto para as
+responsabilidades do parceiro, de forma curta."
+
+Esta regra vale mesmo que o lead NÃO tenha reclamado de repetição.
+A prevenção é proativa: baseada no estado, não na reclamação do lead.
+
+━━━━━━━━━━━━━━━━━━━━━━━
 REGRA CENTRAL — CORREÇÃO DE CONTEXTO
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -21439,53 +21489,74 @@ if (noMeansNoDoubt) {
 let backendStrategicGuidance = [];
 let dataFlowQuestionAlreadyGuided = false;
 
-// ANTI-REPETIÇÃO: extrair temas das últimas 3 respostas da SDR
-  // e enviar ao Pré-SDR para que oriente a SDR a NÃO repetir
-  const ultimasRespostasSdr = (Array.isArray(history) ? history : [])
-    .filter(m => m.role === "assistant")
-    .slice(-3)
-    .map(m => m.content || "");
-
-  if (ultimasRespostasSdr.length > 0) {
+// ANTI-REPETIÇÃO: usa o ESTADO PERSISTENTE do lead (etapas concluídas)
+  // como fonte principal — não esquece, mesmo em conversas longas.
+  // Combina com a varredura das últimas respostas para cobrir os dois casos.
+  {
+    const etapasLead = currentLead?.etapas || {};
     const temasJaAbordados = [];
-    const textoUltimasRespostas = ultimasRespostasSdr.join(" ").toLowerCase();
 
-    if (/programa parceiro homologado|parceria comercial|como funciona o programa/i.test(textoUltimasRespostas)) {
+    // Fonte 1: etapas registradas no estado do lead (permanente)
+    if (etapasLead.programa === true) {
       temasJaAbordados.push("explicação do programa");
     }
-    if (/benefício|beneficio|suporte|treinamento|comissão|comissao|margem/i.test(textoUltimasRespostas)) {
+    if (etapasLead.beneficios === true) {
       temasJaAbordados.push("benefícios e suporte");
     }
-    if (/comodato|lote inicial|estoque|cedido|r\$ 5\.000|5000/i.test(textoUltimasRespostas)) {
+    if (etapasLead.estoque === true) {
       temasJaAbordados.push("estoque em comodato");
     }
-    if (/responsabilidade|conservar|atuação|atuacao|dedicação|dedicacao/i.test(textoUltimasRespostas)) {
+    if (etapasLead.responsabilidades === true) {
       temasJaAbordados.push("responsabilidades");
     }
-    if (/1\.990|1990|taxa de adesão|taxa de adesao|investimento.*ativação|investimento.*ativacao/i.test(textoUltimasRespostas)) {
+    if (etapasLead.investimento === true || etapasLead.taxaPerguntada === true) {
       temasJaAbordados.push("taxa/investimento R$ 1.990");
     }
-    if (/afiliado|divulgar por link|minhaiqg\.com/i.test(textoUltimasRespostas)) {
+
+    // Fonte 2: varredura das últimas 5 respostas (cobre temas sem etapa formal)
+    const ultimasRespostasSdr = (Array.isArray(history) ? history : [])
+      .filter(m => m.role === "assistant")
+      .slice(-5)
+      .map(m => m.content || "");
+    const textoUltimasRespostas = ultimasRespostasSdr.join(" ").toLowerCase();
+
+    if (/afiliado|divulgar por link|minhaiqg\.com/i.test(textoUltimasRespostas) &&
+        !temasJaAbordados.includes("programa de afiliados")) {
       temasJaAbordados.push("programa de afiliados");
     }
 
     if (temasJaAbordados.length > 0) {
+      // Identifica qual é o próximo tema pendente, na ordem do funil
+      const ordemFunil = [
+        { etapa: "programa", label: "explicação do programa" },
+        { etapa: "beneficios", label: "benefícios e suporte" },
+        { etapa: "estoque", label: "estoque em comodato" },
+        { etapa: "responsabilidades", label: "responsabilidades" },
+        { etapa: "investimento", label: "taxa/investimento R$ 1.990" }
+      ];
+      const proximoTemaPendente = ordemFunil.find(
+        item => etapasLead[item.etapa] !== true
+      );
+
+      const orientacaoProximo = proximoTemaPendente
+        ? `O PRÓXIMO tema a abordar é: ${proximoTemaPendente.label}. Conduza para ele.`
+        : "Todas as etapas foram concluídas. Conduza para a coleta de dados (se a taxa foi aceita) ou aguarde a decisão do lead sobre o investimento.";
+
       backendStrategicGuidance.push({
         tipo: "anti_repeticao",
         prioridade: "alta",
-        motivo: "Evitar repetição de conteúdo já explicado nas últimas respostas.",
+        motivo: "Evitar repetição de conteúdo já explicado (baseado no estado do lead).",
         orientacaoParaPreSdr: [
-          "ATENÇÃO — ANTI-REPETIÇÃO:",
-          `Os seguintes temas JÁ FORAM abordados nas últimas respostas da SDR: ${temasJaAbordados.join(", ")}.`,
-          "A SDR NÃO deve repetir esses temas.",
-          "Se o lead confirmar com 'Sim', 'Ok', 'Entendi', a SDR deve AVANÇAR para o PRÓXIMO tema pendente.",
-          "Se todos os temas já foram abordados, a SDR deve conduzir para a taxa/investimento (se não explicada) ou para a coleta de dados (se já explicada).",
-          "Mensagens curtas e diretas. NÃO repetir explicações já dadas."
+          "ATENÇÃO — ANTI-REPETIÇÃO (CRÍTICO):",
+          `Os seguintes temas JÁ FORAM explicados a este lead e NÃO devem ser repetidos: ${temasJaAbordados.join(", ")}.`,
+          "Mesmo que o lead tenha ficado horas sem responder, esses temas continuam explicados.",
+          "Se o lead confirmar com 'Sim', 'Ok', 'Entendi', 'vamos', a SDR deve AVANÇAR — nunca repetir.",
+          orientacaoProximo,
+          "Mensagens curtas e diretas. Não reexplique o que o lead já ouviu."
         ].join("\n")
       });
     }
-  }
-     
+  }     
      const homologadoIndicationBenefitGuidance =
   buildHomologadoIndicationBenefitGuidance({
     lead: currentLead || {},
