@@ -31926,36 +31926,11 @@ tr:hover td {
   <button type="button" onclick="printCRM()">Imprimir</button>
 </form>
           <div class="print-info">
-            Exibindo ${leads.length} lead(s). Clique nos títulos das colunas para ordenar.
+            ${leads.length} lead(s) no total, organizados em 5 janelas de gestão.
           </div>
 
-          <div class="leads-table-card">
-<table>
-
-           <thead>
-  <tr>
-    <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
-    <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
-    <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
-    <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
-    <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
-    <th><a href="${makeSortLink("programa", "Prog")}">Prog</a></th>
-    <th><a href="${makeSortLink("beneficios", "Benef")}">Benef</a></th>
-    <th><a href="${makeSortLink("estoque", "Estoq")}">Estoq</a></th>
-    <th><a href="${makeSortLink("responsabilidades", "Resp")}">Resp</a></th>
-    <th style="line-height:1.25;padding-top:14px;padding-bottom:14px;"><a href="${makeSortLink("taxaAlinhada", "Taxa Iniciada")}">Taxa<br>Inic.</a></th>
-    <th style="line-height:1.25;padding-top:14px;padding-bottom:14px;"><a href="${makeSortLink("investimento", "Taxa Finalizada")}">Taxa<br>Final.</a></th>
-    <th><a href="${makeSortLink("compromisso", "Comp")}">Comp</a></th>
-    <th><a href="${makeSortLink("afiliado", "Afil")}">Afil</a></th>
-    <th>Status</th>
-    <th>Ação</th>
-  </tr>
-</thead>
-            <tbody>
-                       ${rows || `<tr><td colspan="15">Nenhum lead encontrado.</td></tr>`}
-            </tbody>
-          </table>
-</div>
+          ${janelasHtml}
+          
         </div>
       </body>
       </html>
