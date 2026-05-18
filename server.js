@@ -23098,7 +23098,7 @@ if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
     })
   ]);
 
-  semanticIntent = classifierResult;
+ semanticIntent = classifierResult;
   var earlySemanticContinuity = continuityResult;
 
   console.log("🧠 Intenção semântica observada:", {
@@ -23110,7 +23110,38 @@ if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
     etapas: currentLead?.etapas || {},
     semanticIntent
   });
+
+  /*
+    Se o classificador semântico detectou que o lead pediu para falar
+    com um humano, persiste isso no lead para que a Janela 2 do
+    dashboard (Humano precisa assumir) consiga enxergar este lead.
+    O sistema detectava mas não gravava — a Janela 2 ficava cega.
+  */
+  if (semanticIntent?.humanRequest === true) {
+    await saveLeadProfile(from, {
+      leadPediuHumano: true,
+      solicitouAtendimentoHumano: true,
+      necessitaAtencaoHumanaDashboard: true,
+      motivoAtencaoHumanaDashboard: "Lead pediu para falar com um atendente humano.",
+      prioridadeAtencaoHumanaDashboard: "alta",
+      atencaoHumanaDashboardEm: new Date()
+    });
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🙋 Lead pediu atendimento humano — marcado para a Janela 2 do dashboard:", {
+      user: from,
+      mensagem: text
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("decisao_backend", "medium", from, {
+        evento: "lead_pediu_humano",
+        mensagemLead: String(text || "").slice(0, 300)
+      });
+    }
+  }
 }
+     
 const podeConfirmarInteresseRealAgora =
   canAskForRealInterest(currentLead || {}) &&
   canStartDataCollection({
