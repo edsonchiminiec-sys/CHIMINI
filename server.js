@@ -27691,6 +27691,33 @@ if (
       valorConfirmado,
       proximoCampo: missingAfterConfirm[0] || "nenhum"
     });
+  } else if (leadNegouOuCorrigiu || !valorPendenteEhValido) {
+    /*
+      O lead negou/corrigiu o dado, OU o valor pendente é inválido
+      (ex: uma frase capturada como nome por engano).
+      NÃO confirmar. Limpar o valor-lixo pendente para o sistema
+      não ficar preso tentando confirmar a mesma coisa errada.
+    */
+    const campoLimpo = currentLead.campoPendente;
+
+    await saveLeadProfile(from, {
+      campoPendente: null,
+      valorPendente: null,
+      cidadePendente: null,
+      estadoPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: "corrigir_dado",
+      status: "corrigir_dado",
+      campoEsperado: campoLimpo || null
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🧹 Valor pendente inválido/negado foi limpo — sistema vai pedir o dado novamente:", {
+      user: from,
+      campoLimpo,
+      motivo: leadNegouOuCorrigiu ? "lead_negou_ou_corrigiu" : "valor_pendente_invalido"
+    });
   }
 }
      
