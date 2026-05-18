@@ -20799,9 +20799,29 @@ async function runFollowupCronTick() {
         }
 
         /*
-          Encontrou a configuração do step atual.
+          BLINDAGEM CONTRA DISPARO DUPLICADO (Opção B):
+          Logo após pegar o lock, empurra o proximoFollowupEm para
+          frente (15 min). Assim, se este tick demorar mais que os
+          5 min do lock (envio via GPT + WhatsApp), e o lock expirar,
+          outro tick NÃO pega este lead — porque o proximoFollowupEm
+          já não está vencido.
+
+          O sendAutomaticFollowupIfStillValid mais abaixo continua
+          avançando o step normalmente; ele vai recalcular o
+          proximoFollowupEm correto do próximo step. Este empurrão
+          é só uma janela de proteção temporária.
+        */
+        const protecaoProximoFollowup = new Date(Date.now() + 15 * 60 * 1000);
+        await db.collection("leads").updateOne(
+          { user: candidato.user, followupLockEm: novoLock },
+          { $set: { proximoFollowupEm: protecaoProximoFollowup } }
+        );
+
+        /*
+          Encontrado a configuração do step atual.
         */
         const step = Number(lead.followupStep || 1);
+         
         const stepIndex = step - 1; // arrays são 0-indexed
         const config = FOLLOWUP_CONFIG[stepIndex];
 
