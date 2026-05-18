@@ -14505,11 +14505,26 @@ function classifyTaxPhaseDecision({
   const trustObjection = taxDecisionMessageIsTrustObjection(text) || semanticIntent?.riskObjection === true;
   const asksAlternative = taxDecisionMessageRequestsAlternative(text) || semanticIntent?.wantsAffiliate === true;
   const mainProjectRefusal = taxDecisionMessageIsMainProjectRefusal(text);
-  const strongAcceptance =
-    taxDecisionMessageIsStrongAcceptance(text) ||
-    semanticIntent?.positiveCommitment === true ||
-    semanticIntent?.paymentIntent === true;
 
+  /*
+    A mensagem ATUAL precisa ter conteúdo real para qualquer decisão
+    de aceite. Saudações e mensagens vazias ("oi", "olá", "bom dia")
+    NUNCA podem ser aceite de taxa, mesmo que o semanticIntent de uma
+    mensagem anterior tivesse positiveCommitment/paymentIntent.
+    Isso evita que um sinal semântico defasado libere o pré-cadastro.
+  */
+  const mensagemAtualEhSaudacaoOuVazia =
+    !text ||
+    /^(oi|ola|olá|opa|eai|e ai|e aí|bom dia|boa tarde|boa noite|tudo bem|td bem|blz|beleza|hey|oii+|alo|alô)[\s!.,]*$/i.test(String(text).trim());
+
+  const strongAcceptance =
+    !mensagemAtualEhSaudacaoOuVazia &&
+    (
+      taxDecisionMessageIsStrongAcceptance(text) ||
+      semanticIntent?.positiveCommitment === true ||
+      semanticIntent?.paymentIntent === true
+    );
+   
   // Mensagens que expressam dúvida NÃO podem ser aceite fraco da taxa
 const mensagemExpressaDuvida =
   /\b(preciso entender|preciso entender melhor|preciso saber mais|quero entender melhor|quero saber mais|nao entendi|não entendi|me explica|explica melhor|como funciona|tenho duvida|tenho dúvida|ainda nao sei|ainda não sei|nao ficou claro|não ficou claro)\b/i.test(text || "");
