@@ -450,11 +450,14 @@ async function updateLeadStatus(user, status) {
           humanoAssumiu: false,
           atendimentoHumanoAtivo: false,
           botBloqueadoPorHumano: true,
+          // Registra que foi o HUMANO que deu este status pelo dashboard
+          origemEncerramento: status === "perdido" ? "humano" : "humano",
+          encerradoPor: "humano",
+          encerradoEm: new Date(),
           updatedAt: new Date()
         }
       }
     );
-
     console.log("✅ Dashboard marcou lead como " + status + ":", {
       user,
       statusAnterior: currentLead?.status
@@ -20564,6 +20567,7 @@ async function sendAutomaticFollowupIfStillValid({
         faseQualificacao: "perdido",
         statusOperacional: "perdido_cadencia_completa",
         motivoPerda: "cadencia_completa_sem_resposta",
+        encerradoPor: "ia", origemEncerramento: "ia_cadencia_completa",
         perdidoEm: new Date(),
         ultimoFollowupEm: new Date()
       });
@@ -22960,6 +22964,7 @@ if (estaEmColetaOuConfirmacao && isLeadHostileOrRequestingStop(text, null)) {
     await saveLeadProfile(from, {
       status: "perdido", faseQualificacao: "perdido", statusOperacional: "perdido_auto",
       motivoPerda: motivoAutoPerda, mensagemQueGeroupPerda: text, perdidoEm: new Date(),
+      encerradoPor: "ia", origemEncerramento: "ia_auto_perda",
       proximoFollowupEm: null, followupStep: 0, followupLockEm: null
     });
     const state = getState(from);
@@ -23540,6 +23545,7 @@ if (
       faseQualificacao: "perdido",
       statusOperacional: "perdido_auto",
       motivoPerda: motivoAutoPerda,
+      encerradoPor: "ia", origemEncerramento: "ia_auto_perda",
       mensagemQueGeroupPerda: text,
       perdidoEm: new Date(),
       proximoFollowupEm: null,
