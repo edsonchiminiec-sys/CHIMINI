@@ -20944,6 +20944,30 @@ async function scheduleLeadFollowups(from) {
 
     const novaVersao = Number(lead?.followupVersionDb || 0) + 1;
 
+    /*
+      Se o lead JÁ está numa cadência avançada (step 2+) e o último
+      follow-up foi enviado há menos de 10 minutos, NÃO reinicia para
+      step 1. Isso evita que a resposta do lead à própria mensagem de
+      cadência zere o contador e gere disparos repetidos de step 1.
+
+      O reinício do step 1 só acontece quando o lead realmente voltou
+      a engajar fora da janela de um follow-up recém-enviado.
+    */
+    const stepAtual = Number(lead?.followupStep || 0);
+    const ultimoFollowup = lead?.ultimoFollowupEm ? new Date(lead.ultimoFollowupEm).getTime() : 0;
+    const minutosDesdeUltimoFollowup = ultimoFollowup
+      ? (Date.now() - ultimoFollowup) / (1000 * 60)
+      : Infinity;
+
+    if (stepAtual >= 2 && minutosDesdeUltimoFollowup < 10) {
+      console.log("⏸️ Follow-up NÃO reiniciado: lead respondeu logo após follow-up de cadência.", {
+        user: from,
+        stepAtual,
+        minutosDesdeUltimoFollowup: Math.round(minutosDesdeUltimoFollowup)
+      });
+      return;
+    }
+
     await saveLeadProfile(from, {
       proximoFollowupEm: nextDate,
       followupStep: 1,
@@ -20951,6 +20975,7 @@ async function scheduleLeadFollowups(from) {
       followupVersionDb: novaVersao,
       followupAgendadoEm: new Date()
     });
+     
 
     console.log("⏱️ Follow-up reagendado (lead respondeu, cadência reinicia do step 1):", {
       user: from,
@@ -26169,9 +26194,14 @@ for (const key of fileKeys) {
   await sendFileOnce(from, key);
 }
 
+// Reagenda follow-up após resposta da SDR.
+// scheduleLeadFollowups é idempotente e já verifica estados protegidos.
+await scheduleLeadFollowups(from);
+
 markMessageIdsAsProcessed(bufferedMessageIds);
      
 return;
+     
   } catch (error) {
     if (messageId) {
       processingMessages.delete(messageId);
