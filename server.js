@@ -20116,6 +20116,11 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
     return mensagemLimpa;
   } catch (error) {
     console.error("Erro ao gerar cadência via GPTs:", { user: from, step, error: error.message });
+    await auditSystemEvent("erro_sistema", "high", from, {
+      origem: "generateFollowupViaGPTs",
+      step: step,
+      erro: error.message
+    });
     return null; // fallback para texto hardcoded
   }
 }
@@ -20471,6 +20476,13 @@ async function sendAutomaticFollowupIfStillValid({
     faseQualificacao: latestLead?.faseQualificacao || "-"
   });
 
+   await auditSystemEvent("envio_followup", "low", from, {
+    step: followup.step || null,
+    faseFunil: latestLead?.faseFunil || "-",
+    faseQualificacao: latestLead?.faseQualificacao || "-",
+    mensagem: String(messageToSend || "").slice(0, 300)
+  });
+
   await auditFollowupEvent("followup_sent", "low", {
     step: followup.step || null,
     closeAfter: followup.closeAfter === true,
@@ -20509,6 +20521,12 @@ async function sendAutomaticFollowupIfStillValid({
         user: from,
         step: currentStep
       });
+await auditSystemEvent("ciclo_followup", "medium", from, {
+        evento: "cadencia_completa_lead_perdido",
+        stepFinal: currentStep,
+        motivo: "cadencia_completa_sem_resposta"
+      });
+       
     } else {
       // Avança pro próximo step.
       const nextDate = computeNextFollowupDate(nextConfig);
@@ -20524,6 +20542,13 @@ async function sendAutomaticFollowupIfStillValid({
         proximoStep: nextConfig.step,
         proximoFollowupEm: nextDate.toISOString()
       });
+await auditSystemEvent("ciclo_followup", "low", from, {
+        evento: "step_avancado",
+        stepAnterior: currentStep,
+        proximoStep: nextConfig.step,
+        proximoFollowupEm: nextDate.toISOString()
+      });
+       
     }
   } catch (advanceError) {
     console.error("Erro ao avançar follow-up para próximo step:", advanceError.message);
@@ -20877,6 +20902,12 @@ async function bootstrapFollowupsParaLeadsExistentes() {
     }
 
     console.log(`✅ Bootstrap concluído: ${agendados} follow-ups agendados de ${leadsInativos.length} candidatos.`);
+await auditSystemEvent("ciclo_followup", "low", null, {
+      evento: "bootstrap_executado",
+      candidatos: leadsInativos.length,
+      agendados: agendados
+    });
+  
   } catch (error) {
     console.error("❌ Erro no bootstrap de follow-ups:", error.message);
   }
@@ -22850,6 +22881,12 @@ if (estaEmColetaOuConfirmacao && isLeadHostileOrRequestingStop(text, null)) {
     state.closed = true;
     clearTimers(from);
     console.log("🚫 Lead marcado como PERDIDO durante coleta:", { user: from, motivo: motivoAutoPerda });
+await auditSystemEvent("auto_perda", "medium", from, {
+      motivo: motivoAutoPerda,
+      contexto: "durante_coleta_dados",
+      mensagemLead: String(text || "").slice(0, 300)
+    });
+     
     if (messageId) { markMessageAsProcessed(messageId); }
     return res.sendStatus(200);
   }
@@ -23443,7 +23480,15 @@ if (
       mensagemLead: text,
       jaRecebeuAfiliado
     });
-
+     
+await auditSystemEvent("auto_perda", "medium", from, {
+      motivo: motivoAutoPerda,
+      mensagemLead: String(text || "").slice(0, 300),
+      jaRecebeuAfiliado: jaRecebeuAfiliado,
+      faseFunil: currentLead?.faseFunil || "-",
+      faseQualificacao: currentLead?.faseQualificacao || "-"
+    });
+     
     if (messageId) {
       markMessageAsProcessed(messageId);
     }
@@ -23669,8 +23714,16 @@ if (
       etapasConcluidas,
       etapas: etapasDoLead
     });
-  }
 
+     await auditSystemEvent("mudanca_fase", "low", from, {
+      de: "morno",
+      para: "qualificando",
+      motivo: "progresso_no_funil",
+      etapasConcluidas: etapasConcluidas,
+      etapas: etapasDoLead
+    });
+  }
+   
 if (currentLead?.faseQualificacao === "qualificando") {
     leadStatusSeguro = "qualificando";
   }
@@ -24256,6 +24309,15 @@ var taxPhaseDecision = classifyTaxPhaseDecision({
   lastUserText: text,
   lastSdrText: lastAssistantText
 });
+
+   if (taxPhaseDecision?.categoria && taxPhaseDecision.categoria !== "FORA_DA_FASE_TAXA") {
+  await auditSystemEvent("decisao_taxa", "low", from, {
+    categoria: taxPhaseDecision.categoria,
+    acao: taxPhaseDecision.acao,
+    motivo: taxPhaseDecision.motivo,
+    mensagemLead: String(text || "").slice(0, 300)
+  });
+}
 
 if (taxPhaseDecision?.acao && taxPhaseDecision.acao !== "NENHUMA_ACAO") {
   backendStrategicGuidance.push({
@@ -26312,6 +26374,12 @@ return;
     }
 
     console.error("Erro no webhook:", error);
+await auditSystemEvent("erro_sistema", "high", null, {
+      origem: "webhook_principal",
+      erro: error.message,
+      stack: String(error.stack || "").slice(0, 500)
+    });
+     
     return;
   }
 });
