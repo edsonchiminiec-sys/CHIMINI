@@ -1372,6 +1372,52 @@ async function recordAuditEvent({
   }
 }
 
+/*
+  ===========================================================
+  auditSystemEvent — registra eventos OPERACIONAIS no MongoDB
+  ===========================================================
+  Diferente do recordAuditEvent (que registra GPTs e webhook),
+  esta função grava eventos do BACKEND que antes só apareciam
+  no console do Render e se perdiam.
+
+  Categorias:
+    - "erro_sistema"      → falha de função, API, GPT
+    - "ciclo_followup"    → avanço de step, encerramento, bootstrap
+    - "auto_perda"        → lead marcado como perdido e por quê
+    - "decisao_taxa"      → aceite, objeção, condicionamento, recusa
+    - "mudanca_fase"      → transição de fase do lead (morno→qualificando etc)
+    - "decisao_backend"   → orientações estratégicas e travas do backend
+    - "rota_comercial"    → migração homologado↔afiliado
+    - "coleta_dados"      → início, progresso e conclusão do pré-cadastro
+    - "envio_followup"    → mensagem de cadência efetivamente enviada
+    - "evento_geral"      → qualquer outro evento relevante
+
+  Tem try/catch interno — nunca derruba o fluxo principal.
+*/
+async function auditSystemEvent(categoria, severidade, userPhone, payload = {}) {
+  try {
+    await connectMongo();
+
+    const userMasked = userPhone
+      ? String(userPhone).slice(0, 4) + "*****" + String(userPhone).slice(-2)
+      : "-";
+
+    await db.collection("audit_events").insertOne({
+      traceId: payload.traceId || `sistema_${categoria}_${Date.now()}`,
+      component: "backend_sistema",
+      eventType: categoria,
+      severity: severidade || "low",
+      userPhone: userPhone || null,
+      userMasked: userMasked,
+      timestamp: new Date(),
+      payload: payload || {}
+    });
+  } catch (error) {
+    // Nunca derruba o fluxo — apenas loga.
+    console.error("⚠️ Erro no auditSystemEvent (não-crítico):", error.message);
+  }
+}
+
 async function recordRequestCompleted({
   traceId = null,
   userPhone = "",
