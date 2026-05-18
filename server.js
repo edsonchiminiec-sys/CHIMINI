@@ -241,6 +241,19 @@ async function ensureIndexes() {
     { expireAfterSeconds: 7 * 24 * 60 * 60 }
   );
 
+await db.collection("scheduled_callbacks").createIndex(
+    { status: 1, scheduledDate: 1 }
+  );
+
+  await db.collection("scheduled_callbacks").createIndex(
+    { user: 1 }
+  );
+
+  await db.collection("scheduled_callbacks").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 30 * 24 * 60 * 60 }
+  );
+   
   await db.collection("crm_send_logs").createIndex(
     { createdAt: 1 },
     { expireAfterSeconds: 30 * 24 * 60 * 60 }
@@ -19751,6 +19764,472 @@ function getGreetingByBrazilTime() {
   return "boa noite";
 }
 
+/* =========================
+   DETECÇÃO INTELIGENTE DE SOLICITAÇÃO DE PRAZO/HORÁRIO
+   Quando o cliente pede para ser contactado depois (ex: "me chama amanhã",
+   "estou ocupado", "à noite te respondo"), o sistema detecta,
+   pausa a cadência e agenda o recontato.
+========================= */
+
+const SCHEDULE_REQUEST_PATTERNS = [
+  /me\s+(chame|chama|ligue|liga|retorne|retorna|responde|responda)\s+.{0,30}(amanh[aã]|depois|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|daqui|em\s+\d+|mais\s+tarde|noite|tarde|manh[aã])/i,
+  /estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o|em\s+call|atendendo|dirigindo|no\s+trabalho|correndo).{0,60}(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna|retorn[ao]|depois)/i,
+  /(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna).{0,60}estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o)/i,
+  /pode\s+(ser|ficar\s+pra?)\s+(amanh[aã]|depois|à?\s*noite|de\s+noite|mais\s+tarde|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  /(depois|dps)\s+de\s+amanh[aã]/i,
+  /amanh[aã]\s+(à?\s*noite|de\s+noite|à?\s*tarde|de\s+tarde|de\s+manh[aã]|cedo|cedinho)/i,
+  /(à?\s*noite|de\s+noite|mais\s+tarde|depois)\s+(te\s+respondo|te\s+falo|eu\s+respondo|eu\s+falo|a\s+gente\s+conversa|conversamos|vejo)/i,
+  /n[ao]\s+pr[oó]xim[ao]\s+(segunda|ter[cç]a|quarta|quinta|sexta|semana)/i,
+  /(agora\s+n[aã]o\s+(d[aá]|posso|consigo)|n[aã]o\s+(d[aá]|posso|consigo)\s+agora).{0,40}(depois|amanh[aã]|mais\s+tarde|noite)/i,
+  /daqui\s+(a\s+)?\d+\s*(hora|min|dia|semana)/i,
+  /(me\s+chame?|me\s+ligue?|retorn[ae]?).{0,30}([àa]s\s+)?\d{1,2}\s*(h|hora|:\d{2})/i,
+  /depois\s+d[ao]s?\s+\d{1,2}\s*(h|hora|:\d{2})/i
+];
+
+function detectScheduleRequest(text) {
+  if (!text || String(text).trim().length < 5) {
+    return { detected: false };
+  }
+
+  const normalizedText = String(text)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  let matchedPattern = null;
+  for (const pattern of SCHEDULE_REQUEST_PATTERNS) {
+    if (pattern.test(text)) {
+      matchedPattern = pattern.source;
+      break;
+    }
+  }
+
+  if (!matchedPattern) {
+    return { detected: false };
+  }
+
+  const periodo = extractRequestedPeriod(normalizedText);
+  const horario = extractRequestedTime(normalizedText);
+  const motivacao = extractMotivation(normalizedText);
+
+  return {
+    detected: true,
+    periodo,
+    horario,
+    motivacao,
+    patternMatched: matchedPattern,
+    originalText: String(text).slice(0, 200),
+    detectedAt: new Date()
+  };
+}
+
+function extractRequestedPeriod(text) {
+  if (/depois\s*de\s*amanh[aã]|dps\s*de\s*amanh/i.test(text)) return "depois_de_amanha";
+  if (/amanh[aã]/i.test(text)) return "amanha";
+  if (/proxim[ao]\s*segunda|na\s*segunda/i.test(text)) return "segunda";
+  if (/proxim[ao]\s*terca|na\s*terca/i.test(text)) return "terca";
+  if (/proxim[ao]\s*quarta|na\s*quarta/i.test(text)) return "quarta";
+  if (/proxim[ao]\s*quinta|na\s*quinta/i.test(text)) return "quinta";
+  if (/proxim[ao]\s*sexta|na\s*sexta/i.test(text)) return "sexta";
+  if (/proxim[ao]\s*sabado|no\s*sabado/i.test(text)) return "sabado";
+  if (/proxim[ao]\s*semana/i.test(text)) return "proxima_semana";
+
+  const matchDaqui = text.match(/daqui\s*(a\s*)?(\d+)\s*(hora|min|dia|semana)/i);
+  if (matchDaqui) {
+    const quantidade = parseInt(matchDaqui[2]);
+    const unidade = matchDaqui[3].toLowerCase();
+    if (unidade.startsWith("hora")) return `daqui_${quantidade}_horas`;
+    if (unidade.startsWith("min")) return `daqui_${quantidade}_minutos`;
+    if (unidade.startsWith("dia")) return `daqui_${quantidade}_dias`;
+    if (unidade.startsWith("semana")) return `daqui_${quantidade}_semanas`;
+  }
+
+  if (/mais\s*tarde|depois/i.test(text)) return "mais_tarde";
+
+  return "indefinido";
+}
+
+function extractRequestedTime(text) {
+  const matchHorarioExplicito = text.match(/(\d{1,2})\s*(h|hora|:\d{2})/i);
+  if (matchHorarioExplicito) {
+    const hora = parseInt(matchHorarioExplicito[1]);
+    if (hora >= 0 && hora <= 23) return `${hora}h`;
+  }
+
+  const matchDepoisDas = text.match(/depois\s*d[ao]s?\s*(\d{1,2})\s*(h|hora)/i);
+  if (matchDepoisDas) {
+    const hora = parseInt(matchDepoisDas[1]);
+    if (hora >= 0 && hora <= 23) return `${hora}h`;
+  }
+
+  if (/de\s*manha|cedinho|cedo/i.test(text)) return "manha";
+  if (/[aà]\s*tarde|de\s*tarde/i.test(text)) return "tarde";
+  if (/[aà]\s*noite|de\s*noite/i.test(text)) return "noite";
+
+  return "indefinido";
+}
+
+function extractMotivation(text) {
+  if (/ocupad[oa]/i.test(text)) return "ocupado";
+  if (/trabalhando|no\s*trabalho/i.test(text)) return "trabalhando";
+  if (/reuni[aã]o|call/i.test(text)) return "reuniao";
+  if (/dirigindo/i.test(text)) return "dirigindo";
+  if (/atendendo/i.test(text)) return "atendendo";
+  if (/correndo/i.test(text)) return "correndo";
+  return "nenhuma";
+}
+
+/* =========================
+   CÁLCULO DE DATA/HORA DO RECONTATO AGENDADO
+========================= */
+
+function computeScheduledCallbackDate(detection) {
+  const agora = new Date();
+  const data = new Date(agora);
+
+  switch (detection.periodo) {
+    case "amanha":
+      data.setDate(data.getDate() + 1);
+      break;
+    case "depois_de_amanha":
+      data.setDate(data.getDate() + 2);
+      break;
+    case "segunda":
+      advanceToWeekday(data, 1);
+      break;
+    case "terca":
+      advanceToWeekday(data, 2);
+      break;
+    case "quarta":
+      advanceToWeekday(data, 3);
+      break;
+    case "quinta":
+      advanceToWeekday(data, 4);
+      break;
+    case "sexta":
+      advanceToWeekday(data, 5);
+      break;
+    case "sabado":
+      advanceToWeekday(data, 6);
+      break;
+    case "proxima_semana":
+      advanceToWeekday(data, 1);
+      break;
+    case "mais_tarde":
+      data.setTime(data.getTime() + 3 * 60 * 60 * 1000);
+      break;
+    default:
+      if (detection.periodo.startsWith("daqui_")) {
+        const parts = detection.periodo.split("_");
+        const quantidade = parseInt(parts[1]) || 1;
+        const unidade = parts[2] || "horas";
+        if (unidade === "horas") data.setTime(data.getTime() + quantidade * 60 * 60 * 1000);
+        else if (unidade === "minutos") data.setTime(data.getTime() + quantidade * 60 * 1000);
+        else if (unidade === "dias") data.setDate(data.getDate() + quantidade);
+        else if (unidade === "semanas") data.setDate(data.getDate() + quantidade * 7);
+      } else {
+        data.setDate(data.getDate() + 1);
+      }
+      break;
+  }
+
+  if (detection.horario !== "indefinido") {
+    if (detection.horario.endsWith("h")) {
+      const hora = parseInt(detection.horario);
+      if (!isNaN(hora) && hora >= 0 && hora <= 23) {
+        data.setHours(hora, 0, 0, 0);
+      }
+    } else {
+      switch (detection.horario) {
+        case "manha":
+          data.setHours(9, 0, 0, 0);
+          break;
+        case "tarde":
+          data.setHours(14, 0, 0, 0);
+          break;
+        case "noite":
+          data.setHours(19, 30, 0, 0);
+          break;
+      }
+    }
+  } else {
+    if (data.toDateString() !== agora.toDateString()) {
+      data.setHours(10, 0, 0, 0);
+    }
+  }
+
+  const startHour = typeof BUSINESS_START_HOUR === "number" ? BUSINESS_START_HOUR : 8;
+  const endHour = typeof BUSINESS_END_HOUR === "number" ? BUSINESS_END_HOUR : 20;
+
+  if (data.getHours() < startHour) {
+    data.setHours(startHour, 0, 0, 0);
+  }
+  if (data.getHours() >= endHour) {
+    data.setDate(data.getDate() + 1);
+    data.setHours(startHour, 0, 0, 0);
+  }
+
+  const minimoFuturo = new Date(agora.getTime() + 5 * 60 * 1000);
+  if (data < minimoFuturo) {
+    return minimoFuturo;
+  }
+
+  return data;
+}
+
+function advanceToWeekday(date, targetDay) {
+  const currentDay = date.getDay();
+  let daysToAdd = (targetDay - currentDay + 7) % 7;
+  if (daysToAdd === 0) daysToAdd = 7;
+  date.setDate(date.getDate() + daysToAdd);
+}
+
+function formatScheduleConfirmationMessage(detection, scheduledDate, leadName) {
+  const nome = leadName ? `${leadName}, ` : "";
+
+  const diaSemana = scheduledDate.toLocaleDateString("pt-BR", { weekday: "long" });
+  const dataFormatada = scheduledDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const horaFormatada = scheduledDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  return `${nome}anotado! ✅ Vou retomar nosso contato ${diaSemana} (${dataFormatada}) às ${horaFormatada} como combinado. Qualquer coisa antes disso, é só me chamar! 😊`;
+}
+
+/* =========================
+   AGENDAR RECONTATO + PAUSAR CADÊNCIA
+========================= */
+
+async function scheduleClientCallback(from, lead, detection) {
+  try {
+    await connectMongo();
+
+    const scheduledDate = computeScheduledCallbackDate(detection);
+    const nome = getFirstName(lead?.nomeWhatsApp || lead?.nome || "");
+
+    // 1) Pausar cadência
+    clearTimers(from);
+    await saveLeadProfile(from, {
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null,
+      cadenciaPausadaPorCliente: true,
+      cadenciaPausadaEm: new Date(),
+      cadenciaPausadaMotivo: detection.motivacao || "solicitacao_prazo",
+      agendamentoRecontato: {
+        dataAgendada: scheduledDate,
+        periodo: detection.periodo,
+        horario: detection.horario,
+        mensagemOriginal: detection.originalText
+      }
+    });
+
+    // 2) Criar documento de agendamento
+    const agendamento = {
+      user: from,
+      lead_id: lead?._id || null,
+      nome: nome || "",
+      originalText: detection.originalText || "",
+      detection: {
+        periodo: detection.periodo,
+        horario: detection.horario,
+        motivacao: detection.motivacao,
+        patternMatched: detection.patternMatched
+      },
+      scheduledDate: scheduledDate,
+      status: "pendente",
+      tentativas: 0,
+      maxTentativas: 3,
+      createdAt: new Date(),
+      executedAt: null,
+      cancelledAt: null
+    };
+
+    await db.collection("scheduled_callbacks").insertOne(agendamento);
+
+    // 3) Enviar confirmação ao lead
+    const confirmationMsg = formatScheduleConfirmationMessage(
+      detection,
+      scheduledDate,
+      nome
+    );
+
+    await sendWhatsAppMessage(from, confirmationMsg);
+
+    // 4) Salvar confirmação no histórico
+    const history = await loadConversation(from);
+    history.push({
+      role: "user",
+      content: detection.originalText,
+      createdAt: new Date(),
+      origem: "lead"
+    });
+    history.push({
+      role: "assistant",
+      content: confirmationMsg,
+      createdAt: new Date(),
+      origem: "agendamento_confirmacao"
+    });
+    await saveConversation(from, history);
+
+    // 5) Audit
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("agendamento_recontato", "medium", from, {
+        evento: "recontato_agendado",
+        periodo: detection.periodo,
+        horario: detection.horario,
+        motivacao: detection.motivacao,
+        scheduledDate: scheduledDate.toISOString(),
+        mensagemOriginal: (detection.originalText || "").slice(0, 200)
+      });
+    }
+
+    console.log("📅 Recontato agendado com sucesso:", {
+      user: from,
+      nome,
+      scheduledDate: scheduledDate.toISOString(),
+      periodo: detection.periodo,
+      horario: detection.horario,
+      motivacao: detection.motivacao
+    });
+
+    return { success: true, scheduledDate, agendamento };
+
+  } catch (error) {
+    console.error("❌ Erro ao agendar recontato:", {
+      user: from,
+      error: error.message
+    });
+
+    return { success: false, error: error.message };
+  }
+}
+
+/* =========================
+   EXECUTAR RECONTATO AGENDADO
+   Chamada pelo cron job (Passo 5).
+========================= */
+
+async function executeScheduledCallback(agendamento) {
+  const from = agendamento.user;
+
+  try {
+    await connectMongo();
+
+    const lead = await loadLeadProfile(from);
+
+    // Se lead encerrado, cancelar
+    if (shouldStopBotByLifecycle(lead)) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_encerrado" } }
+      );
+      console.log("🔕 Recontato cancelado: lead em estado terminal.", { user: from });
+      return false;
+    }
+
+    // Se humano assumiu, cancelar
+    if (isHumanAssumedLead(lead || {})) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "humano_assumiu" } }
+      );
+      console.log("🔕 Recontato cancelado: humano assumiu.", { user: from });
+      return false;
+    }
+
+    // Se cadência não está mais pausada (lead já respondeu), cancelar
+    if (lead?.cadenciaPausadaPorCliente !== true) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_ja_respondeu" } }
+      );
+      console.log("🔕 Recontato cancelado: lead já retomou conversa.", { user: from });
+      return false;
+    }
+
+    // Tudo ok — enviar mensagem de recontato
+    const nome = getFirstName(lead?.nomeWhatsApp || lead?.nome || "");
+    const mensagem = nome
+      ? `${nome}, tudo bem? 😊 Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`
+      : `Olá! 😊 Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`;
+
+    await sendWhatsAppMessage(from, mensagem);
+
+    // Salvar no histórico
+    const history = await loadConversation(from);
+    history.push({
+      role: "assistant",
+      content: mensagem,
+      createdAt: new Date(),
+      origem: "recontato_agendado"
+    });
+    await saveConversation(from, history);
+
+    // Marcar como executado
+    await db.collection("scheduled_callbacks").updateOne(
+      { _id: agendamento._id },
+      { $set: { status: "executado", executedAt: new Date() } }
+    );
+
+    // Reativar cadência normal
+    await saveLeadProfile(from, {
+      cadenciaPausadaPorCliente: false,
+      cadenciaReativadaEm: new Date(),
+      agendamentoRecontato: null
+    });
+
+    // Agendar cadência normal caso lead não responda ao recontato
+    await scheduleLeadFollowups(from);
+
+    // Audit
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("agendamento_recontato", "medium", from, {
+        evento: "recontato_executado",
+        scheduledDate: agendamento.scheduledDate?.toISOString?.() || "",
+        executedAt: new Date().toISOString()
+      });
+    }
+
+    console.log("✅ Recontato agendado executado com sucesso:", {
+      user: from,
+      nome,
+      scheduledDate: agendamento.scheduledDate
+    });
+
+    return true;
+
+  } catch (error) {
+    console.error("❌ Erro ao executar recontato agendado:", {
+      user: from,
+      error: error.message
+    });
+
+    const tentativas = (agendamento.tentativas || 0) + 1;
+    if (tentativas >= (agendamento.maxTentativas || 3)) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "falhado", tentativas, ultimoErro: error.message } }
+      );
+
+      // Reativar cadência mesmo com falha
+      await saveLeadProfile(from, {
+        cadenciaPausadaPorCliente: false,
+        cadenciaReativadaEm: new Date(),
+        agendamentoRecontato: null
+      });
+      await scheduleLeadFollowups(from);
+    } else {
+      // Reagendar para daqui 1 hora
+      const novaData = new Date(Date.now() + 60 * 60 * 1000);
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { scheduledDate: novaData, tentativas, ultimoErro: error.message } }
+      );
+    }
+
+    return false;
+  }
+}
+
 function isBusinessTime() {
   const now = getBrazilNow();
   const day = now.getDay(); // 0 = domingo, 6 = sábado
@@ -21141,6 +21620,71 @@ async function backfillClassificacaoPerdimento() {
   }
 }
 
+/* =========================
+   CRON JOB DE RECONTATOS AGENDADOS
+   Roda a cada 60 segundos, verifica recontatos pendentes e executa.
+========================= */
+
+let scheduledCallbackCronEmExecucao = false;
+
+async function runScheduledCallbackCronTick() {
+  if (scheduledCallbackCronEmExecucao) return;
+  scheduledCallbackCronEmExecucao = true;
+
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+
+    const pendentes = await db.collection("scheduled_callbacks")
+      .find({
+        status: "pendente",
+        scheduledDate: { $lte: agora }
+      })
+      .limit(20)
+      .toArray();
+
+    if (pendentes.length === 0) return;
+
+    console.log(`📅 Cron de recontatos: ${pendentes.length} agendamento(s) pendente(s)`);
+
+    let executados = 0;
+    let cancelados = 0;
+    let erros = 0;
+
+    for (const agendamento of pendentes) {
+      try {
+        const sucesso = await executeScheduledCallback(agendamento);
+        if (sucesso) {
+          executados++;
+        } else {
+          cancelados++;
+        }
+      } catch (error) {
+        erros++;
+        console.error("Erro ao processar recontato agendado:", {
+          user: agendamento.user,
+          error: error.message
+        });
+      }
+    }
+
+    if (executados > 0 || cancelados > 0 || erros > 0) {
+      console.log("✅ Cron de recontatos concluído:", {
+        executados,
+        cancelados,
+        erros,
+        total: pendentes.length
+      });
+    }
+
+  } catch (error) {
+    console.error("❌ Erro fatal no cron de recontatos:", error.message);
+  } finally {
+    scheduledCallbackCronEmExecucao = false;
+  }
+}
+
 setTimeout(async () => {
   // Backfill da classificação de perdimento dos leads antigos
   await backfillClassificacaoPerdimento();
@@ -21148,6 +21692,12 @@ setTimeout(async () => {
   // Primeiro roda o bootstrap para leads existentes sem follow-up
   await bootstrapFollowupsParaLeadsExistentes();
   console.log("🚀 Iniciando cron de follow-ups (intervalo: 60s)");
+
+console.log("📅 Iniciando cron de recontatos agendados (intervalo: 60s)");
+  runScheduledCallbackCronTick().catch(error => {
+    console.error("Erro no primeiro tick do cron de recontatos:", error.message);
+  });
+   
   runFollowupCronTick().catch(error => {
     console.error("Erro no primeiro tick do cron:", error.message);
   });
@@ -21157,6 +21707,13 @@ setTimeout(async () => {
       console.error("Erro no tick periódico do cron:", error.message);
     });
   }, 60 * 1000);
+
+setInterval(() => {
+    runScheduledCallbackCronTick().catch(error => {
+      console.error("Erro no tick periódico do cron de recontatos:", error.message);
+    });
+  }, 60 * 1000);
+   
 }, 30 * 1000);
 
 /*
@@ -21467,6 +22024,29 @@ console.log("🔕 Follow-ups antigos cancelados por nova mensagem do lead:", {
   novaFollowupVersion: getState(from).followupVersion
 });
 
+     // 📅 Cancelar recontatos agendados se o lead voltou a conversar
+(async () => {
+  try {
+    const cancelResult = await db.collection("scheduled_callbacks").updateMany(
+      { user: from, status: "pendente" },
+      { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_mandou_mensagem" } }
+    );
+    if (cancelResult.modifiedCount > 0) {
+      console.log("📅 Recontato(s) agendado(s) cancelado(s) — lead voltou a conversar:", {
+        user: from,
+        cancelados: cancelResult.modifiedCount
+      });
+      await saveLeadProfile(from, {
+        cadenciaPausadaPorCliente: false,
+        cadenciaReativadaEm: new Date(),
+        agendamentoRecontato: null
+      });
+    }
+  } catch (cancelError) {
+    console.error("Erro ao cancelar recontatos agendados:", { user: from, error: cancelError.message });
+  }
+})();
+
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
 
 const leadEstavaMarcadoComoEncerrado =
@@ -21589,6 +22169,41 @@ if (isLikelyAutoReplyMessage(text)) {
   markMessageIdsAsProcessed([messageId]);
 
   return;
+}
+
+// 📅 DETECÇÃO DE SOLICITAÇÃO DE PRAZO/HORÁRIO
+// Se o lead pediu para ser contactado depois, pausa cadência e agenda recontato.
+// Roda ANTES do buffer porque a intenção de agendamento precisa ser tratada imediatamente.
+{
+  const scheduleDetection = detectScheduleRequest(text || message.text?.body || "");
+
+  if (scheduleDetection.detected) {
+    console.log("📅 Solicitação de prazo/horário detectada:", {
+      user: from,
+      periodo: scheduleDetection.periodo,
+      horario: scheduleDetection.horario,
+      motivacao: scheduleDetection.motivacao,
+      texto: (text || message.text?.body || "").slice(0, 100)
+    });
+
+    const leadParaAgendamento = await loadLeadProfile(from);
+
+    if (leadParaAgendamento) {
+      const resultado = await scheduleClientCallback(from, leadParaAgendamento, scheduleDetection);
+
+      if (resultado.success) {
+        console.log("✅ Recontato agendado. Webhook encerrado (não processa como mensagem normal):", {
+          user: from,
+          scheduledDate: resultado.scheduledDate?.toISOString?.() || ""
+        });
+
+        markMessageIdsAsProcessed([messageId].filter(Boolean));
+        return;
+      }
+    }
+
+    console.log("⚠️ Falha ao agendar recontato. Seguindo fluxo normal.", { user: from });
+  }
 }
      
 // 🔥 AGORA TEXTO E ÁUDIO PASSAM PELO MESMO BUFFER
