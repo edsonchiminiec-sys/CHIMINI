@@ -20923,14 +20923,25 @@ async function scheduleLeadFollowups(from) {
       return;
     }
 
+    /*
+      Quando o lead respondeu uma mensagem, o follow-up SEMPRE
+      recomeça do step 1 — porque o lead voltou a interagir e
+      a cadência deve reiniciar a contagem de inatividade.
+
+      A versão (followupVersionDb) é incrementada para invalidar
+      qualquer disparo do cron que estivesse no meio do caminho
+      com a versão antiga.
+
+      IMPORTANTE: o step volta para 1 aqui de forma INTENCIONAL,
+      mas isso só acontece porque esta função é chamada apenas
+      em finalizeHandledResponse com shouldScheduleFollowups=true,
+      ou seja, depois que a SDR de fato respondeu o lead.
+      O cron NUNCA chama esta função — ele usa sendAutomaticFollowupIfStillValid,
+      que avança o step por conta própria.
+    */
     const firstStep = FOLLOWUP_CONFIG[0];
     const nextDate = computeNextFollowupDate(firstStep);
 
-    /*
-      Incrementa a versão pra invalidar qualquer execução do cron
-      que estivesse no meio do caminho. Próximo tick do cron vai
-      reler os campos novos.
-    */
     const novaVersao = Number(lead?.followupVersionDb || 0) + 1;
 
     await saveLeadProfile(from, {
@@ -20941,12 +20952,13 @@ async function scheduleLeadFollowups(from) {
       followupAgendadoEm: new Date()
     });
 
-    console.log("⏱️ Follow-up agendado no banco (modelo persistente V2):", {
+    console.log("⏱️ Follow-up reagendado (lead respondeu, cadência reinicia do step 1):", {
       user: from,
       proximoFollowupEm: nextDate.toISOString(),
       step: 1,
       versao: novaVersao
     });
+     
   } catch (error) {
     console.error("Erro ao agendar follow-up no banco:", {
       user: from,
@@ -26157,10 +26169,8 @@ for (const key of fileKeys) {
   await sendFileOnce(from, key);
 }
 
-// 🔥 follow-up sempre ativo após resposta da IA
-await scheduleLeadFollowups(from);
-    markMessageIdsAsProcessed(bufferedMessageIds);
-
+markMessageIdsAsProcessed(bufferedMessageIds);
+     
 return;
   } catch (error) {
     if (messageId) {
