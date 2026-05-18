@@ -30481,10 +30481,31 @@ const statusVisual = (() => {
       <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
       <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
-     <td>${statusVisual}</td>
+    <td>${statusVisual}</td>
+      <td style="font-size:11px;">${(() => {
+        if (lead.status !== "perdido" && lead.statusDashboard !== "perdido") return '<span style="color:#d1d5db">·</span>';
+        const por = lead.encerradoPor || "";
+        const motivo = lead.motivoPerda || "";
+        const motivosLegiveis = {
+          "hostilidade_ou_pedido_parar": "hostilidade / pediu parar",
+          "rejeicao_total_apos_afiliado": "rejeitou tudo após Afiliado",
+          "despedida_apos_afiliado": "despediu após Afiliado",
+          "cadencia_completa_sem_resposta": "cadência completa s/ resposta"
+        };
+        const motivoTxt = motivosLegiveis[motivo] || motivo || "";
+        if (por === "ia") {
+          return '<span style="color:#7c3aed;font-weight:700;">🤖 IA</span>' +
+            (motivoTxt ? '<br><span style="color:#64748b;font-size:10px;">' + escapeHtml(motivoTxt) + '</span>' : '');
+        }
+        if (por === "humano") {
+          return '<span style="color:#ea580c;font-weight:700;">👤 Humano</span>';
+        }
+        return '<span style="color:#94a3b8;">—</span>';
+      })()}</td>
       
       <td class="actions">
         <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados</a>
+        
         <a class="btn whatsapp" href="/lead/${user}/whatsapp-atender${senhaQuery}">WhatsApp</a>
         <a class="btn btn-negociado" href="${baseStatusLink}/negociado${senhaQuery}" onclick="return confirm('Confirma marcar como NEGOCIADO?')">Negociado</a>
         <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}" onclick="return confirm('Confirma marcar como PERDIDO?')">Perder</a>
@@ -30514,8 +30535,8 @@ const statusVisual = (() => {
       const cfg = janelaConfig[janela];
       const corpoTabela = linhas.length > 0
         ? linhas.join("")
-        : `<tr><td colspan="15" style="text-align:center;padding:20px;color:#64748b;">Nenhum lead nesta janela.</td></tr>`;
-
+        : `<tr><td colspan="16" style="text-align:center;padding:20px;color:#64748b;">Nenhum lead nesta janela.</td></tr>`;
+       
       return `
         <div class="janela-bloco" data-janela="${janela}" style="display:${janela === 1 ? "block" : "none"};">
           <div style="padding:12px 16px;background:${cfg.cor}15;border-left:4px solid ${cfg.cor};border-radius:6px;margin-bottom:12px;">
@@ -30530,7 +30551,7 @@ const statusVisual = (() => {
                   <th>Nome</th><th>Telefone</th><th>Cidade</th><th>Estado</th>
                   <th>Atualizado</th><th>Prog</th><th>Benef</th><th>Estoq</th>
                   <th>Resp</th><th>Taxa<br>Inic.</th><th>Taxa<br>Final.</th>
-                  <th>Comp</th><th>Afil</th><th>Status</th><th>Ação</th>
+                  <th>Comp</th><th>Afil</th><th>Status</th><th>Encerrado<br>por</th><th>Ação</th>
                 </tr>
               </thead>
               <tbody>${corpoTabela}</tbody>
