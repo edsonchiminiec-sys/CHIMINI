@@ -21059,49 +21059,61 @@ async function scheduleLeadFollowups(from) {
     }
 
     /*
-      Quando o lead respondeu uma mensagem, o follow-up SEMPRE
-      recomeça do step 1 — porque o lead voltou a interagir e
-      a cadência deve reiniciar a contagem de inatividade.
+      Esta função é chamada depois que a SDR responde o lead.
+      Há dois cenários distintos:
 
-      A versão (followupVersionDb) é incrementada para invalidar
-      qualquer disparo do cron que estivesse no meio do caminho
-      com a versão antiga.
+      CENÁRIO A — O lead já estava numa cadência (followupStep >= 1)
+      e respondeu. Significa que o follow-up funcionou: o lead voltou
+      a conversar. A cadência deve ser CANCELADA, não resetada.
+      O fluxo normal de conversa assume. Se o lead ficar inativo de
+      novo, uma nova cadência será agendada do zero.
 
-      IMPORTANTE: o step volta para 1 aqui de forma INTENCIONAL,
-      mas isso só acontece porque esta função é chamada apenas
-      em finalizeHandledResponse com shouldScheduleFollowups=true,
-      ou seja, depois que a SDR de fato respondeu o lead.
-      O cron NUNCA chama esta função — ele usa sendAutomaticFollowupIfStillValid,
-      que avança o step por conta própria.
+      CENÁRIO B — O lead está em conversa ativa normal, sem cadência
+      pendente (followupStep = 0 ou sem proximoFollowupEm). Aqui sim
+      agendamos o step 1, porque a cadência ainda não existe — é só
+      a rede de segurança caso o lead pare de responder.
+
+      Isso elimina o bug de regressão de step ([1,2,1]) que acontecia
+      quando o lead respondia a mensagem de cadência e o sistema
+      resetava o contador para 1.
     */
-    const firstStep = FOLLOWUP_CONFIG[0];
-    const nextDate = computeNextFollowupDate(firstStep);
+    const stepAtual = Number(lead?.followupStep || 0);
+    const temCadenciaPendente =
+      stepAtual >= 1 && lead?.proximoFollowupEm != null;
 
     const novaVersao = Number(lead?.followupVersionDb || 0) + 1;
 
-    /*
-      Se o lead JÁ está numa cadência avançada (step 2+) e o último
-      follow-up foi enviado há menos de 10 minutos, NÃO reinicia para
-      step 1. Isso evita que a resposta do lead à própria mensagem de
-      cadência zere o contador e gere disparos repetidos de step 1.
-
-      O reinício do step 1 só acontece quando o lead realmente voltou
-      a engajar fora da janela de um follow-up recém-enviado.
-    */
-    const stepAtual = Number(lead?.followupStep || 0);
-    const ultimoFollowup = lead?.ultimoFollowupEm ? new Date(lead.ultimoFollowupEm).getTime() : 0;
-    const minutosDesdeUltimoFollowup = ultimoFollowup
-      ? (Date.now() - ultimoFollowup) / (1000 * 60)
-      : Infinity;
-
-    if (stepAtual >= 2 && minutosDesdeUltimoFollowup < 10) {
-      console.log("⏸️ Follow-up NÃO reiniciado: lead respondeu logo após follow-up de cadência.", {
-        user: from,
-        stepAtual,
-        minutosDesdeUltimoFollowup: Math.round(minutosDesdeUltimoFollowup)
+    // CENÁRIO A — lead respondeu durante uma cadência ativa: CANCELA
+    if (temCadenciaPendente) {
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null,
+        followupVersionDb: novaVersao,
+        followupCanceladoEm: new Date(),
+        followupCanceladoMotivo: "lead_respondeu_durante_cadencia"
       });
+
+      console.log("✅ Cadência cancelada: lead respondeu e voltou a conversar.", {
+        user: from,
+        stepQueEstava: stepAtual,
+        versao: novaVersao
+      });
+
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("ciclo_followup", "low", from, {
+          evento: "cadencia_cancelada",
+          motivo: "lead_respondeu_durante_cadencia",
+          stepQueEstava: stepAtual
+        });
+      }
+
       return;
     }
+
+    // CENÁRIO B — sem cadência pendente: agenda o step 1 como rede de segurança
+    const firstStep = FOLLOWUP_CONFIG[0];
+    const nextDate = computeNextFollowupDate(firstStep);
 
     await saveLeadProfile(from, {
       proximoFollowupEm: nextDate,
@@ -21110,12 +21122,10 @@ async function scheduleLeadFollowups(from) {
       followupVersionDb: novaVersao,
       followupAgendadoEm: new Date()
     });
-     
 
-    console.log("⏱️ Follow-up reagendado (lead respondeu, cadência reinicia do step 1):", {
+    console.log("⏱️ Follow-up step 1 agendado (rede de segurança):", {
       user: from,
       proximoFollowupEm: nextDate.toISOString(),
-      step: 1,
       versao: novaVersao
     });
      
