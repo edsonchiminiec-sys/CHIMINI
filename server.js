@@ -30331,11 +30331,72 @@ const kpiCardsHtml = [
   </div>
 `).join("");
 
+   /*
+      Classifica cada lead em uma das 5 janelas de gestão:
+      1 = IA gerindo sozinha (humano não precisa agir)
+      2 = Humano precisa assumir (pediu humano OU dados completos p/ CRM)
+      3 = Humano já atendendo (bot bloqueado)
+      4 = Perdidos
+      5 = Fechados
+    */
+    function classificarJanelaLead(lead) {
+      const status = lead.status || lead.statusDashboard || "";
+
+      // Janela 5 — Fechados
+      if (status === "fechado" || lead.statusDashboard === "fechado" || lead.statusDashboard === "negociado") {
+        return 5;
+      }
+
+      // Janela 4 — Perdidos
+      if (status === "perdido" || lead.statusDashboard === "perdido") {
+        return 4;
+      }
+
+      // Janela 3 — Humano já atendendo
+      if (
+        lead.botBloqueadoPorHumano === true ||
+        lead.humanoAssumiu === true ||
+        lead.atendimentoHumanoAtivo === true ||
+        lead.statusOperacional === "em_atendimento" ||
+        status === "em_atendimento"
+      ) {
+        return 3;
+      }
+
+      // Janela 2 — Humano precisa assumir
+      // Critério A: lead pediu para falar com humano
+      const pediuHumano =
+        lead.leadPediuHumano === true ||
+        lead.solicitouAtendimentoHumano === true ||
+        lead.necessitaAtencaoHumanaDashboard === true;
+
+      // Critério B: dados completos, pronto para CRM
+      const dadosCompletos = Boolean(
+        lead.nome &&
+        lead.cpf &&
+        (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+        lead.cidade &&
+        lead.estado
+      );
+
+      if (pediuHumano || dadosCompletos) {
+        return 2;
+      }
+
+      // Janela 1 — IA gerindo sozinha (todo o resto)
+      return 1;
+    }
+
+    const leadsComJanela = leads.map(lead => ({
+      lead: lead,
+      janela: classificarJanelaLead(lead)
+    }));
+
     const rows = leads.map(lead => {
   const phone = lead.telefoneWhatsApp || lead.telefone || lead.user || "";
   const waLink = phone ? `https://wa.me/${phone}` : "#";
   const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
-
+       
   const user = encodeURIComponent(lead.user || phone);
   const baseStatusLink = `/lead/${user}/status`;
 
@@ -30425,9 +30486,89 @@ const statusVisual = (() => {
       
     </tr>
   `;
-}).join("");
+});
+
+    // Agrupar as linhas por janela
+    const rowsPorJanela = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+    leads.forEach((lead, idx) => {
+      const janela = classificarJanelaLead(lead);
+      rowsPorJanela[janela].push(rows[idx]);
+    });
+
+    const janelaConfig = {
+      1: { titulo: "🤖 IA gerindo sozinha", desc: "A IA está conduzindo. Você não precisa agir agora.", cor: "#16a34a" },
+      2: { titulo: "🙋 Humano precisa assumir", desc: "Lead pediu atendimento ou tem dados completos prontos para o CRM.", cor: "#ea580c" },
+      3: { titulo: "💬 Humano atendendo", desc: "Você está conversando. A SDR IA não fala mais com estes leads.", cor: "#2563eb" },
+      4: { titulo: "❌ Perdidos", desc: "Leads encerrados sem conversão.", cor: "#dc2626" },
+      5: { titulo: "✅ Fechados", desc: "Negócios fechados.", cor: "#15803d" }
+    };
+
+    function montarTabelaJanela(janela) {
+      const linhas = rowsPorJanela[janela];
+      const cfg = janelaConfig[janela];
+      const corpoTabela = linhas.length > 0
+        ? linhas.join("")
+        : `<tr><td colspan="15" style="text-align:center;padding:20px;color:#64748b;">Nenhum lead nesta janela.</td></tr>`;
+
+      return `
+        <div class="janela-bloco" data-janela="${janela}" style="display:${janela === 1 ? "block" : "none"};">
+          <div style="padding:12px 16px;background:${cfg.cor}15;border-left:4px solid ${cfg.cor};border-radius:6px;margin-bottom:12px;">
+            <strong style="color:${cfg.cor};font-size:15px;">${cfg.titulo}</strong>
+            <span style="color:#64748b;font-size:13px;margin-left:8px;">${cfg.desc}</span>
+            <span style="float:right;font-weight:700;color:${cfg.cor};">${linhas.length} lead(s)</span>
+          </div>
+          <div class="leads-table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th><th>Telefone</th><th>Cidade</th><th>Estado</th>
+                  <th>Atualizado</th><th>Prog</th><th>Benef</th><th>Estoq</th>
+                  <th>Resp</th><th>Taxa<br>Inic.</th><th>Taxa<br>Final.</th>
+                  <th>Comp</th><th>Afil</th><th>Status</th><th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>${corpoTabela}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    const janelasHtml = `
+      <div class="janelas-abas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+        ${[1,2,3,4,5].map(j => {
+          const cfg = janelaConfig[j];
+          const qtd = rowsPorJanela[j].length;
+          return `<button type="button" class="janela-aba" data-aba="${j}"
+            style="cursor:pointer;padding:10px 14px;border-radius:8px;border:2px solid ${cfg.cor};
+            background:${j === 1 ? cfg.cor : "transparent"};color:${j === 1 ? "#fff" : cfg.cor};
+            font-weight:700;font-size:13px;"
+            onclick="trocarJanela(${j})">${cfg.titulo} (${qtd})</button>`;
+        }).join("")}
+      </div>
+      ${[1,2,3,4,5].map(j => montarTabelaJanela(j)).join("")}
+      <script>
+        function trocarJanela(janela) {
+          document.querySelectorAll('.janela-bloco').forEach(function(b) {
+            b.style.display = (Number(b.dataset.janela) === janela) ? 'block' : 'none';
+          });
+          document.querySelectorAll('.janela-aba').forEach(function(a) {
+            var j = Number(a.dataset.aba);
+            var cores = {1:'#16a34a',2:'#ea580c',3:'#2563eb',4:'#dc2626',5:'#15803d'};
+            if (j === janela) {
+              a.style.background = cores[j];
+              a.style.color = '#fff';
+            } else {
+              a.style.background = 'transparent';
+              a.style.color = cores[j];
+            }
+          });
+        }
+      </script>
+    `;
 
     res.send(`
+    
       <!DOCTYPE html>
       <html lang="pt-BR">
       <head>
