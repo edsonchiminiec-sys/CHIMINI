@@ -4339,6 +4339,98 @@ function buildHomologadoIndicationBenefitGuidance({
   };
 }
 
+/* =========================================================
+   RECUPERAÇÃO DE DADOS CADASTRAIS DO HISTÓRICO
+   Quando um lead em coleta está com campos vazios mas já tem
+   histórico de conversa, este GPT varre as mensagens trocadas,
+   identifica os dados (nome, CPF, telefone, cidade, estado) que
+   o lead JÁ informou e CONFIRMOU, e devolve esses valores para
+   o backend preencher o perfil automaticamente.
+   Evita pedir de novo dados que o lead já passou.
+========================================================= */
+async function recuperarDadosCadastraisDoHistorico({ history = [], lead = {} } = {}) {
+  const vazio = { encontrou: false, nome: "", cpf: "", telefone: "", cidade: "", estado: "" };
+
+  try {
+    const historicoTexto = (Array.isArray(history) ? history : [])
+      .map(m => `${m.role === "assistant" ? "SDR" : "LEAD"}: ${String(m.content || "").trim()}`)
+      .filter(linha => linha.length > 6)
+      .join("\n");
+
+    if (historicoTexto.length < 40) {
+      return vazio;
+    }
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Você é um extrator interno da IQG.
+
+Sua tarefa: ler o histórico de uma conversa de WhatsApp e identificar quais dados cadastrais do LEAD já foram informados por ele e confirmados na conversa.
+
+Os dados procurados são: nome completo, CPF, telefone, cidade, estado.
+
+REGRAS:
+- Só extraia um dado se ele estiver CLARAMENTE presente no histórico, dito pelo LEAD ou exibido pela SDR num resumo que o LEAD confirmou.
+- Um dado é considerado confirmado se a SDR mostrou um resumo (ex: "Nome: ... CPF: ... Esses dados estão corretos?") e o LEAD respondeu de forma positiva ("sim", "correto", "isso", "pode seguir").
+- Também vale se o LEAD digitou o dado diretamente e a SDR confirmou recebimento.
+- CPF: devolva só os números (11 dígitos) ou no formato 000.000.000-00, como apareceu.
+- Telefone: devolva como apareceu, com DDD.
+- Estado: devolva a sigla de 2 letras (ex: RS, SP) se possível.
+- Se um dado NÃO aparece claramente no histórico, deixe o campo como "" (string vazia). NUNCA invente.
+- "encontrou" deve ser true se você conseguiu extrair pelo menos um dos cinco dados; false se não achou nenhum.
+
+Responda SOMENTE um JSON neste formato, sem texto extra:
+{
+  "encontrou": false,
+  "nome": "",
+  "cpf": "",
+  "telefone": "",
+  "cidade": "",
+  "estado": ""
+}`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ historicoDaConversa: historicoTexto })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao recuperar dados do histórico:", data);
+      return vazio;
+    }
+
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
+
+    return {
+      encontrou: parsed?.encontrou === true,
+      nome: typeof parsed?.nome === "string" ? parsed.nome.trim() : "",
+      cpf: typeof parsed?.cpf === "string" ? parsed.cpf.trim() : "",
+      telefone: typeof parsed?.telefone === "string" ? parsed.telefone.trim() : "",
+      cidade: typeof parsed?.cidade === "string" ? parsed.cidade.trim() : "",
+      estado: typeof parsed?.estado === "string" ? parsed.estado.trim() : ""
+    };
+  } catch (erro) {
+    console.error("Falha na recuperação de dados do histórico:", erro.message);
+    return vazio;
+  }
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -22646,6 +22738,97 @@ const podeTratarCorrecaoDadosAgora =
 const explicitCorrection = podeTratarCorrecaoDadosAgora
   ? extractExplicitCorrection(text)
   : {};
+
+/*
+  RECUPERAÇÃO AUTOMÁTICA DE DADOS DO HISTÓRICO.
+  Antes de tentar coletar/pedir dados, verifica: o lead está em coleta,
+  com campos obrigatórios vazios, mas já tem histórico de conversa?
+  Se sim, varre o histórico com o GPT para ver se os dados já foram
+  informados e confirmados antes. Se foram, preenche o perfil — assim
+  o sistema não pede de novo algo que o lead já passou.
+  Roda no máximo uma vez por lead (flag dadosRecuperadosDoHistorico).
+*/
+{
+  const fasesColetaParaRecuperacao = [
+    "coletando_dados", "dados_parciais", "aguardando_dados",
+    "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+    "corrigir_dado", "qualificando"
+  ];
+
+  const leadEmColetaParaRecuperacao =
+    fasesColetaParaRecuperacao.includes(currentLead?.faseQualificacao) ||
+    fasesColetaParaRecuperacao.includes(currentLead?.status) ||
+    currentLead?.faseFunil === "coleta_dados";
+
+  const camposObrigatoriosVazios = ["nome", "cpf", "telefone", "cidade", "estado"]
+    .filter(campo => !String(currentLead?.[campo] || "").trim());
+
+  const temHistoricoSuficiente = Array.isArray(history) && history.length >= 4;
+
+  const jaTentouRecuperar = currentLead?.dadosRecuperadosDoHistorico === true;
+
+  if (
+    leadEmColetaParaRecuperacao &&
+    camposObrigatoriosVazios.length > 0 &&
+    temHistoricoSuficiente &&
+    !jaTentouRecuperar
+  ) {
+    console.log("🔎 Verificando histórico para recuperar dados cadastrais já confirmados:", {
+      user: from,
+      camposVazios: camposObrigatoriosVazios,
+      tamanhoHistorico: history.length
+    });
+
+    const dadosDoHistorico = await recuperarDadosCadastraisDoHistorico({
+      history,
+      lead: currentLead || {}
+    });
+
+    if (dadosDoHistorico.encontrou) {
+      // Monta só os campos que estavam vazios E foram encontrados no histórico
+      const camposParaPreencher = {};
+      for (const campo of ["nome", "cpf", "telefone", "cidade", "estado"]) {
+        const valorAtual = String(currentLead?.[campo] || "").trim();
+        const valorHistorico = String(dadosDoHistorico[campo] || "").trim();
+        if (!valorAtual && valorHistorico) {
+          camposParaPreencher[campo] = valorHistorico;
+        }
+      }
+
+      if (Object.keys(camposParaPreencher).length > 0) {
+        await saveLeadProfile(from, {
+          ...camposParaPreencher,
+          dadosRecuperadosDoHistorico: true,
+          dadosRecuperadosDoHistoricoEm: new Date()
+        });
+        currentLead = await loadLeadProfile(from);
+
+        console.log("✅ Dados recuperados do histórico e preenchidos no perfil:", {
+          user: from,
+          camposPreenchidos: Object.keys(camposParaPreencher)
+        });
+
+        if (typeof auditSystemEvent === "function") {
+          await auditSystemEvent("decisao_backend", "medium", from, {
+            evento: "dados_recuperados_do_historico",
+            camposPreenchidos: Object.keys(camposParaPreencher)
+          });
+        }
+      } else {
+        // Encontrou no histórico mas o perfil já tinha tudo — só marca para não repetir
+        await saveLeadProfile(from, { dadosRecuperadosDoHistorico: true });
+        currentLead = await loadLeadProfile(from);
+      }
+    } else {
+      // Não achou nada no histórico — marca para não ficar varrendo a cada mensagem
+      await saveLeadProfile(from, { dadosRecuperadosDoHistorico: true });
+      currentLead = await loadLeadProfile(from);
+      console.log("🔎 Histórico verificado — nenhum dado cadastral confirmado encontrado:", {
+        user: from
+      });
+    }
+  }
+}
      
 const fasesQuePermitemExtracao = [
   "coletando_dados",
