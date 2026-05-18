@@ -24035,11 +24035,37 @@ if (devePularGptsNaColeta) {
           scheduleDetectionSemantica
         );
 
-        if (resultadoAgendamentoSemantico.success) {
+       if (resultadoAgendamentoSemantico.success) {
           console.log("✅ Recontato agendado via detecção semântica:", {
             user: from,
             scheduledDate: resultadoAgendamentoSemantico.scheduledDate?.toISOString?.() || ""
           });
+
+          /*
+            ORIENTAÇÃO DECISIVA DE AGENDAMENTO.
+            Quando o lead pede para agendar/conversar depois, várias outras
+            orientações do backend (Política do Turno, coleta liberada, etc)
+            podem mandar "iniciar coleta agora". Isso gera contradição e a SDR
+            improvisa. Esta orientação entra como prioridade máxima e diz
+            explicitamente ao Pré-SDR que a coleta fica suspensa neste turno.
+          */
+          backendStrategicGuidance.unshift({
+            tipo: "agendamento_decisivo",
+            prioridade: "critica",
+            motivo: "Lead pediu para conversar/ser contatado em outro momento. O recontato já foi agendado pelo backend.",
+            orientacaoParaPreSdr: [
+              "PRIORIDADE ABSOLUTA DESTE TURNO — O LEAD PEDIU PARA AGENDAR.",
+              "O recontato JÁ foi agendado pelo sistema. A única tarefa da SDR agora é confirmar o agendamento.",
+              "NÃO iniciar coleta de dados. NÃO pedir nome, CPF, telefone, cidade ou estado.",
+              "NÃO retomar pré-análise. NÃO repetir taxa, benefícios, estoque ou responsabilidades.",
+              "Todas as outras orientações sobre 'iniciar coleta' ou 'pedir dados' ficam SUSPENSAS até o recontato acontecer.",
+              "A resposta deve ser curta, cordial e em português: confirmar que a conversa fica para o horário combinado e se colocar à disposição.",
+              "Exemplo de tom: \"Combinado! Te chamo no horário que combinamos. Qualquer coisa antes disso, é só me chamar. 😊\""
+            ].join("\n")
+          });
+
+          // Sinaliza ao restante do fluxo que a coleta está suspensa neste turno
+          dataFlowQuestionAlreadyGuided = true;
         } else {
           console.log("⚠️ Falha ao agendar recontato (semântico). Seguindo fluxo normal.", {
             user: from
@@ -31847,6 +31873,79 @@ const statusVisual = (() => {
       `;
     }
 
+/*
+      CAIXA DE RECONTATOS AGENDADOS.
+      Lista os recontatos pendentes (collection scheduled_callbacks) que a
+      IA vai disparar automaticamente. É informativa: o operador humano só
+      acompanha — quem dispara é o cron de recontatos.
+    */
+    let recontatosHtml = "";
+    try {
+      const recontatosPendentes = await db.collection("scheduled_callbacks")
+        .find({ status: "pendente" })
+        .sort({ scheduledDate: 1 })
+        .limit(50)
+        .toArray();
+
+      if (recontatosPendentes.length > 0) {
+        const agoraRec = new Date(
+          new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+        );
+        const fimDeHoje = new Date(agoraRec);
+        fimDeHoje.setHours(23, 59, 59, 999);
+
+        const linhasRec = recontatosPendentes.map(rec => {
+          const dataRec = rec.scheduledDate ? new Date(rec.scheduledDate) : null;
+          const ehHoje = dataRec && dataRec.getTime() <= fimDeHoje.getTime();
+          const ehAtrasado = dataRec && dataRec.getTime() < agoraRec.getTime();
+
+          const dataTxt = dataRec
+            ? dataRec.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })
+            : "-";
+          const horaTxt = dataRec
+            ? dataRec.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+            : "-";
+
+          const telRec = rec.user || "";
+          const waLinkRec = telRec ? `https://wa.me/${telRec}` : "#";
+
+          let tagTempo = "";
+          if (ehAtrasado) {
+            tagTempo = `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">atrasado</span>`;
+          } else if (ehHoje) {
+            tagTempo = `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">hoje</span>`;
+          }
+
+          return `
+            <tr style="${ehHoje ? "background:#fffbeb;" : ""}">
+              <td style="padding:8px 12px;font-weight:600;">📅 ${dataTxt} ${horaTxt} ${tagTempo}</td>
+              <td style="padding:8px 12px;">${escapeHtml(rec.nome || "Sem nome")}</td>
+              <td style="padding:8px 12px;color:#64748b;">${escapeHtml(telRec || "-")}</td>
+              <td style="padding:8px 12px;">
+                <a href="${waLinkRec}" target="_blank" style="color:#16a34a;font-weight:700;text-decoration:none;">WhatsApp →</a>
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+        recontatosHtml = `
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:20px;overflow:hidden;">
+            <div style="padding:12px 16px;background:#eff6ff;border-left:4px solid #2563eb;">
+              <strong style="color:#1e40af;font-size:15px;">📅 Recontatos Agendados</strong>
+              <span style="color:#64748b;font-size:13px;margin-left:8px;">A IA vai retomar o contato automaticamente nos horários abaixo.</span>
+              <span style="float:right;font-weight:700;color:#1e40af;">${recontatosPendentes.length} agendado(s)</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <tbody>${linhasRec}</tbody>
+            </table>
+          </div>
+        `;
+      }
+    } catch (erroRecontatos) {
+      console.error("Erro ao carregar recontatos agendados no dashboard:", erroRecontatos.message);
+      recontatosHtml = "";
+    }
+     
     const janelasHtml = `
       <div class="janelas-abas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
         ${[1,2,3,4,5].map(j => {
@@ -33259,6 +33358,8 @@ tr:hover td {
           <div class="print-info">
             ${leads.length} lead(s) no total, organizados em 5 janelas de gestão.
           </div>
+
+          ${recontatosHtml}
 
           ${janelasHtml}
           
