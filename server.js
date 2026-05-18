@@ -19979,22 +19979,62 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
       auditTraceId
     });
 
-    // Rodar a SDR com orientação do Pré-SDR
-    const sdrResult = await runSdrAssistant({
-      lead: lead,
-      history,
-      lastUserText: "[CADÊNCIA AUTOMÁTICA — lead inativo]",
-      consultantAdvice: preSdrResult,
-      backendStrategicGuidance: [{
-        tipo: "cadencia_automatica",
-        prioridade: "alta",
-        orientacaoParaPreSdr: contextoCadencia
-      }],
-      auditTraceId
-    });
+    // Gerar a mensagem da SDR chamando a OpenAI diretamente.
+    // Usa o SYSTEM_PROMPT principal da SDR + a orientação do Pré-SDR.
+    const orientacaoPreSdr = [
+      "CONTEXTO: esta é uma mensagem de CADÊNCIA AUTOMÁTICA de reengajamento.",
+      "O lead parou de responder. Gere UMA mensagem curta de retomada.",
+      "",
+      contextoCadencia,
+      "",
+      "ORIENTAÇÃO DO CONSULTOR PRÉ-SDR:",
+      `Estratégia: ${preSdrResult?.estrategiaRecomendada || "manter_nutricao"}`,
+      `Próxima ação: ${preSdrResult?.proximaMelhorAcao || "-"}`,
+      `Abordagem: ${preSdrResult?.abordagemSugerida || "-"}`,
+      `Argumento principal: ${preSdrResult?.argumentoPrincipal || "-"}`,
+      `Cuidado principal: ${preSdrResult?.cuidadoPrincipal || "-"}`,
+      "",
+      "Responda SOMENTE com a mensagem final que será enviada ao lead no WhatsApp.",
+      "Sem aspas, sem prefixo, sem explicação. Apenas a mensagem."
+    ].join("\n");
 
-    const mensagem = sdrResult?.resposta || sdrResult?.content || "";
+    const historyParaSdr = (Array.isArray(history) ? history : [])
+      .slice(-12)
+      .map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content || "")
+      }));
 
+    let mensagem = "";
+
+    try {
+      const sdrResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+          temperature: 0.5,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: orientacaoPreSdr },
+            ...historyParaSdr,
+            {
+              role: "user",
+              content: "[GERAR MENSAGEM DE CADÊNCIA — o lead está inativo, retome a conversa conforme as orientações acima]"
+            }
+          ]
+        })
+      });
+
+      const sdrData = await sdrResponse.json();
+      mensagem = sdrData?.choices?.[0]?.message?.content || "";
+    } catch (sdrError) {
+      console.error("Erro ao chamar SDR para cadência:", sdrError.message);
+      return null;
+    }
     if (!mensagem || !String(mensagem).trim()) {
       console.log("⚠️ GPTs não geraram mensagem de cadência. Usando fallback.", { user: from, step });
       return null; // vai cair no fallback hardcoded
