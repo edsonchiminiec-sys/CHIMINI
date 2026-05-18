@@ -11641,6 +11641,48 @@ function isInvalidLooseNameCandidate(value = "") {
     return true;
   }
 
+  /*
+    CAMADA DE PALAVRAS-QUE-NÃO-SÃO-NOME.
+    Em vez de listar frase por frase (lista infinita), verificamos se o
+    candidato contém alguma palavra que JAMAIS aparece num nome próprio:
+    verbos, saudações, despedidas, advérbios de tempo, termos de conversa.
+    Se contiver qualquer uma, não é nome — é uma frase.
+    Cobre "Obrigado até lá então", "vamos conversar amanhã", etc.
+  */
+  const palavrasQueNuncaSaoNome = [
+    "obrigado", "obrigada", "obg", "vlw", "valeu", "agradeco", "agradecido",
+    "ate", "entao", "la", "aqui", "ali", "oi", "ola", "alo", "eai", "eae",
+    "bom", "dia", "boa", "tarde", "noite", "tudo", "bem", "blz", "beleza",
+    "sim", "nao", "ok", "okay", "certo", "errado", "isso", "aquilo", "esse",
+    "quero", "queria", "quer", "queremos", "vamos", "vou", "vai", "vamo",
+    "pode", "podemos", "posso", "consigo", "conseguimos", "consegue",
+    "passar", "passo", "agendar", "agenda", "marcar", "marca", "remarcar",
+    "conversar", "conversa", "falar", "falo", "continuar", "seguir",
+    "retomar", "enviar", "envio", "mandar", "mando", "ligar", "ligo",
+    "amanha", "depois", "hoje", "agora", "cedo", "antes", "logo",
+    "cpf", "telefone", "celular", "cadastro", "cadastrar", "dados", "dado",
+    "atendente", "humano", "pessoa", "consultor", "vendedor", "gerente",
+    "tchau", "desculpa", "desculpe", "favor", "gostaria", "preciso",
+    "tenho", "tem", "sou", "esta", "estou", "fazer", "faco", "ver",
+    "para", "pra", "pro", "com", "sem", "mas", "que", "como", "quando",
+    "verifique", "verificar", "verifica", "checa", "checar", "confere",
+    "combinado", "fechado", "show", "legal", "entendi", "entendeu"
+  ];
+
+  const palavrasDoCandidato = normalized.split(" ").filter(Boolean);
+  const temPalavraQueNaoEhNome = palavrasDoCandidato.some(palavra =>
+    palavrasQueNuncaSaoNome.includes(palavra)
+  );
+
+  if (temPalavraQueNaoEhNome) {
+    return true;
+  }
+
+  // Se o texto original termina com "?", é pergunta, não nome
+  if (raw.trim().endsWith("?")) {
+    return true;
+  }
+
   const words = normalized.split(" ").filter(Boolean);
 
 if (words.length < 2) {
@@ -27585,8 +27627,34 @@ if (
     respostaLowerConfirm.includes("pode confirmar?") ||
     respostaLowerConfirm.includes("confirma?");
 
-  if (gptPareceuConfirmar && !gptReconfirmou) {
-    // GPT aceitou o dado — salvar confirmação no backend
+ /*
+    TRAVA DE SEGURANÇA — não confirmar campo por engano.
+    O detector acima olha a RESPOSTA da SDR ("entendi", "perfeito") para
+    adivinhar confirmação. Isso é frágil: a SDR pode dizer "Entendi" como
+    saudação numa mensagem em que o lead NEGOU o dado.
+    Antes de salvar, verificamos o que IMPORTA:
+    1) o lead não está corrigindo/negando o dado;
+    2) o valor pendente é válido para o campo.
+  */
+  const leadNegouOuCorrigiu =
+    semanticIntent?.dataCorrectionIntent === true ||
+    isNegativeConfirmation(text) ||
+    /\b(nao|não)\b.*\b(correto|certo|esse|essa|isso)\b/i.test(text || "") ||
+    /\b(errado|errada|incorreto|incorreta|verifique|verificar|corrig)\b/i.test(text || "");
+
+  const valorPendenteEhValido = (() => {
+    const campoP = currentLead.campoPendente;
+    const valorP = currentLead.valorPendente;
+    if (!campoP || !valorP) return false;
+    if (campoP === "nome") {
+      return !isInvalidLooseNameCandidate(valorP);
+    }
+    const validacao = validateLeadData({ [campoP]: valorP });
+    return validacao.isValid === true;
+  })();
+
+  if (gptPareceuConfirmar && !gptReconfirmou && !leadNegouOuCorrigiu && valorPendenteEhValido) {
+    // GPT aceitou o dado E o lead não negou E o valor é válido — salvar
     const campoConfirmado = currentLead.campoPendente;
     const valorConfirmado = currentLead.valorPendente;
 
