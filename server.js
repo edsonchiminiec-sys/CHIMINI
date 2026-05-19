@@ -21036,6 +21036,69 @@ async function flagHotLeadForHumanHandoff(from) {
   }
 }
 
+const FOLLOWUP_STEP_MESSAGES = {
+  programa: {
+    1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
+    2: "um ponto do Programa que costuma fazer diferença: você começa com o lote de produtos da IQG em comodato, sem precisar comprar estoque. Quer que eu te explique como funciona?",
+    3: "uma dúvida que costuma aparecer nessa fase é se o Programa exige experiência prévia com vendas. Não exige — a IQG oferece treinamento e acompanhamento desde o começo. Posso te explicar melhor?",
+    4: "se o Programa fizer sentido pra você, o próximo passo é conhecer os benefícios que a IQG oferece a quem é Parceiro Homologado. Quer que eu te apresente?"
+  },
+  beneficios: {
+    1: "ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?",
+    2: "um ponto importante: o suporte da IQG é contínuo — você tem acompanhamento durante toda a sua atuação como Parceiro, não só no início. Quer saber mais sobre como funciona?",
+    3: "uma dúvida comum nessa fase é se vale a pena sem já ter uma carteira de clientes. O treinamento da IQG cobre justamente como construir isso do zero. Quer que eu te explique?",
+    4: "se os benefícios estão fazendo sentido pra você, o próximo passo é entender como funciona o lote de produtos em comodato. Quer que eu te explique?"
+  },
+  estoque: {
+    1: "ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?",
+    2: "sobre o comodato: você recebe o lote da IQG pra trabalhar sem desembolsar pra comprar estoque. Isso reduz bastante a barreira de começar. Como você vê esse modelo?",
+    3: "uma dúvida comum sobre o comodato é o que acontece se o produto não girar como esperado. A IQG faz acompanhamento e ajuda no ajuste da operação — você não fica sozinho com estoque parado. Quer entender melhor?",
+    4: "se o modelo de comodato fizer sentido pra você, o próximo passo é conhecer como funciona a atuação como Parceiro no dia a dia. Quer seguir?"
+  },
+  responsabilidades: {
+    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    2: "sobre as responsabilidades do Parceiro: a IQG estrutura cada etapa pra que você atue com clareza — mesmo quem nunca trabalhou nesse modelo consegue se adaptar. Como você vê esse formato?",
+    3: "uma dúvida frequente nessa etapa é como a rotina de Parceiro se encaixa no dia a dia. Posso te explicar como outros parceiros organizam isso na prática. Quer conversar sobre?",
+    4: "se a forma de atuação fizer sentido pra você, o próximo passo é falar sobre o investimento pra entrar no Programa. Quer que eu te apresente?"
+  },
+  taxaNaoAlinhada: {
+    1: "pensando no que conversamos sobre o investimento, faz sentido eu te ajudar a avaliar se o modelo de Parceiro Homologado se encaixa para você agora?",
+    2: "sobre o investimento que vimos: ele cobre o pacote completo — lote em comodato, treinamento, suporte contínuo e acompanhamento da IQG. Não é uma taxa solta, é a estrutura toda. Como você vê?",
+    3: "uma dúvida frequente nessa etapa é sobre a forma de pagamento. O investimento pode ser parcelado em até 10x, o que ajuda a caber no seu momento. Quer que eu te passe as condições?",
+    4: "se o investimento fizer sentido pra você, o próximo passo é a gente confirmar se faz sentido seguir adiante. Quer conversar sobre isso?"
+  },
+  compromisso: {
+    1: "pelo que conversamos, você já viu todos os pontos do Parceiro Homologado IQG. Como você se sente em relação a seguir adiante?",
+    2: "você já passou por todas as etapas — programa, benefícios, comodato, atuação e investimento. O que falta agora é só o passo final pra você entrar como Parceiro. Quer seguir?",
+    3: "é normal pensar bem antes do passo final. Se ficou algum ponto que ainda te segura, me conta — posso esclarecer pra você decidir com tranquilidade.",
+    4: "se você quiser seguir adiante, o próximo passo é o pré-cadastro pra entrar no Programa. Posso te orientar?"
+  },
+  taxaERespExplicadas: {
+    1: "pelo que conversamos, você já entendeu a estrutura do projeto. Quer seguir para o pré-cadastro do Parceiro Homologado?",
+    2: "como já passamos pelos principais pontos, o próximo passo é o pré-cadastro — rápido, serve pra alinhar seu perfil, e a equipe IQG segue contigo a partir dele. Posso encaminhar?",
+    3: "uma dúvida que costuma surgir aqui é se o pré-cadastro compromete em algo. Não compromete — é só uma etapa de avaliação de perfil. Quer seguir por aí?",
+    4: "se quiser dar o próximo passo agora, é simples: começamos pelo pré-cadastro. Posso te orientar?"
+  },
+  faltaResponsabilidades: {
+    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    2: "sobre a atuação como Parceiro Homologado: a IQG estrutura cada etapa pra que você atue com clareza, mesmo sem experiência prévia. Faz sentido pra você esse formato?",
+    3: "uma dúvida frequente sobre a atuação é como a rotina se encaixa no dia a dia. Posso te explicar como isso funciona na prática. Quer conversar sobre?",
+    4: "se quiser, posso te explicar agora como funciona a atuação como Parceiro — é o que falta pra gente seguir. Quer ver?"
+  },
+  fallbackNeutro: {
+    1: "ficou alguma dúvida sobre o que conversamos até aqui? 😊",
+    2: "um ponto do Programa Parceiro Homologado IQG que costuma fazer diferença pra quem está começando é o suporte e o treinamento da equipe — você não atua sozinho em nenhuma etapa. Faz sentido pra você?",
+    3: "se você ainda está avaliando, uma coisa que costuma ajudar a decidir é entender o passo a passo completo, do começo ao funcionamento. Quer que eu te apresente?",
+    4: "se quiser conhecer melhor o Parceiro Homologado IQG, é só me chamar — o caminho é guiado em cada passo. Posso continuar?"
+  }
+};
+
+function pickStepMessage(phase, step) {
+  const variants = FOLLOWUP_STEP_MESSAGES[phase];
+  if (!variants) return "";
+  return variants[step] || variants[1] || "";
+}
+
 function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const prefixo = buildFollowupGreetingPrefix(lead);
 
@@ -21090,49 +21153,63 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   */
   if (!taxaFoiExplicada) {
     if (faseFunil === "responsabilidades" || etapas.responsabilidades === true) {
-      return `${prefixo}ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?`;
+      return `${prefixo}${pickStepMessage("responsabilidades", step)}`;
     }
 
     if (faseFunil === "estoque" || etapas.estoque === true) {
-      return `${prefixo}ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?`;
+      return `${prefixo}${pickStepMessage("estoque", step)}`;
     }
 
     if (faseFunil === "beneficios" || etapas.beneficios === true) {
-      return `${prefixo}ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?`;
+      return `${prefixo}${pickStepMessage("beneficios", step)}`;
     }
 
     if (faseFunil === "esclarecimento" || faseFunil === "inicio" || etapas.programa === true) {
-      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?`;
+      return `${prefixo}${pickStepMessage("programa", step)}`;
     }
 
-    return `${prefixo}ficou alguma dúvida sobre o que conversamos até aqui? 😊`;
+    return `${prefixo}${pickStepMessage("fallbackNeutro", step)}`;
   }
 
   /*
-    Regra 3:
+    Regra 3 — Compromisso:
+    Lead já confirmou compromisso de atuação (etapas.compromisso === true).
+    Tem precedência sobre a antiga Regra 3 (Taxa não alinhada): se chegou
+    em compromisso, recebe mensagem própria da fase mesmo em estados
+    limítrofes onde taxaAlinhada !== true por inconsistência.
+    A Regra 1 (canStartDataCollection) já filtrou antes os leads "completos"
+    prontos para coleta — aqui ficam os leads em compromisso com algum
+    bloqueio de avanço.
+  */
+  if (etapas.compromisso === true) {
+    return `${prefixo}${pickStepMessage("compromisso", step)}`;
+  }
+
+  /*
+    Regra 4 (antiga Regra 3):
     Se a taxa foi explicada, mas ainda não foi aceita,
     retomar de forma consultiva, sem repetir o texto inteiro.
   */
   if (taxaFoiExplicada && lead?.taxaAlinhada !== true) {
-    return `${prefixo}pensando no que conversamos sobre o investimento, faz sentido eu te ajudar a avaliar se o modelo de Parceiro Homologado se encaixa para você agora?`;
+    return `${prefixo}${pickStepMessage("taxaNaoAlinhada", step)}`;
   }
 
   /*
-    Regra 4:
+    Regra 5 (antiga Regra 4):
     Se taxa e responsabilidades já foram explicadas,
-    chamar para pré-análise, sem repetir tudo.
+    chamar para pré-cadastro, sem repetir tudo.
   */
   if (taxaFoiExplicada && responsabilidadesForamExplicadas && lead?.interesseReal !== true) {
-    return `${prefixo}pelo que conversamos, você já entendeu a estrutura do projeto. Quer seguir para a pré-análise do Parceiro Homologado?`;
+    return `${prefixo}${pickStepMessage("taxaERespExplicadas", step)}`;
   }
 
   /*
-    Regra 5:
+    Regra 6 (antiga Regra 5):
     Se ainda faltar responsabilidade de verdade, perguntar curto.
     Mas sem textão.
   */
   if (!responsabilidadesForamExplicadas) {
-    return `${prefixo}ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?`;
+    return `${prefixo}${pickStepMessage("faltaResponsabilidades", step)}`;
   }
 
   return `${prefixo}quer seguir com o próximo passo para avaliarmos seu pré-cadastro como Parceiro Homologado IQG?`;
