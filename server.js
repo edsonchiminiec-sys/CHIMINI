@@ -20805,24 +20805,56 @@ function isLeadInProtectedFollowupState(lead = {}) {
   return isHumanOrFinal || isDataFlow;
 }
 
-function historyOrLeadIndicatesTaxExplained(lead = {}, historyText = "") {
+function historyOrLeadIndicatesTaxExplained(lead = {}, history = []) {
   const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
 
-  return Boolean(
+  if (
     etapas.investimento === true ||
+    etapas.compromisso === true ||
     lead?.taxaAlinhada === true ||
-    /\b(taxa de ades[aã]o|taxa|investimento|r\$ ?1\.990|1990|1\.990|10x de r\$ ?199|10x de 199)\b/i.test(historyText || "")
-  );
+    faseFunil === "investimento" ||
+    faseFunil === "compromisso" ||
+    faseQualificacao === "compromisso"
+  ) {
+    return true;
+  }
+
+  const sdrText = Array.isArray(history)
+    ? history
+        .slice(-25)
+        .filter(m => m?.role === "assistant")
+        .map(m => m?.content || "")
+        .join("\n")
+    : "";
+
+  return /(\btaxa de ades[aã]o\b|\bvalor da ades[aã]o\b|\bvalor do investimento\b|\bvalor da taxa\b|r\$\s*1[\.,]?990|\b1[\.,]?990\s*reais?\b|\b10\s*x\s*de\s*r?\$?\s*199\b|\b10\s*vezes\s*de\s*r?\$?\s*199\b)/i.test(sdrText);
 }
 
-function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, historyText = "") {
+function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, history = []) {
   const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
 
-  return Boolean(
+  if (
     etapas.responsabilidades === true ||
     etapas.compromisso === true ||
-    /\b(respons[aá]vel|responsabilidades|guarda|conserva[cç][aã]o|vendas ativamente|relacionamento ativo|comunica[cç][aã]o correta|depende da sua atua[cç][aã]o)\b/i.test(historyText || "")
-  );
+    faseFunil === "responsabilidades" ||
+    faseFunil === "investimento" ||
+    faseFunil === "compromisso"
+  ) {
+    return true;
+  }
+
+  const sdrText = Array.isArray(history)
+    ? history
+        .slice(-25)
+        .filter(m => m?.role === "assistant")
+        .map(m => m?.content || "")
+        .join("\n")
+    : "";
+
+  return /(\bresponsabilidades do parceiro\b|\bguarda e conserva[cç][aã]o\b|\bvendas ativamente\b|\brelacionamento ativo\b|\bcomunica[cç][aã]o correta\b|\bdepende da sua atua[cç][aã]o\b)/i.test(sdrText);
 }
 
 /*
@@ -20974,13 +21006,6 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const fase = faseFunil || faseQualificacao || status;
   const etapas = lead?.etapas || {};
 
-  const historyText = Array.isArray(history)
-    ? history
-        .slice(-25)
-        .map(m => `${m.role || ""}: ${m.content || ""}`)
-        .join("\n")
-    : "";
-
   const isAfiliado =
     rotaComercial === "afiliado" ||
     fase === "afiliado" ||
@@ -21006,8 +21031,8 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
     return `${prefixo}se quiser, posso te ajudar a escolher o caminho mais adequado: Afiliado, Homologado ou os dois.`;
   }
 
-  const taxaFoiExplicada = historyOrLeadIndicatesTaxExplained(lead, historyText);
-  const responsabilidadesForamExplicadas = historyOrLeadIndicatesResponsibilitiesExplained(lead, historyText);
+  const taxaFoiExplicada = historyOrLeadIndicatesTaxExplained(lead, history);
+  const responsabilidadesForamExplicadas = historyOrLeadIndicatesResponsibilitiesExplained(lead, history);
 
   /*
     Regra 1:
