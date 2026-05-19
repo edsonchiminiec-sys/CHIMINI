@@ -20656,6 +20656,20 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+function isHotLeadForHandoff(lead = {}) {
+  const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
+  return Boolean(
+    etapas.compromisso === true ||
+    etapas.investimento === true ||
+    etapas.responsabilidades === true ||
+    faseFunil === "compromisso" ||
+    faseFunil === "investimento" ||
+    faseFunil === "responsabilidades" ||
+    lead?.taxaAlinhada === true
+  );
+}
+
 function getFinalFollowupMessage(lead = {}) {
   const prefixo = buildFollowupGreetingPrefix(lead);
 
@@ -20711,6 +20725,14 @@ Se quiser seguir por um caminho mais leve agora, pode começar pelo Afiliados:
 https://minhaiqg.com.br/
 
 E se depois quiser retomar o Parceiro Homologado, é só me chamar por aqui.`;
+  }
+
+  if (isHotLeadForHandoff(lead)) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Estávamos avançando na conversa sobre o Parceiro Homologado IQG. Vou pedir para um atendente humano da nossa equipe assumir e continuar com você daqui.
+
+Qualquer coisa, é só me chamar por aqui.`;
   }
 
   return `${prefixo}vou encerrar por aqui por enquanto 😊
@@ -20996,6 +21018,24 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
   }
 }
 
+async function flagHotLeadForHumanHandoff(from) {
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: "Cadência encerrada (step 5) com lead em fase avançada — requer atendimento humano.",
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date()
+  });
+
+  console.log("🙋 Lead quente em encerramento de cadência — marcado para Janela 2:", { user: from });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("decisao_backend", "medium", from, {
+      evento: "lead_quente_movido_janela_2_step_5",
+      motivo: "Cadência encerrada com lead em fase avançada"
+    });
+  }
+}
+
 function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const prefixo = buildFollowupGreetingPrefix(lead);
 
@@ -21049,19 +21089,23 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
     Isso corrige o follow-up contaminado.
   */
   if (!taxaFoiExplicada) {
+    if (faseFunil === "responsabilidades" || etapas.responsabilidades === true) {
+      return `${prefixo}ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?`;
+    }
+
     if (faseFunil === "estoque" || etapas.estoque === true) {
       return `${prefixo}ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?`;
     }
 
-    if (etapas.beneficios === true) {
+    if (faseFunil === "beneficios" || etapas.beneficios === true) {
       return `${prefixo}ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?`;
     }
 
-    if (etapas.programa === true) {
+    if (faseFunil === "esclarecimento" || faseFunil === "inicio" || etapas.programa === true) {
       return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?`;
     }
 
-    return `${prefixo}vi que você demonstrou interesse no Programa Parceiro Homologado IQG. Quer que eu te explique de forma simples como funciona?`;
+    return `${prefixo}ficou alguma dúvida sobre o que conversamos até aqui? 😊`;
   }
 
   /*
@@ -21324,6 +21368,14 @@ async function sendAutomaticFollowupIfStillValid({
       error: sendError.message
     });
     return false;
+  }
+
+  if ((followup?.step || 0) === 5 && isHotLeadForHandoff(latestLead)) {
+    try {
+      await flagHotLeadForHumanHandoff(from);
+    } catch (handoffError) {
+      console.error("Erro ao marcar lead quente para Janela 2 no step 5:", handoffError.message);
+    }
   }
 
   await saveAutomaticFollowupToHistory(from, messageToSend, {
