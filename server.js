@@ -20377,10 +20377,11 @@ async function executeScheduledCallback(agendamento) {
     }
 
     // Tudo ok — enviar mensagem de recontato
-    const nome = getFirstName(lead?.nomeWhatsApp || lead?.nome || "");
+    const candidatoNome = lead?.nomeWhatsApp || lead?.nome || "";
+    const nome = !isInvalidLooseNameCandidate(candidatoNome) ? getFirstName(candidatoNome) : "";
     const mensagem = nome
       ? `${nome}, tudo bem? 😊 Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`
-      : `Olá! 😊 Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`;
+      : `Oi! 😊 Tudo bem? Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`;
 
     await sendWhatsAppMessage(from, mensagem);
 
@@ -20503,9 +20504,17 @@ function getDelayUntilNextBusinessTime() {
   return Math.max(next.getTime() - now.getTime(), 0);
 }
 
+function buildFollowupGreetingPrefix(lead = {}) {
+  const candidato = lead?.nomeWhatsApp || lead?.nome || "";
+  if (isInvalidLooseNameCandidate(candidato)) {
+    return "Oi! 😊 ";
+  }
+  const nome = getFirstName(candidato);
+  return nome ? `${nome}, ` : "Oi! 😊 ";
+}
+
 function getSmartFollowupMessage(lead = {}, step = 1) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
   const faseFunil = lead.faseFunil || "";
@@ -20648,8 +20657,7 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
 }
 
 function getFinalFollowupMessage(lead = {}) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const jaVirouParceiroConfirmado =
     lead?.dadosConfirmadosPeloLead === true ||
@@ -20957,8 +20965,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
 }
 
 function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
   const faseFunil = lead.faseFunil || "";
