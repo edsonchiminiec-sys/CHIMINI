@@ -22337,43 +22337,78 @@ function computeNextFollowupDate(config) {
     return candidateDate;
   }
 
-  /*
-    Se o instante calculado cai fora do horário comercial,
-    empurra pra próxima abertura comercial.
-    Reaproveita getDelayUntilNextBusinessTime quando necessário.
-  */
-  const tempHours = candidateDate.getHours();
-  const isWeekend = candidateDate.getDay() === 0 || candidateDate.getDay() === 6;
+  return adjustToBusinessBR(candidateDate);
+}
 
-  // Ajuste simples: se for fim de semana ou fora do horário comercial,
-  // soma horas até abrir o expediente. Usamos BUSINESS_START_HOUR/END_HOUR
-  // se disponíveis; senão, fallback razoável (8h-18h, seg-sex).
+/*
+  Bug A — ajuste para próximo horário comercial em fuso BR.
+
+  Por que esta função existe:
+  A versão anterior usava date.getHours()/getDay()/setHours()/setDate() direto,
+  que operam no timezone do servidor. Em Render padrão (UTC), getHours()
+  retorna hora UTC e setHours(8) deixava o horário em "8h UTC = 5h BR" —
+  fora do expediente real.
+
+  Estratégia robusta ao timezone do servidor:
+  - Sempre trabalhamos com timestamp absoluto (ms desde epoch).
+  - Para "ver em BR", criamos um Date virtual com ts + BUSINESS_TIMEZONE_OFFSET
+    em ms e lemos com getUTC* (que ignora o timezone do servidor).
+  - Para "construir um horário BR específico", usamos Date.UTC(...) e
+    subtraímos o offset para obter o timestamp UTC absoluto correspondente.
+
+  Validação mental (cenário Paulo):
+    Step 2 calculado às 13:45 BR (= 16:45 UTC). +12h delay = 04:45 UTC do dia
+    seguinte = 01:45 BR. A função deve devolver 20/05 08:00 BR (= 11:00 UTC).
+
+    ts = 20/05 04:45 UTC
+    brVista = new Date(ts + offsetMs) → getUTCHours()=1
+    dow=3 (quarta), isBusinessDay=true, hour=1 < 8 → setar startHour no mesmo dia BR
+    targetBr = Date.UTC(2026, 4, 20, 8, 0) - offsetMs = 20/05 11:00 UTC = 20/05 08:00 BR ✓
+*/
+function adjustToBusinessBR(date) {
+  const offsetMs = BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000;
   const startHour = typeof BUSINESS_START_HOUR === "number" ? BUSINESS_START_HOUR : 8;
   const endHour = typeof BUSINESS_END_HOUR === "number" ? BUSINESS_END_HOUR : 18;
 
-  const adjustToBusiness = (date) => {
-    const d = new Date(date.getTime());
-    let safety = 0;
-    while (safety < 14) {
-      const dow = d.getDay();
-      const hour = d.getHours();
-      const isBusinessDay = dow >= 1 && dow <= 5;
-      const isBusinessHour = hour >= startHour && hour < endHour;
-      if (isBusinessDay && isBusinessHour) return d;
-      // Se ainda no mesmo dia mas antes do start, pula direto pra start.
-      if (isBusinessDay && hour < startHour) {
-        d.setHours(startHour, 0, 0, 0);
-        continue;
-      }
-      // Senão, pula pro próximo dia às startHour.
-      d.setDate(d.getDate() + 1);
-      d.setHours(startHour, 0, 0, 0);
-      safety++;
-    }
-    return d;
-  };
+  let ts = date.getTime();
+  let safety = 0;
 
-  return adjustToBusiness(candidateDate);
+  while (safety < 14) {
+    // "Vista BR": Date virtual cujo getUTC* retorna a hora/dia em BR.
+    const brVista = new Date(ts + offsetMs);
+    const dow = brVista.getUTCDay();
+    const hour = brVista.getUTCHours();
+    const isBusinessDay = dow >= 1 && dow <= 5;
+    const isBusinessHour = hour >= startHour && hour < endHour;
+
+    if (isBusinessDay && isBusinessHour) {
+      return new Date(ts);
+    }
+
+    if (isBusinessDay && hour < startHour) {
+      // Mesmo dia BR, antes do expediente — set hora BR para startHour.
+      const targetBrTs = Date.UTC(
+        brVista.getUTCFullYear(),
+        brVista.getUTCMonth(),
+        brVista.getUTCDate(),
+        startHour, 0, 0, 0
+      ) - offsetMs;
+      ts = targetBrTs;
+      continue;
+    }
+
+    // Fim de semana ou já passou do expediente — pula pro próximo dia BR às startHour.
+    const nextDayBrTs = Date.UTC(
+      brVista.getUTCFullYear(),
+      brVista.getUTCMonth(),
+      brVista.getUTCDate() + 1,
+      startHour, 0, 0, 0
+    ) - offsetMs;
+    ts = nextDayBrTs;
+    safety++;
+  }
+
+  return new Date(ts);
 }
 
 /*
