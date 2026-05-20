@@ -22500,9 +22500,18 @@ async function scheduleLeadFollowups(from) {
       return;
     }
 
-    // CENÁRIO B — sem cadência pendente: agenda o step 1 como rede de segurança
+    // CENÁRIO B — sem cadência pendente: agenda o step 1 como rede de segurança.
+    //
+    // Bug B — step 1 tem businessOnly=false (responde rápido enquanto lead está
+    // quente), o que faz sentido SÓ dentro do expediente. Se a SDR respondeu
+    // fora do expediente (ex: lead que mandou msg às 22h e o sistema atendeu),
+    // o +30min agendaria pra 22:30 BR — disparo fora de hora. Aqui tratamos
+    // o caso: se já estamos fora do expediente, reagenda como businessOnly
+    // pra cair na próxima abertura comercial.
     const firstStep = FOLLOWUP_CONFIG[0];
-    const nextDate = computeNextFollowupDate(firstStep);
+    const nextDate = isBusinessTime()
+      ? computeNextFollowupDate(firstStep)
+      : computeNextFollowupDate({ ...firstStep, businessOnly: true });
 
     await saveLeadProfile(from, {
       proximoFollowupEm: nextDate,
