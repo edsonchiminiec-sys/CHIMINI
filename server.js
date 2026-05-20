@@ -399,6 +399,19 @@ async function updateLeadStatus(user, status) {
           liberadoDoAtendimentoHumanoEm: new Date(),
 
           statusOperacional: "ativo",
+
+          /*
+            Bug C — limpeza forte do estado de cadência ao devolver lead pra IA.
+            Sem isso, o proximoFollowupEm antigo (de antes do humano assumir)
+            fica residual e o cron pode disparar com base ruim assim que
+            botBloqueadoPorHumano vira false. Zeramos aqui e chamamos
+            scheduleLeadFollowups na sequência, que reagenda do zero
+            respeitando o horário comercial (Bug B fix).
+          */
+          proximoFollowupEm: null,
+          followupStep: 0,
+          followupLockEm: null,
+
           updatedAt: new Date()
         }
       }
@@ -408,6 +421,15 @@ async function updateLeadStatus(user, status) {
       user,
       statusDashboard: status
     });
+
+    try {
+      await scheduleLeadFollowups(user);
+    } catch (rescheduleError) {
+      console.error("Erro ao reagendar follow-up após liberação humano→IA (ignorado):", {
+        user,
+        error: rescheduleError.message
+      });
+    }
 
     return;
   }
