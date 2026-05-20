@@ -20824,7 +20824,9 @@ function isLeadInProtectedFollowupState(lead = {}) {
       "aguardando_valor_correcao_final"
     ].includes(faseQualificacao);
 
-  return isHumanOrFinal || isDataFlow;
+  const isCadenciaPausada = lead?.cadenciaPausadaPorCliente === true;
+
+  return isHumanOrFinal || isDataFlow || isCadenciaPausada;
 }
 
 function historyOrLeadIndicatesTaxExplained(lead = {}, history = []) {
@@ -21603,6 +21605,7 @@ async function runFollowupCronTick() {
     const filtro = {
       proximoFollowupEm: { $ne: null, $lte: agora },
       followupStep: { $gte: 1, $lte: 5 },
+      cadenciaPausadaPorCliente: { $ne: true },
       $or: [
         { followupLockEm: null },
         { followupLockEm: { $exists: false } },
@@ -21646,6 +21649,7 @@ async function runFollowupCronTick() {
             user: candidato.user,
             proximoFollowupEm: { $ne: null, $lte: agora },
             followupStep: { $gte: 1, $lte: 5 },
+            cadenciaPausadaPorCliente: { $ne: true },
             $or: [
               { followupLockEm: null },
               { followupLockEm: { $exists: false } },
