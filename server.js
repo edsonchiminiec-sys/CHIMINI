@@ -21604,6 +21604,43 @@ async function sendAutomaticFollowupIfStillValid({
     return false;
   }
 
+  // === INSTRUMENTAÇÃO TEMPORÁRIA — bug cadência madrugada ===
+  // TODO: remover após confirmar que disparos fora de expediente não
+  // acontecem mais em produção. Data alvo de remoção: ~03/06/2026
+  // (2 semanas após deploy do hotfix).
+  const horaUtcDisparo = new Date().toISOString();
+  const horaBrDisparo = getBrazilNow().toISOString();
+  const dentroExpediente = isBusinessTime();
+
+  console.log("🔍 [HOTFIX-CADENCIA] Disparo de follow-up:", {
+    user: from,
+    followupStep: latestLead?.followupStep,
+    horaUtc: horaUtcDisparo,
+    horaBr: horaBrDisparo,
+    dentroExpediente,
+    proximoFollowupEmSalvo: latestLead?.proximoFollowupEm,
+    liberadoHumanoEm: latestLead?.liberadoDoAtendimentoHumanoEm || null
+  });
+
+  if (!dentroExpediente) {
+    console.error("🚨 [HOTFIX-CADENCIA] DISPARO FORA DO EXPEDIENTE DETECTADO:", {
+      user: from,
+      followupStep: latestLead?.followupStep,
+      horaBr: horaBrDisparo,
+      proximoFollowupEmSalvo: latestLead?.proximoFollowupEm
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("disparo_fora_expediente_detectado", "high", from, {
+        followupStep: latestLead?.followupStep,
+        horaBr: horaBrDisparo,
+        proximoFollowupEmSalvo: latestLead?.proximoFollowupEm,
+        liberadoHumanoEm: latestLead?.liberadoDoAtendimentoHumanoEm || null
+      });
+    }
+  }
+  // === FIM INSTRUMENTAÇÃO TEMPORÁRIA ===
+
   /*
     Envia a mensagem.
     A partir daqui, qualquer erro é grave (lead pode receber e o banco
