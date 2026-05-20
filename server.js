@@ -17567,6 +17567,42 @@ function buildConversationMemoryForAgents({
   };
 }
 
+/*
+  Bug 4 — lista de tokens-âncora cuja repetição em respostas consecutivas
+  da SDR cansa o lead, mesmo quando o tema geral (taxonomia em
+  detectReplyMainTheme) muda. Cada token vira um "label" curto usado em
+  audit_events / reason do finding.
+
+  Tokens validados contra o vocabulário do SYSTEM_PROMPT (regiões com
+  alta densidade no prompt → modelo tende a repetir).
+*/
+const REPETITION_ANCHOR_TOKENS = [
+  // Valores monetários (mais críticos — Volnei 33%, Edson 50%, Trindade 11x no relatório)
+  { pattern: /\b(r\$ ?5\.000|5\.000|5 mil em|cinco mil)\b/i, label: "valor_5000_comodato" },
+  { pattern: /\b(r\$ ?1\.990|1\.990|1990 reais?)\b/i,        label: "valor_1990_taxa" },
+  { pattern: /\b(10x de r\$ ?199|10x de 199|parcelad[oa] em 10x)\b/i, label: "parcelamento_10x" },
+
+  // Conceitos / bordões comerciais
+  { pattern: /\bcomodato\b/i,                                  label: "comodato" },
+  { pattern: /\b(comiss[aã]o vital[ií]cia|10% de comiss[aã]o|renda vital[ií]cia)\b/i, label: "comissao_vitalicia" },
+  { pattern: /\bmargem (de )?40%/i,                            label: "margem_40_porcento" },
+  { pattern: /\bsuporte (e |\& )?treinamento\b/i,              label: "suporte_e_treinamento" },
+  { pattern: /\btaxa de ades[aã]o\b/i,                         label: "taxa_de_adesao" },
+  { pattern: /\b(pr[eé][- ]?an[áa]lise|preanalise)\b/i,        label: "pre_analise" }
+];
+
+function detectRepeatedAnchorTokens(lastAssistantMessage = "", respostaFinal = "") {
+  if (!lastAssistantMessage || !respostaFinal) return [];
+
+  const repetidos = [];
+  for (const { pattern, label } of REPETITION_ANCHOR_TOKENS) {
+    if (pattern.test(lastAssistantMessage) && pattern.test(respostaFinal)) {
+      repetidos.push(label);
+    }
+  }
+  return repetidos;
+}
+
 function applyAntiRepetitionGuard({
   leadText = "",
   respostaFinal = "",
@@ -17582,28 +17618,28 @@ function applyAntiRepetitionGuard({
     };
   }
 
+  /*
+    Bug 4 — early return de mensagem curta REMOVIDO.
+    Antes, este guard só rodava se o lead respondeu com ack curto e neutro
+    (≤45 chars, casando whitelist tipo "ok"/"sim"). Mensagens médias-longas
+    em conversas exploratórias escapavam, e a SDR repetia "R$ 5.000",
+    "comodato", "taxa de adesão" ao longo de várias respostas consecutivas.
+    Agora rodamos para TODA mensagem do lead. leadReplyWasShort vai pro
+    reason apenas como sinal de diagnóstico.
+  */
   const leadReplyWasShort = isShortNeutralLeadReply(leadText);
 
-  if (!leadReplyWasShort) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
+  // Detecção de tema (lógica original — taxonomia grossa).
   const lastTheme = detectReplyMainTheme(lastAssistantMessage);
   const currentTheme = detectReplyMainTheme(respostaFinal);
+  const themeMatched = Boolean(lastTheme && lastTheme === currentTheme);
 
-  if (!lastTheme || !currentTheme) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
+  // Detecção de tokens-âncora repetidos (Bug 4 — nova).
+  const repeatedTokens = detectRepeatedAnchorTokens(lastAssistantMessage, respostaFinal);
 
-  const repeatedSameTheme = lastTheme === currentTheme;
+  const anyRepetition = themeMatched || repeatedTokens.length > 0;
 
-  if (!repeatedSameTheme) {
+  if (!anyRepetition) {
     return {
       changed: false,
       respostaFinal
@@ -17624,10 +17660,21 @@ function applyAntiRepetitionGuard({
   return {
     changed: true,
     reason: {
+      // Tema repetido (string|null). null quando não houve repetição de tema
+      // ou quando detectReplyMainTheme não encontrou tema reconhecido em ambos.
+      repeatedSameTheme: themeMatched ? lastTheme : null,
+
+      // Lista de labels dos tokens-âncora repetidos entre lastAssistantMessage
+      // e respostaFinal. Vazio se nenhum token bateu nas duas.
+      repeatedTokens,
+
+      // Flag combinado para consumo simplificado downstream (Pré-SDR/regenerador).
+      anyRepetition,
+
+      // Sinais auxiliares para audit/diagnóstico.
       leadReplyWasShort,
-      lastTheme,
-      currentTheme,
-      repeatedSameTheme
+      lastTheme: lastTheme || null,
+      currentTheme: currentTheme || null
     }
   };
 }
@@ -27695,12 +27742,24 @@ const antiRepetition = applyAntiRepetitionGuard({
 });
 
 if (antiRepetition.changed) {
+  const tokensRepetidos = antiRepetition.reason?.repeatedTokens || [];
+  const temaRepetido = antiRepetition.reason?.repeatedSameTheme || null;
+
   sdrReviewFindings.push({
     tipo: "repeticao_de_tema",
     prioridade: "alta",
     reason: antiRepetition.reason,
-    orientacao:
-      "A SDR tentou repetir um tema já explicado. Reescrever sem repetir o textão e conduzir para o próximo passo natural."
+    orientacao: [
+      "A SDR repetiu conteúdo da resposta anterior.",
+      temaRepetido
+        ? `Tema repetido entre a última resposta da SDR e a atual: "${temaRepetido}".`
+        : "",
+      tokensRepetidos.length > 0
+        ? `Tokens/bordões repetidos: ${tokensRepetidos.join(", ")}.`
+        : "",
+      "Reescrever trazendo um ângulo novo do tema, sem repetir os mesmos valores monetários, frases-chave ou explicações já usadas no turno anterior.",
+      "Se já citou R$ 5.000, R$ 1.990, comodato, 10% de comissão vitalícia, margem 40%, suporte+treinamento, taxa de adesão ou pré-análise na resposta passada, NÃO repetir agora — buscar outro argumento ou conduzir para próximo passo natural."
+    ].filter(Boolean).join("\n")
   });
 }
 
