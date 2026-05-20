@@ -5087,6 +5087,32 @@ REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
 
 - Se a última mensagem do lead termina de forma inesperada (palavra cortada no meio, preposição/artigo/pronome solto no final, frase interrompida sem ponto final ou interrogação), marque mensagemParecesTruncada true. Isso indica que a mensagem provavelmente foi cortada antes de chegar (limite do WhatsApp, transcrição de áudio incompleta, etc). Nesse caso NÃO invente o tema do que faltou — o backend vai pedir esclarecimento ao lead. Se a mensagem termina naturalmente (mesmo curta), marque false.
 
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA — positiveCommitment (CRÍTICA)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+positiveCommitment = true SOMENTE quando o lead afirma EXPLICITAMENTE que vai atuar nas vendas como parceiro, que entende as responsabilidades do parceiro homologado, ou que está pronto para seguir para a pré-análise / pré-cadastro.
+
+Marque positiveCommitment = true em mensagens como:
+- "concordo, posso atuar nas vendas como parceiro";
+- "entendo que dependo da minha atuação para gerar resultado";
+- "estou de acordo com a responsabilidade pelo estoque";
+- "topo o compromisso de revender";
+- "vamos seguir para a pré-análise / pré-cadastro";
+- "quero entrar como parceiro homologado".
+
+NÃO marque positiveCommitment = true em ack curto, vago ou genérico, mesmo que apareça "sim", "ok", "tá", "beleza", "show", "perfeito", "concordo" SEM contexto comercial específico de atuação/responsabilidade/avanço.
+
+Exemplos CRÍTICOS que NÃO são positiveCommitment:
+- "sim" sozinho;
+- "ok" sozinho;
+- "Por enquanto sim, fale mais" — é ack pra continuar ouvindo, não compromisso;
+- "tá bom, me explica" — é pedido de explicação, não compromisso;
+- "entendi" — é compreensão (use positiveRealInterest ou softUnderstandingOnly conforme o caso), não compromisso;
+- "beleza" / "perfeito" / "show" / "legal" sozinhos.
+
+REGRA DE OURO: em dúvida, marque positiveCommitment = false. O backend tem outras vias de detectar compromisso real (consolidação por contexto de responsabilidades explicadas). Erro de marcar positiveCommitment = true em ack vago cascateia em marcar compromisso/compromissoPerguntado no funil e libera pré-cadastro antes da hora.
+
 IMPORTANTE:
 - Não invente intenção.
 - Se houver dúvida, use false e confidence baixa.
@@ -16610,12 +16636,55 @@ function iqgLeadHasBlockingDoubtOrObjection(text = "", semanticIntent = null) {
   );
 }
 
+/*
+  Bug 7 — sinais textuais fortes de entendimento ou movimento.
+  Lista usada como ANCORAGEM LOCAL para validar atalhos do classificador GPT
+  (positiveRealInterest / positiveCommitment). Antes, esses flags eram
+  aceitos cegamente — se o GPT marcasse positiveCommitment=true em ack curto
+  (ex: "Por enquanto sim, fale mais"), iqgLeadHasStrongUnderstandingSignal
+  retornava true sem nenhum sanity check textual, cascateando em markStep
+  para todas as etapas explicadas pela SDR (Ponto 7 do mapa de etapas).
+*/
+const STRONG_UNDERSTANDING_TEXT_ANCHORS = [
+  // verbos e expressões de compreensão
+  "entendi", "entendido", "compreendi",
+  "ficou claro", "faz sentido",
+  "sem duvida", "sem dúvida", "tudo certo",
+  // convite/aceite de avanço
+  "pode seguir", "podemos seguir", "vamos seguir", "pode continuar",
+  "proximo", "próximo",
+  "vamos para o proximo", "vamos para o próximo",
+  "quero continuar", "quero seguir",
+  "vamos pra pre analise", "vamos para pre analise",
+  "vamos pra pré análise", "vamos para pré análise",
+  // vocabulário coloquial BR — Bug 7 ampliação
+  "to dentro", "tô dentro", "estou dentro",
+  "topo o compromisso", "topo seguir",
+  "fechou pra mim", "fechado vamos",
+  "bora seguir", "bora começar", "bora avançar",
+  "vamos la", "vamos lá",
+  "concordo com", "aceito o", "aceito seguir"
+];
+
 function iqgLeadHasStrongUnderstandingSignal(text = "", semanticIntent = null) {
   const t = iqgNormalizeFunnelText(text);
 
-  if (semanticIntent?.positiveRealInterest === true) return true;
-  if (semanticIntent?.positiveCommitment === true) return true;
+  const textoTemAncoraLocal = STRONG_UNDERSTANDING_TEXT_ANCHORS.some(ancora => t.includes(ancora));
 
+  /*
+    Atalho do classificador GPT — Bug 7 fix:
+    Antes era aceite cego do flag. Agora exige co-ocorrência com pelo menos
+    uma âncora textual da lista acima. Defesa em profundidade: se o GPT
+    marcar positiveCommitment=true por engano em ack vago, sem âncora local
+    correspondente, o atalho NÃO dispara.
+  */
+  if (semanticIntent?.positiveRealInterest === true && textoTemAncoraLocal) return true;
+  if (semanticIntent?.positiveCommitment === true && textoTemAncoraLocal) return true;
+
+  /*
+    Acks isolados (palavra única) — sempre falso, independente de outros sinais.
+    Lista mantida e expandida com termos coloquiais que sozinhos são ambíguos.
+  */
   const weakOnlyPatterns = [
     /^ok$/,
     /^sim$/,
@@ -16625,37 +16694,20 @@ function iqgLeadHasStrongUnderstandingSignal(text = "", semanticIntent = null) {
     /^beleza$/,
     /^show$/,
     /^legal$/,
-    /^perfeito$/
+    /^perfeito$/,
+    /^topo$/,
+    /^fechado$/,
+    /^bora$/,
+    /^partiu$/,
+    /^aceito$/,
+    /^concordo$/
   ];
 
   if (weakOnlyPatterns.some(pattern => pattern.test(t))) {
     return false;
   }
 
-  return (
-    t.includes("entendi") ||
-    t.includes("entendido") ||
-    t.includes("compreendi") ||
-    t.includes("ficou claro") ||
-    t.includes("faz sentido") ||
-    t.includes("sem duvida") ||
-    t.includes("sem dúvida") ||
-    t.includes("tudo certo") ||
-    t.includes("pode seguir") ||
-    t.includes("podemos seguir") ||
-    t.includes("vamos seguir") ||
-    t.includes("pode continuar") ||
-    t.includes("proximo") ||
-    t.includes("próximo") ||
-    t.includes("vamos para o proximo") ||
-    t.includes("vamos para o próximo") ||
-    t.includes("quero continuar") ||
-    t.includes("quero seguir") ||
-    t.includes("vamos pra pre analise") ||
-    t.includes("vamos para pre analise") ||
-    t.includes("vamos pra pré análise") ||
-    t.includes("vamos para pré análise")
-  );
+  return textoTemAncoraLocal;
 }
 
 function iqgLeadMovedToNextLogicalTopic({

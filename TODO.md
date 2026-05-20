@@ -94,3 +94,58 @@ const protecaoProximoFollowup = isBusinessTime()
 
 **Prioridade:** baixa-média. Só ataca se o `disparo_fora_expediente_detectado`
 mostrar evidência de disparo causado por esse caminho nos próximos 14 dias.
+
+---
+
+## 5. Bug 7b candidato — 3 caminhos que consomem `positiveCommitment` sem cruzamento local
+
+**Contexto:** o fix do Bug 7 (commit principal: defesa em profundidade no prompt
+do classificador + função `iqgLeadHasStrongUnderstandingSignal`) ataca a fonte
+(prompt GPT) e o consumo central (atalho da função `hasStrongUnderstanding`).
+Três outros consumidores de `semanticIntent?.positiveCommitment === true`
+NÃO foram tocados:
+
+**(a) `server.js:6298`** — parte de condição de avanço comercial:
+```js
+(positiveRealInterest === true ||
+ positiveCommitment === true ||
+ semanticContinuity?.leadQuerAvancar === true)
+```
+Risco médio. Tem OR com `leadQuerAvancar` de outro analyzer (continuidade),
+o que dá salvaguarda parcial. Se o GPT errar e os outros não compensarem,
+dispara avanço comercial indevido.
+
+**(b) `server.js:6402`** — `classifierSawCommitment` (gate central do Ponto 3
+do mapa de etapas; consolidação de compromisso):
+```js
+const classifierSawCommitment =
+  semanticIntent?.positiveCommitment === true &&
+  semanticConfidenceOk &&
+  !hasObjection;
+```
+Risco alto. Tem `semanticConfidenceOk` e `!hasObjection` como salvaguarda,
+mas se o GPT marca com confidence alta e não há objeção textual, dispara
+marcar `etapas.compromisso = true` + `etapas.compromissoPerguntado = true`.
+
+**(c) `server.js:14833`** — `strongAcceptance` (decisão de aceite de taxa
+para liberar pré-cadastro):
+```js
+const strongAcceptance =
+  !mensagemAtualEhSaudacaoOuVazia &&
+  (taxDecisionMessageIsStrongAcceptance(text) ||
+   semanticIntent?.positiveCommitment === true ||
+   semanticIntent?.paymentIntent === true);
+```
+Risco médio-alto. Proteção contra saudação vazia existe, mas não contra
+ack composto tipo "Por enquanto sim, fale mais".
+
+**Estratégia de correção (quando virar prioridade):** aplicar mesmo padrão
+do Bug 7 (b) — exigir co-ocorrência com âncora textual local antes de
+confiar no flag do GPT. Pode reutilizar a constante
+`STRONG_UNDERSTANDING_TEXT_ANCHORS` definida em server.js.
+
+**Critério de priorização:** se aparecer evidência nos próximos dias de
+etapas avançando em cascata (lead diz "sim, fale mais" e fica com
+`compromisso: true` no banco), promover este TODO a fix dedicado.
+
+**Prioridade:** média. Defesa em profundidade adicional, não bloqueia hoje.
