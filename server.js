@@ -4460,6 +4460,84 @@ Responda SOMENTE um JSON neste formato, sem texto extra:
   }
 }
 
+/*
+  Bug 6 — Heurística determinística de truncamento de mensagem do lead.
+  Roda antes do classificador semântico (sem latência, sem custo).
+  Combinada via OR com sinal do classificador GPT no orquestrador.
+*/
+const TRUNCATION_TRAILING_WORDS = new Set([
+  // artigos
+  "o", "a", "os", "as", "um", "uma", "uns", "umas",
+  // preposições
+  "de", "do", "da", "dos", "das",
+  "em", "no", "na", "nos", "nas",
+  "por", "pelo", "pela", "pelos", "pelas",
+  "para", "pra", "pro", "pros", "pras",
+  "com", "sem", "ao", "à", "aos", "às",
+  "sobre", "até", "ate", "desde", "entre", "contra",
+  // conjunções
+  "e", "ou", "mas", "nem", "que", "se",
+  "como", "qual", "quando", "onde", "porque",
+  // pronomes possessivos e demonstrativos (modificadores aguardando substantivo)
+  "meu", "minha", "meus", "minhas",
+  "seu", "sua", "seus", "suas",
+  "esse", "essa", "este", "esta",
+  "aquele", "aquela", "aqueles", "aquelas",
+  // pronomes pessoais átonos / clíticos
+  "me", "te", "se", "lhe", "nos", "vos", "lhes", "vc", "voce", "você", "vcs", "vocês"
+]);
+
+const TRUNCATION_SHORT_WORD_WHITELIST = new Set([
+  "ok", "blz", "tv", "pc", "vc", "tk", "uau", "oi",
+  // termos do domínio IQG/WhatsApp que terminam em consoante rara
+  "kit", "pdf", "link", "app", "doc", "cep"
+]);
+
+const TRUNCATION_RARE_FINAL_CONSONANTS = /[cfgjkpqtvwy]$/i;
+
+function detectMessageTruncation(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return { truncated: false, motivo: null };
+
+  // Regra 1 — termina em pontuação final ou emoji → não truncada.
+  if (/[.!?…]$|[\p{Extended_Pictographic}]$/u.test(raw)) {
+    return { truncated: false, motivo: null };
+  }
+
+  const words = raw.split(/\s+/);
+  const lastWord = (words[words.length - 1] || "").toLowerCase();
+  const lastWordClean = lastWord.replace(/[^\p{L}\p{N}]/gu, "");
+
+  if (!lastWordClean) return { truncated: false, motivo: null };
+
+  // Regra 2 — última "palavra" é letra solta (1 char alfabético).
+  if (lastWordClean.length === 1 && /[a-zA-ZÀ-ÿ]/.test(lastWordClean)) {
+    return { truncated: true, motivo: "letra_solta_final" };
+  }
+
+  // Regra 3 — última palavra é preposição/artigo/conjunção/pronome
+  // que normalmente espera continuação.
+  if (TRUNCATION_TRAILING_WORDS.has(lastWordClean)) {
+    return { truncated: true, motivo: "termina_em_palavra_de_funcao" };
+  }
+
+  // Regra 4 — palavra curta (2-5 chars) terminada em consoante rara em PT-BR,
+  // fora da whitelist de termos válidos do domínio.
+  if (
+    lastWordClean.length >= 2 &&
+    lastWordClean.length <= 5 &&
+    TRUNCATION_RARE_FINAL_CONSONANTS.test(lastWordClean) &&
+    !TRUNCATION_SHORT_WORD_WHITELIST.has(lastWordClean)
+  ) {
+    return { truncated: true, motivo: "consoante_rara_final" };
+  }
+
+  // Casos sutis (mensagem longa que parece interrompida sem palavra
+  // obviamente cortada) ficam por conta do Sinal B (classificador GPT),
+  // que tem contexto semântico que regex não captura.
+  return { truncated: false, motivo: null };
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -4493,6 +4571,7 @@ otherProductLineTopics: [],
     schedulingRequest: false,
     schedulingDate: "",
     schedulingTime: "",
+    mensagemParecesTruncada: false,
     confidence: "baixa",
     reason: "Fallback local. Classificador semântico não executado ou falhou."
   };
@@ -4984,6 +5063,8 @@ REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
 
 - Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
 
+- Se a última mensagem do lead termina de forma inesperada (palavra cortada no meio, preposição/artigo/pronome solto no final, frase interrompida sem ponto final ou interrogação), marque mensagemParecesTruncada true. Isso indica que a mensagem provavelmente foi cortada antes de chegar (limite do WhatsApp, transcrição de áudio incompleta, etc). Nesse caso NÃO invente o tema do que faltou — o backend vai pedir esclarecimento ao lead. Se a mensagem termina naturalmente (mesmo curta), marque false.
+
 IMPORTANTE:
 - Não invente intenção.
 - Se houver dúvida, use false e confidence baixa.
@@ -5016,6 +5097,7 @@ Responda somente JSON válido neste formato:
   "humanRequest": false,
   "dataCorrectionIntent": false,
   "requestedFile": "",
+  "mensagemParecesTruncada": false,
   "confidence": "baixa",
   "reason": ""
 }
@@ -5072,6 +5154,7 @@ Responda somente JSON válido neste formato:
     ? parsed.otherProductLineTopics
     : [],
   requestedFile: parsed?.requestedFile || "",
+  mensagemParecesTruncada: parsed?.mensagemParecesTruncada === true,
   confidence: parsed?.confidence || "baixa",
   reason: parsed?.reason || ""
 };
@@ -24376,6 +24459,56 @@ if (devePularGptsNaColeta) {
 
  semanticIntent = classifierResult;
   var earlySemanticContinuity = continuityResult;
+
+  /*
+    Bug 6 — Detecção de mensagem truncada (combina heurística + classificador).
+    Quando flag dispara, força confidence=baixa, injeta intentOverride e
+    empilha orientação crítica para o Pré-SDR pedir esclarecimento em vez
+    de inferir o tema que faltou.
+  */
+  const truncamentoHeuristica = detectMessageTruncation(text);
+  const truncamentoClassifier = semanticIntent?.mensagemParecesTruncada === true;
+  const mensagemTruncada = truncamentoHeuristica.truncated || truncamentoClassifier;
+
+  if (mensagemTruncada) {
+    const origemTruncamento =
+      truncamentoHeuristica.truncated && truncamentoClassifier ? "both"
+      : truncamentoHeuristica.truncated ? "heuristic"
+      : "classifier";
+
+    semanticIntent = {
+      ...semanticIntent,
+      confidence: "baixa",
+      intentOverride: "pedir_esclarecimento_truncamento"
+    };
+
+    backendStrategicGuidance.unshift({
+      tipo: "mensagem_truncada",
+      prioridade: "critica",
+      origem: origemTruncamento,
+      motivoHeuristica: truncamentoHeuristica.motivo || null,
+      orientacao:
+        "Lead enviou mensagem possivelmente truncada/cortada. " +
+        "Peça esclarecimento gentil e curto, sem soar bot. " +
+        "NÃO inferir tema do que faltou. " +
+        "Tom sugerido: \"Hmm, parece que sua mensagem cortou no final — pode completar pra eu te entender direito? 😊\""
+    });
+
+    console.log("✂️ Mensagem do lead detectada como truncada:", {
+      user: from,
+      origem: origemTruncamento,
+      motivoHeuristica: truncamentoHeuristica.motivo || null,
+      mensagemPreview: String(text || "").slice(0, 100)
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("truncamento_detectado", "medium", from, {
+        origem: origemTruncamento,
+        motivoHeuristica: truncamentoHeuristica.motivo || null,
+        mensagemPreview: String(text || "").slice(0, 100)
+      });
+    }
+  }
 
   console.log("🧠 Intenção semântica observada:", {
     user: from,
