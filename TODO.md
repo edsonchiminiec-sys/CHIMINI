@@ -149,3 +149,37 @@ etapas avançando em cascata (lead diz "sim, fale mais" e fica com
 `compromisso: true` no banco), promover este TODO a fix dedicado.
 
 **Prioridade:** média. Defesa em profundidade adicional, não bloqueia hoje.
+
+---
+
+## 6. Bug 5b candidato — findings de prioridade ALTA não revalidados após regeneração
+
+**Contexto:** o fix do Bug 5 introduziu loop de revalidação após regeneração,
+mas apenas para findings de prioridade `critica`. Findings de prioridade
+`alta` que reaparecem após regeneração seguem para `sendWhatsAppMessage` sem
+nova tentativa.
+
+**Findings altos não revalidados:**
+- `loop_resposta_repetida`
+- `repeticao_de_tema`
+- `repeticao_objecao_taxa`
+- `resposta_generica_ou_fraca`
+- `tentativa_reiniciar_funil`
+
+**Por que ficaram de fora do Bug 5:** custo de revalidação adicional
+(`runFinalRouteMixGuard` é async com fetch OpenAI; rodar para todos os
+altos dobraria latência). Impacto comercial menor que críticos (não
+queimam lead diretamente, mas degradam qualidade conversacional).
+
+**Estratégia de correção (quando virar prioridade):** estender
+`revalidarCriticosEstruturais` para receber parâmetro `incluirAltos: bool`
+e rerodar `applyAntiRepetitionGuard`, `applyTaxObjectionAntiRepetitionGuard`,
+`isRepeatedBotReply`, etc. Ou: criar função análoga
+`revalidarAltosEstruturais` chamada SOMENTE se críticos já estão zerados
+e o monitoramento mostrar volume relevante.
+
+**Critério de priorização:** observar `regeneracao_sdr_tentativa_sucesso`
+nos próximos 14-30 dias. Se respostas regeneradas estão saindo com finding
+alto não tratado em volume relevante (>20% dos turnos pós-regen), atacar.
+
+**Prioridade:** baixa-média. Depende dos números do monitoramento.

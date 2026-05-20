@@ -8818,6 +8818,187 @@ Responda somente JSON válido neste formato:
   }
 }
 
+/*
+  Bug 5 — revalidação dos críticos estruturais após regeneração.
+
+  Roda subset de detectores que dependem da respostaFinal (texto da SDR),
+  permitindo confirmar se a regeneração realmente eliminou os críticos
+  detectados antes do gate.
+
+  Excluímos do subset:
+  - "continuidade_semantica_deve_ser_respeitada" — depende do analyzer de
+    continuidade do lead, não da respostaFinal; rerodar seria caro e não
+    mudaria resultado.
+  - findings ALTA/MÉDIA (loop_resposta_repetida, repeticao_de_tema,
+    repeticao_objecao_taxa, resposta_generica_ou_fraca,
+    tentativa_reiniciar_funil, material_ja_enviado) — impacto menor,
+    não justificam nova tentativa de regeneração custosa.
+
+  Todos os 8 detectores aqui foram verificados como puros (não escrevem
+  em banco, não disparam audit_events internos). Reusam funções
+  existentes sem efeito colateral.
+
+  ATENÇÃO: runFinalRouteMixGuard é async e faz fetch para OpenAI. Cada
+  chamada desta função adiciona ~2-3s de latência. O loop limita a
+  MAX_REGEN_ATTEMPTS=2 para não estourar custo nem latência.
+*/
+async function revalidarCriticosEstruturais({
+  respostaFinal,
+  currentLead,
+  leadText,
+  history,
+  preSdrConsultantAdvice,
+  semanticIntent,
+  commercialRouteDecision,
+  taxPhaseDecision,
+  podeIniciarColeta,
+  coletaLiberadaPorTaxaAceita
+}) {
+  const criticos = [];
+
+  const respostaLower = String(respostaFinal || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  // 1. taxa_aceita_nao_repetir_iniciar_coleta
+  if (
+    taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO" &&
+    canStartDataCollection(currentLead || {}) === true
+  ) {
+    const respostaNormalizada = normalizeTaxDecisionText(respostaFinal || "");
+    const respostaRepetiuTaxa =
+      /\b(taxa|1990|1\.990|r\$ ?1\.990|investimento|adesao|adesão|implantacao|implantação)\b/i.test(respostaNormalizada);
+    const respostaPediuNome =
+      respostaNormalizada.includes("nome completo") ||
+      respostaNormalizada.includes("me envie seu nome") ||
+      respostaNormalizada.includes("pode me enviar seu nome");
+
+    if (respostaRepetiuTaxa || !respostaPediuNome) {
+      criticos.push({
+        tipo: "taxa_aceita_nao_repetir_iniciar_coleta",
+        prioridade: "critica",
+        orientacao: "Lead aceitou taxa; não repetir tema; iniciar coleta pedindo apenas nome completo."
+      });
+    }
+  }
+
+  // 2. pre_analise_prematura
+  const mencionouPreAnalise = /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
+  if (mencionouPreAnalise && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
+    criticos.push({
+      tipo: "pre_analise_prematura",
+      prioridade: "critica",
+      orientacao: "Não prometer pré-análise antes do backend liberar coleta."
+    });
+  }
+
+  // 3. coleta_prematura
+  const startedDataCollectionAgora =
+    respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
+    respostaLower.includes("pode me enviar seu nome completo") ||
+    respostaLower.includes("me envie seu nome completo") ||
+    respostaLower.includes("qual seu nome completo") ||
+    respostaLower.includes("me passa seu nome completo");
+
+  if (startedDataCollectionAgora && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
+    criticos.push({
+      tipo: "coleta_prematura",
+      prioridade: "critica",
+      orientacao: "Não iniciar coleta antes do backend liberar; conduzir para etapa pendente do funil."
+    });
+  }
+
+  // 4. pedido_multiplos_dados
+  const multiDataRequestPattern =
+    /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
+  if (multiDataRequestPattern.test(respostaFinal)) {
+    criticos.push({
+      tipo: "pedido_multiplos_dados",
+      prioridade: "critica",
+      orientacao: "Pedir apenas UM dado por vez, começando pelo nome completo."
+    });
+  }
+
+  // 5. contradicao_orientacao_pre_sdr
+  const consultantGuard = enforceConsultantDirectionOnFinalReply({
+    respostaFinal,
+    consultantAdvice: preSdrConsultantAdvice || {},
+    currentLead,
+    leadText
+  });
+  if (consultantGuard.changed) {
+    criticos.push({
+      tipo: "contradicao_orientacao_pre_sdr",
+      prioridade: "critica",
+      reason: consultantGuard.reason,
+      orientacao: "A resposta contradiz a orientação do Consultor Pré-SDR."
+    });
+  }
+
+  // 6. pergunta_ou_objecao_nao_respondida
+  const unansweredGuard = enforceLeadQuestionWasAnswered({
+    leadText,
+    respostaFinal,
+    currentLead
+  });
+  if (unansweredGuard.changed) {
+    const originalMissingThemes = Array.isArray(unansweredGuard.reason?.missingThemes)
+      ? unansweredGuard.reason.missingThemes
+      : [];
+    const filteredMissingThemes = iqgFilterMissingThemesAlreadyUnderstood({
+      leadText,
+      missingThemes: originalMissingThemes
+    });
+    const deveIgnorar =
+      originalMissingThemes.length > 0 &&
+      filteredMissingThemes.length === 0;
+
+    if (!deveIgnorar) {
+      criticos.push({
+        tipo: "pergunta_ou_objecao_nao_respondida",
+        prioridade: "critica",
+        reason: unansweredGuard.reason,
+        orientacao: "Responder primeiro a pergunta/objeção real do lead."
+      });
+    }
+  }
+
+  // 7. disciplina_funil (enforceFunnelDiscipline)
+  const disciplinaFunil = enforceFunnelDiscipline({
+    respostaFinal,
+    currentLead,
+    leadText
+  });
+  if (disciplinaFunil.changed) {
+    criticos.push({
+      tipo: "disciplina_funil",
+      prioridade: "critica",
+      reason: disciplinaFunil.reason,
+      orientacao: "Não falar taxa cedo, não pedir dados antes da hora, não pular fase."
+    });
+  }
+
+  // 8. mistura_afiliado_homologado (async — chamada OpenAI)
+  const routeMixGuard = await runFinalRouteMixGuard({
+    lead: currentLead || {},
+    leadText,
+    respostaFinal,
+    semanticIntent,
+    commercialRouteDecision
+  });
+  if (routeMixGuard.changed) {
+    criticos.push({
+      tipo: "mistura_afiliado_homologado",
+      prioridade: "critica",
+      motivo: routeMixGuard.motivo || "",
+      orientacao: "Não misturar Afiliado e Homologado na mesma resposta."
+    });
+  }
+
+  return criticos;
+}
+
 async function regenerateSdrReplyWithGuardGuidance({
   currentLead = {},
   history = [],
@@ -21262,6 +21443,38 @@ async function flagHotLeadForHumanHandoff(from) {
   }
 }
 
+/*
+  Bug 5 — handoff humano quando regeneração não elimina críticos.
+
+  Distinto de flagHotLeadForHumanHandoff (que cobre encerramento de cadência
+  com lead em fase avançada): aqui o gatilho é "regeneração de resposta da
+  SDR falhou em eliminar violações críticas após N tentativas". O lead recebe
+  uma mensagem segura e cai na Janela 2 com motivo distinto para o dashboard
+  diferenciar os dois casos.
+*/
+async function flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes = []) {
+  const tipos = criticosRemanescentes.map(f => f.tipo).join(", ") || "desconhecido";
+
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: `Regeneração de resposta da SDR não eliminou violações críticas após 2 tentativas (${tipos}). Conversa precisa de atenção humana antes de seguir.`,
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date()
+  });
+
+  console.error("🚨 Lead marcado para Janela 2: regeneração falhou em eliminar críticos.", {
+    user: from,
+    criticosRemanescentes: tipos
+  });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("regeneracao_sdr_fallback_humano", "high", from, {
+      tentativas: 2,
+      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+    });
+  }
+}
+
 const FOLLOWUP_STEP_MESSAGES = {
   programa: {
     1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
@@ -27659,8 +27872,8 @@ if (sdrReviewFindings.length > 0) {
     .filter(([_, v]) => v)
     .map(([k, _]) => k);
 
-  const guardFindingsComDados = [
-    ...sdrReviewFindings,
+  const construirGuardFindingsComDados = (findings) => [
+    ...findings,
     ...(dadosJaPreenchidos.length > 0
       ? [{
           tipo: "dados_ja_recebidos_neste_turno",
@@ -27679,23 +27892,152 @@ if (sdrReviewFindings.length > 0) {
       : [])
   ];
 
-  respostaFinal = await regenerateSdrReplyWithGuardGuidance({
-  currentLead: {
-    ...(currentLead || {}),
-    semanticContinuity: typeof semanticContinuity !== "undefined" ? semanticContinuity : null
-  },
-  history,
-  userText: text,
-  primeiraRespostaSdr,
-  preSdrConsultantAdvice: preSdrConsultantAdvice || {},
-  preSdrConsultantContext,
-  guardFindings: guardFindingsComDados
-});
+  /*
+    Bug 5 — loop de regeneração com revalidação + fallback humano.
+
+    Antes, a regeneração era one-shot: o GPT regenerava UMA vez, e a resposta
+    regenerada seguia direto para sendWhatsAppMessage sem nova validação. Se
+    a regeneração não eliminasse o crítico (ou se introduzisse outro), o lead
+    recebia a violação assim mesmo.
+
+    Agora:
+    - Loop com MAX_REGEN_ATTEMPTS=2 tentativas.
+    - Após cada regeneração, revalidarCriticosEstruturais roda subset dos
+      detectores críticos que dependem da respostaFinal (8 detectores).
+    - Se ainda crítico após N tentativas, fallback duplo:
+      (a) substituir respostaFinal por mensagem segura de handoff;
+      (b) marcar lead na Janela 2 via flagLeadForRegenerationFailureHandoff.
+    - Observabilidade: 4 audit_events distintos (gate_disparado,
+      tentativa_sucesso, tentativa_falha, fallback_humano).
+  */
+  const criticosIniciais = sdrReviewFindings
+    .filter(f => f.prioridade === "critica")
+    .map(f => f.tipo);
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("regeneracao_sdr_gate_disparado", "medium", from, {
+      criticosIniciais,
+      totalFindings: sdrReviewFindings.length
+    });
+  }
+
+  const aplicarAjusteGenero = (texto) => {
+    const genero = currentLead?.generoProvavel || extractedData?.generoProvavel;
+    if (genero === "masculino") {
+      return texto
+        .replace(/\binteressada\b/gi, "interessado")
+        .replace(/\bpronta\b/gi, "pronto")
+        .replace(/\bpreparada\b/gi, "preparado");
+    }
+    if (genero === "feminino") {
+      return texto
+        .replace(/\binteressado\b/gi, "interessada")
+        .replace(/\bpronto\b/gi, "pronta")
+        .replace(/\bpreparado\b/gi, "preparada");
+    }
+    return texto;
+  };
+
+  const MAX_REGEN_ATTEMPTS = 2;
+  let regenAttempts = 0;
+  let findingsParaProximaTentativa = sdrReviewFindings;
+  let criticosRemanescentes = sdrReviewFindings.filter(f => f.prioridade === "critica");
+
+  while (criticosRemanescentes.length > 0 && regenAttempts < MAX_REGEN_ATTEMPTS) {
+    regenAttempts++;
+
+    const respostaAnterior = respostaFinal;
+    const novaResposta = await regenerateSdrReplyWithGuardGuidance({
+      currentLead: {
+        ...(currentLead || {}),
+        semanticContinuity: typeof semanticContinuity !== "undefined" ? semanticContinuity : null
+      },
+      history,
+      userText: text,
+      primeiraRespostaSdr,
+      preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+      preSdrConsultantContext,
+      guardFindings: construirGuardFindingsComDados(findingsParaProximaTentativa)
+    });
+
+    if (!novaResposta || novaResposta === respostaAnterior) {
+      console.error("⚠️ Regeneração falhou silenciosamente:", {
+        user: from,
+        tentativa: regenAttempts,
+        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+      });
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
+          tentativa: regenAttempts,
+          motivo: "regeneracao_silenciosamente_devolveu_resposta_anterior",
+          criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+        });
+      }
+      break;
+    }
+
+    respostaFinal = aplicarAjusteGenero(novaResposta);
+
+    criticosRemanescentes = await revalidarCriticosEstruturais({
+      respostaFinal,
+      currentLead,
+      leadText: text,
+      history,
+      preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+      semanticIntent,
+      commercialRouteDecision,
+      taxPhaseDecision: typeof taxPhaseDecision !== "undefined" ? taxPhaseDecision : null,
+      podeIniciarColeta,
+      coletaLiberadaPorTaxaAceita
+    });
+
+    findingsParaProximaTentativa = criticosRemanescentes;
+
+    if (criticosRemanescentes.length === 0) {
+      console.log("🔁 Regeneração eliminou todos os críticos:", {
+        user: from,
+        tentativa: regenAttempts,
+        criticosResolvidos: criticosIniciais
+      });
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("regeneracao_sdr_tentativa_sucesso", "low", from, {
+          tentativa: regenAttempts,
+          criticosResolvidos: criticosIniciais
+        });
+      }
+      break;
+    }
+
+    console.warn("⚠️ Regeneração resolveu parte mas ainda há críticos:", {
+      user: from,
+      tentativa: regenAttempts,
+      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+    });
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
+        tentativa: regenAttempts,
+        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+      });
+    }
+  }
+
+  // Fallback final: se ainda crítico após MAX_REGEN_ATTEMPTS, mensagem segura + Janela 2.
+  if (criticosRemanescentes.length > 0) {
+    respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
+
+    try {
+      await flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes);
+    } catch (handoffError) {
+      console.error("Erro ao marcar lead para Janela 2 após falha de regeneração (ignorado):", handoffError.message);
+    }
+  }
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
     user: from,
     quantidadeProblemasDetectados: sdrReviewFindings.length,
     problemas: sdrReviewFindings.map(item => item.tipo),
+    tentativasDeRegeneracao: regenAttempts,
+    caiuNoFallbackHumano: criticosRemanescentes.length > 0,
     primeiraRespostaSdr,
     respostaFinal
   });
