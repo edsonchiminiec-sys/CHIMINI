@@ -1837,6 +1837,9 @@ const MAX_PROCESSED_MESSAGES = 5000;
 const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem (funil)
 const TYPING_DEBOUNCE_MS_COLETA = 5000; // espera 5s durante coleta de dados
 const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
+
+// Cooldown anti-spam para reenvio forçado de arquivo (lead reclamou que não recebeu)
+const FILE_RESEND_COOLDOWN_MS = 30 * 1000; // 30s entre reenvios do mesmo arquivo
 /* =========================
    STATE
 ========================= */
@@ -19806,7 +19809,13 @@ function removeFileAction(actions = [], keyToRemove = "") {
   }
 }
 
-async function sendFileOnce(from, key) {
+function leadAskedFileResend(text = "") {
+  return /\b(n[aã]o\s*(recebi|chegou|veio|baixou|abriu|consegui|deu|caiu|mandou|tenho|funcionou)|n[aã]o\s*recebido|cad[eê]|onde\s*est[áa]|manda\s*de\s*novo|envia\s*de\s*novo|reenvia|manda\s*novamente|envia\s*novamente|me\s*manda|manda\s*a[ií]|mandou\s*nada|sumiu|perdi|apaguei|t[áa]\s*quebrado)\b/i.test(text || "");
+}
+
+async function sendFileOnce(from, key, options = {}) {
+  const { forceResend = false, resendReason = null } = options;
+
   /*
     ETAPA 7 PRODUÇÃO — arquivo só é marcado como enviado depois do sucesso real.
 
@@ -19819,6 +19828,11 @@ async function sendFileOnce(from, key) {
     2. se der certo, marca sentFiles;
     3. se falhar, NÃO marca sentFiles;
     4. grava log do erro para auditoria.
+
+    BUG 2 — reenvio quando lead reclama:
+    Se forceResend=true (caller detectou reclamação tipo "não recebi", "cadê"),
+    a função ignora o bloqueio de "já enviou", mas respeita o cooldown
+    FILE_RESEND_COOLDOWN_MS para evitar spam por mensagens repetidas.
   */
 
   if (!FILES[key]) {
@@ -19845,12 +19859,13 @@ async function sendFileOnce(from, key) {
   const sentField = `sentFiles.${key}`;
 
   const lead = await db.collection("leads").findOne({ user: from });
+  const sentAt = lead?.sentFiles?.[key];
 
-  if (lead?.sentFiles?.[key]) {
+  if (sentAt && !forceResend) {
     console.log("📎 Arquivo não reenviado porque já foi enviado:", {
       user: from,
       arquivo: key,
-      enviadoEm: lead.sentFiles[key]
+      enviadoEm: sentAt
     });
 
     await db.collection("file_send_logs").insertOne({
@@ -19858,12 +19873,48 @@ async function sendFileOnce(from, key) {
       fileKey: key,
       filename: FILES[key]?.filename || "",
       status: "skipped_already_sent",
-      alreadySentAt: lead.sentFiles[key],
+      alreadySentAt: sentAt,
       createdAt: new Date()
     });
 
     return false;
   }
+
+  if (sentAt && forceResend) {
+    const ageMs = Date.now() - new Date(sentAt).getTime();
+
+    if (ageMs < FILE_RESEND_COOLDOWN_MS) {
+      console.log("📎 Reenvio ignorado (cooldown anti-spam):", {
+        user: from,
+        arquivo: key,
+        motivo: resendReason || "forced_resend_within_cooldown",
+        ultimoEnvioMs: ageMs,
+        cooldownMs: FILE_RESEND_COOLDOWN_MS
+      });
+
+      await db.collection("file_send_logs").insertOne({
+        user: from,
+        fileKey: key,
+        filename: FILES[key]?.filename || "",
+        status: "resend_cooldown_active",
+        alreadySentAt: sentAt,
+        ageMs,
+        resendReason: resendReason || null,
+        createdAt: new Date()
+      });
+
+      return false;
+    }
+
+    console.log("📎 Reenvio de arquivo autorizado:", {
+      user: from,
+      arquivo: key,
+      motivo: resendReason || "forced_resend",
+      envioAnterior: sentAt
+    });
+  }
+
+  const isResend = Boolean(sentAt && forceResend);
 
   try {
     await db.collection("file_send_logs").insertOne({
@@ -19871,6 +19922,8 @@ async function sendFileOnce(from, key) {
       fileKey: key,
       filename: FILES[key]?.filename || "",
       status: "started",
+      isResend,
+      resendReason: isResend ? resendReason : null,
       createdAt: new Date()
     });
 
@@ -19887,7 +19940,9 @@ async function sendFileOnce(from, key) {
             filename: FILES[key]?.filename || "",
             mediaId: sendResult?.mediaId || "",
             messageId: sendResult?.messageId || "",
-            sentAt: new Date()
+            sentAt: new Date(),
+            isResend,
+            resendReason: isResend ? resendReason : null
           },
           updatedAt: new Date()
         }
@@ -19899,19 +19954,28 @@ async function sendFileOnce(from, key) {
       user: from,
       fileKey: key,
       filename: FILES[key]?.filename || "",
-      status: "success",
+      status: isResend ? "resent_after_complaint" : "success",
       mediaId: sendResult?.mediaId || "",
       messageId: sendResult?.messageId || "",
+      isResend,
+      resendReason: isResend ? resendReason : null,
+      previousSentAt: isResend ? sentAt : null,
       createdAt: new Date()
     });
 
-    console.log("✅ Arquivo marcado como enviado após sucesso real:", {
-      user: from,
-      arquivo: key,
-      filename: FILES[key]?.filename || "",
-      mediaId: sendResult?.mediaId || "",
-      messageId: sendResult?.messageId || ""
-    });
+    console.log(
+      isResend
+        ? "✅ Arquivo REENVIADO com sucesso após reclamação do lead:"
+        : "✅ Arquivo marcado como enviado após sucesso real:",
+      {
+        user: from,
+        arquivo: key,
+        filename: FILES[key]?.filename || "",
+        mediaId: sendResult?.mediaId || "",
+        messageId: sendResult?.messageId || "",
+        motivo: isResend ? resendReason : null
+      }
+    );
 
     return true;
   } catch (error) {
@@ -19919,7 +19983,8 @@ async function sendFileOnce(from, key) {
       user: from,
       arquivo: key,
       filename: FILES[key]?.filename || "",
-      erro: error.message
+      erro: error.message,
+      tentativaReenvio: isResend
     });
 
     await db.collection("file_send_logs").insertOne({
@@ -19928,6 +19993,8 @@ async function sendFileOnce(from, key) {
       filename: FILES[key]?.filename || "",
       status: "failed",
       errorMessage: error.message,
+      isResend,
+      resendReason: isResend ? resendReason : null,
       createdAt: new Date()
     });
 
@@ -27955,6 +28022,8 @@ for (const action of actions) {
   }
 }
 
+const leadReclamouNaoRecebimento = leadAskedFileResend(text);
+
 for (const key of fileKeys) {
   if (!canSendBusinessFile(key, currentLead || {})) {
     console.log("📎 Arquivo não enviado por regra comercial:", {
@@ -27965,7 +28034,10 @@ for (const key of fileKeys) {
     continue;
   }
 
-  await sendFileOnce(from, key);
+  await sendFileOnce(from, key, {
+    forceResend: leadReclamouNaoRecebimento,
+    resendReason: leadReclamouNaoRecebimento ? "lead_reclamou_nao_recebimento" : null
+  });
 }
 
 // Reagenda follow-up após resposta da SDR.
