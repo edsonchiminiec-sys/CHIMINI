@@ -22104,8 +22104,20 @@ async function bootstrapFollowupsParaLeadsExistentes() {
       const delayAleatorio = (2 + Math.random() * 3) * 60 * 1000;
       const proximoFollowupEm = new Date(agora.getTime() + delayAleatorio);
 
-      // Ajustar para horário comercial se necessário
-      const dataAjustada = config.businessOnly ? computeNextFollowupDate({ ...config, delayMs: delayAleatorio }) : proximoFollowupEm;
+      /*
+        Bug D — bootstrap rodando fora do expediente.
+        Se o servidor reinicia de madrugada, o bootstrap roda às 02h e
+        agenda step 1 (businessOnly=false) pra 02h05 — disparo na madrugada.
+        Mesma classe do Bug B (Step 1 fora do expediente). Aqui aplicamos
+        a mesma trava: se estamos fora do horário comercial, forçamos
+        businessOnly=true e o adjustToBusinessBR posterga pra próxima
+        abertura comercial.
+      */
+      const dataAjustada = isBusinessTime()
+        ? (config.businessOnly
+            ? computeNextFollowupDate({ ...config, delayMs: delayAleatorio })
+            : proximoFollowupEm)
+        : computeNextFollowupDate({ ...config, businessOnly: true, delayMs: delayAleatorio });
 
       const novaVersao = Number(lead.followupVersionDb || 0) + 1;
 
@@ -30870,11 +30882,15 @@ app.get("/lead/:user/janela/:janela", async (req, res) => {
         motivoPerda: null,
         encerradoPor: null,
         origemEncerramento: null,
-        // Reativa a cadência do zero
+        // Reativa a cadência do zero (mesma trava do Bug B / Bug D — step 1
+        // só agenda com delay curto se estamos dentro do expediente; fora
+        // dele, posterga pra próxima abertura comercial).
         followupStep: 1,
         followupVersionDb: Number(lead.followupVersionDb || 0) + 1,
         followupLockEm: null,
-        proximoFollowupEm: computeNextFollowupDate(FOLLOWUP_CONFIG[0]),
+        proximoFollowupEm: isBusinessTime()
+          ? computeNextFollowupDate(FOLLOWUP_CONFIG[0])
+          : computeNextFollowupDate({ ...FOLLOWUP_CONFIG[0], businessOnly: true }),
         reativadoPeloDashboardEm: new Date()
       };
 

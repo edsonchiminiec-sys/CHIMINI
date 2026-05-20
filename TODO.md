@@ -57,3 +57,40 @@ usadas. Acabei caindo nessa quando fiz as correções dos Problemas 1-4.
 **Sugestão de correção:** apagar a função inteira (~130 linhas).
 
 **Prioridade:** baixa (cosmético, mas reduz ruído).
+
+---
+
+## 4. Bug E candidato — proteção 15min do cron sem ajuste de expediente
+
+**Onde:** `server.js:~21900`, dentro de `runFollowupCronTick`, logo após pegar o lock atômico.
+
+**Trecho:**
+```js
+const protecaoProximoFollowup = new Date(Date.now() + 15 * 60 * 1000);
+await db.collection("leads").updateOne(
+  { user: candidato.user, followupLockEm: novoLock },
+  { $set: { proximoFollowupEm: protecaoProximoFollowup } }
+);
+```
+
+**Problema:** seta `proximoFollowupEm = agora + 15min` sem ajustar para horário
+comercial. Em condição normal, `sendAutomaticFollowupIfStillValid` roda em
+seguida e sobrescreve com a data correta (via `computeNextFollowupDate` /
+`adjustToBusinessBR`). Esse valor **só persiste** se a função falhar antes
+do avanço (timeout do WhatsApp, erro no GPT, exception não tratada).
+
+**Por que ficou fora do hotfix de cadência madrugada (Bugs A/B/C/D):** caso
+raro — exige falha específica entre o lock e o avanço do step. Não foi a
+causa direta do caso Paulo. O log defensivo do commit `0056e38` (instrumentação
+temporária) captura via `disparo_fora_expediente_detectado` se acontecer.
+
+**Sugestão de correção:** ajustar a proteção também ao horário comercial.
+Algo como:
+```js
+const protecaoProximoFollowup = isBusinessTime()
+  ? new Date(Date.now() + 15 * 60 * 1000)
+  : adjustToBusinessBR(new Date(Date.now() + 15 * 60 * 1000));
+```
+
+**Prioridade:** baixa-média. Só ataca se o `disparo_fora_expediente_detectado`
+mostrar evidência de disparo causado por esse caminho nos próximos 14 dias.
