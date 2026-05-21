@@ -280,3 +280,129 @@ sintomas; este Bug 12 ataca a causa estrutural.
 
 **Não atacar agora.** Depende dos resultados da Fase 4 estabilizarem em
 produção primeiro.
+
+---
+
+## 11. Bug 13 candidato — curva-bola jurídica/financeira grave (Cat 3 da auditoria)
+
+**Cenário não coberto:** "vou processar a IQG", "minha empresa faliu",
+"estou em recuperação judicial", "tive problema na justiça".
+
+**Cobertura atual:** PARCIAL. SYSTEM_PROMPT (linhas 9242-9275) cobre nome
+limpo / avalista / restrição / negativação / protesto. NÃO cobre falência,
+processo judicial, ameaça de ação legal contra a IQG.
+
+**Critério de priorização:** zero casos observados nas 95 conversas
+pós-hotfix (24h). Atacar apenas se aparecer evidência de produção.
+
+**Estratégia esboçada:** adicionar bloco no SYSTEM_PROMPT após a regra de
+nome limpo, com orientação de "reconhecer, não minimizar, redirecionar para
+equipe comercial humana via Janela 2".
+
+**Prioridade:** baixa (latente).
+
+---
+
+## 12. Bug 14 candidato — silêncio prolongado, conteúdo da retomada (Cat 6)
+
+**Cenário não coberto:** lead voltou após 7+ dias de silêncio, conversa
+antiga. A cadência cobre o disparo do follow-up, mas o conteúdo da
+retomada quando ele volta espontaneamente é genérico demais.
+
+**Cobertura atual:** PARCIAL. Linhas 10298, 10311, 10670, 10675 do
+SYSTEM_PROMPT cobrem "retomar com pergunta" e "não repetir texto
+completo". NÃO cobrem: reconhecimento de tempo passado, oferecer
+atualização breve, confirmar "de onde continuamos?".
+
+**Critério de priorização:** zero casos observados. Atacar apenas se
+aparecer.
+
+**Estratégia esboçada:** adicionar bloco no SYSTEM_PROMPT com orientação
+"se o lead voltou depois de mais de 5 dias de silêncio, reconheça
+brevemente o tempo passado e proponha continuar de onde paramos".
+
+**Prioridade:** baixa (latente).
+
+---
+
+## 13. Bug 15 candidato — comparação com concorrente (Cat 7)
+
+**Cenário não coberto:** "vi outra empresa vendendo X mais barato",
+"vocês vs Nano vs ProdutoY", "qual a diferença pra Z".
+
+**Cobertura atual:** PARCIAL e DEFENSIVA. SYSTEM_PROMPT linha ~10262 proíbe
+recomendar concorrente. NÃO há orientação OFENSIVA: como acolher a
+curiosidade do lead, como pivotar para valor IQG sem atacar o concorrente,
+como reconhecer o preço dele.
+
+**Critério de priorização:** zero casos observados. Atacar apenas se
+aparecer.
+
+**Estratégia esboçada:** complementar a regra defensiva com bloco "reconheça
+a comparação, reforce diferencial estrutural (suporte, treinamento,
+comodato), evite ataque direto ao concorrente".
+
+**Prioridade:** baixa (latente).
+
+---
+
+## 14. Bug 16 candidato — expertise técnica não-piscineiro (Cat 10)
+
+**Cenário não coberto:** "trabalho com química há 20 anos", "sou químico
+industrial", "sou agrônomo", "conheço esse mercado".
+
+**Cobertura atual:** PARCIAL. SYSTEM_PROMPT linha 9748-9751 cobre persona
+piscineiro especificamente. NÃO cobre outras expertises técnicas
+relacionadas (químico, agrônomo, profissional setorial genérico).
+
+**Critério de priorização:** zero casos observados. Atacar apenas se
+aparecer.
+
+**Estratégia esboçada:** generalizar a regra do piscineiro para "se lead
+demonstra expertise técnica do setor (química, agronomia, indústria),
+adaptar profundidade do tom e usar conhecimento dele como ponte de
+credibilidade".
+
+**Prioridade:** baixa (latente).
+
+---
+
+## 15. Bug 17 candidato — instrumentação do buffer absorvido
+
+**Onde:** `server.js:1984-1989` (dentro de `consumeBuffer` ou similar) —
+caminho onde uma invocação do webhook desperta após debounce e descobre
+que o buffer já foi consumido por outra invocação.
+
+**Trecho atual:**
+```js
+const buffer = await db.collection("incoming_message_buffers").findOne({ _id: bufferId });
+if (!buffer) {
+  return { shouldContinue: false, text: "" };
+}
+```
+
+**Problema:** quando isso acontece, o `audit_event` registra
+`respostaFinalSdr: ""` para o `messageId` absorvido. Aparece nos logs como
+"SDR não respondeu ao lead", mas é comportamento legítimo (a SDR respondeu
+via outra invocação que agregou o buffer). Confunde análise de auditoria
+e induz a falsos alarmes.
+
+**Confirmado empiricamente:** lead 554991870845 mandou 3 fragmentos rápidos,
+buffer agregou em 1 mensagem combinada, SDR respondeu 1 vez. Audit dos 2
+fragmentos absorvidos veio com `respostaFinalSdr: ""`.
+
+**Estratégia esboçada:** quando detectar buffer ausente, em vez de retornar
+silenciosamente, gravar audit_event tipo:
+```js
+{
+  eventType: "buffer_absorbed_no_response_expected",
+  payload: {
+    bufferAbsorbedBy: <messageId_original>,
+    messageId: <messageId_atual>
+  }
+}
+```
+
+**Prioridade:** baixa. É instrumentação de observabilidade, não corrige
+comportamento. Atacar quando o time de monitoramento reportar confusão
+recorrente com audit "vazio".
