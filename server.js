@@ -25106,6 +25106,14 @@ if (devePularGptsNaColeta) {
     }
 
     // Salva resposta no histórico para continuidade
+    // FIX Bug 20-A: garantir que a mensagem do lead fique no histórico
+    // mesmo quando o handoff faz early-return.
+    history.push({
+      role: "user",
+      content: text,
+      createdAt: new Date(),
+      origem: "lead"
+    });
     history.push({
       role: "assistant",
       content: mensagemHandoff,
