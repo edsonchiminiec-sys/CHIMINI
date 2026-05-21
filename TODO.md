@@ -183,3 +183,100 @@ nos próximos 14-30 dias. Se respostas regeneradas estão saindo com finding
 alto não tratado em volume relevante (>20% dos turnos pós-regen), atacar.
 
 **Prioridade:** baixa-média. Depende dos números do monitoramento.
+
+---
+
+## 7. Bug 9 candidato — barreiras finais do orquestrador sobrescrevem fallback humano do Bug 5
+
+**Onde:** `server.js:~28085` (fallback humano do Bug 5 substitui `respostaFinal`) →
+`server.js:~28400+` (barreiras finais de coleta podem sobrescrever em casos
+limítrofes).
+
+**Problema:** quando o fallback do Bug 5 dispara (regeneração falhou em
+eliminar críticos após 2 tentativas), substitui `respostaFinal` pela
+mensagem de handoff humano. Mas o flow continua: linhas 28253, 28284,
+28292, 28400+ ainda rodam sobre essa string. Se o lead tiver dados
+completos no banco, a barreira final 28400+ pode trocar o handoff humano
+por uma mensagem de coleta automática — anulando o fallback.
+
+**Identificado:** Fase 1 da auditoria de fluidez, observação S-1.
+
+**Sugestão:** após substituir `respostaFinal` no fallback humano, definir
+flag `respostaFinalIsHumanHandoff = true` e fazer as barreiras finais
+checarem essa flag antes de sobrescrever.
+
+**Prioridade:** média. Não bloqueia produção, mas anula a proteção do Bug 5
+em cenário específico (lead com dados completos + regeneração falhando).
+
+---
+
+## 8. Bug 10 candidato — latência 12-20s por GPTs em cascata
+
+**Onde:** caminho crítico inteiro do webhook (~7-8 chamadas OpenAI no pior
+caso: 3 classifiers + composer + regenerator + revalidação async +
+finalRouteMixGuard).
+
+**Problema:** latência total no pior cenário atinge ~12-20s. Já está no
+limite do que o lead aguarda no WhatsApp sem mandar nova mensagem (que
+quebra contexto, força debounce, etc.).
+
+**Identificado:** Fase 1 da auditoria de fluidez, observação S-4.
+
+**Estratégia possível:** rodar classifiers em paralelo onde possível
+(continuidade + intent + truncamento podem ser merged num só prompt),
+adicionar cache de continuity analyzer pra turnos consecutivos, fazer
+runFinalRouteMixGuard estritamente sob demanda.
+
+**Prioridade:** baixa-média. Projeto à parte. Atacar quando outros fixes
+estabilizarem e métricas mostrarem latência percebida como problema real
+pelos leads (drop-off por debounce, etc.).
+
+---
+
+## 9. Bug 11 candidato — possível chamada órfã de regenerateSdr
+
+**Onde:** `server.js:~28209` — segunda chamada a `regenerateSdrReplyWithGuardGuidance`,
+fora do loop introduzido pelo Bug 5.
+
+**Problema suspeito:** o Bug 5 introduziu loop com retry no gate principal
+(linha ~27641). Mas existe outra chamada a `regenerateSdrReplyWithGuardGuidance`
+na linha ~28209 — pode ser:
+(a) remanescente pré-Bug 5 que deveria ter sido removida, ou
+(b) chamada legítima de outro fluxo paralelo.
+
+**Identificado:** Fase 1 da auditoria de fluidez, observação S-2.
+
+**Próximo passo:** investigar o contexto da linha 28209 — se for remanescente,
+remover; se for legítimo, documentar.
+
+**Prioridade:** baixa. Não causa bug observável (chamada redundante apenas
+gasta 1 round trip OpenAI extra em alguns casos).
+
+---
+
+## 10. Bug 12 candidato — refatoração arquitetural do SYSTEM_PROMPT
+
+**Onde:** SYSTEM_PROMPT principal (`server.js:9142-11002`, 1861 linhas) +
+relação com Pré-SDR dinâmico.
+
+**Problema:** o SYSTEM_PROMPT tem ~22 regras "NUNCA" + 13+ regras "SEMPRE"
+absolutas. Quando o `runConsultantAssistant` (Pré-SDR) gera orientação
+dinâmica contextual (ex: "este lead precisa de abordagem cuidadosa, evite
+valores específicos"), essa orientação pode ser contradita por uma regra
+"SEMPRE mencionar X" do prompt principal. Em produção o composer pende
+para qualquer dos dois — pelo princípio de recência, geralmente o
+Pré-SDR vence, mas em casos de ambiguidade reverte para o SYSTEM_PROMPT.
+
+**Identificado:** Fase 2.2 da auditoria de fluidez, conflito P-2.
+
+**Estratégia:** refatorar o SYSTEM_PROMPT para reduzir regras absolutas
+("SEMPRE/NUNCA") em favor de regras condicionais ("SE X, ENTÃO Y, EXCETO
+quando Z"), liberando espaço para o Pré-SDR moldar comportamento turno a
+turno sem conflito.
+
+**Prioridade:** média-alta. É o trabalho de longo prazo da fluidez
+conversacional. As mudanças cirúrgicas da Fase 4 (em curso) atacam
+sintomas; este Bug 12 ataca a causa estrutural.
+
+**Não atacar agora.** Depende dos resultados da Fase 4 estabilizarem em
+produção primeiro.
