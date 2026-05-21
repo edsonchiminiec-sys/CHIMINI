@@ -25089,7 +25089,27 @@ if (devePularGptsNaColeta) {
   */
   const revendedorHeuristica = detectRevendedorOuLojistaPretendido(text);
   const revendedorClassifier = semanticIntent?.leadDeclareSerRevendedorOuLojista === true;
-  const leadEhRevendedor = revendedorHeuristica.detected || revendedorClassifier;
+  const leadEhRevendedor = revendedorHeuristica.detected;
+
+  // FIX Bug 21: classifier sozinho (sem corroboração heurística) tem
+  // alta taxa de falso positivo. Loga como suspeita pra análise futura
+  // sem disparar handoff. Não retorna — segue fluxo normal SDR.
+  if (revendedorClassifier && !revendedorHeuristica.detected) {
+    try {
+      await auditSystemEvent(
+        "revendedor_classifier_descartado",
+        "low",
+        from,
+        {
+          textoAnalisado: String(text).slice(0, 300),
+          heuristicaCheckedPatterns: REVENDEDOR_LOJISTA_PATTERNS.length,
+          faseQualificacao: currentLead?.faseQualificacao || "desconhecida"
+        }
+      );
+    } catch (auditError) {
+      console.error("Erro ao registrar revendedor_classifier_descartado (ignorado):", auditError.message);
+    }
+  }
 
   if (leadEhRevendedor) {
     const origemRevendedor =
