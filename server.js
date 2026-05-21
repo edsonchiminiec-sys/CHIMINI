@@ -34826,7 +34826,154 @@ tr:hover td {
     res.status(500).send("Erro ao carregar dashboard.");
   }
 });
-   
+
+/* =========================
+   ROTA DE DIAGNÓSTICO — investigação Bug 20 (mensagens perdidas)
+   Uso: GET /diagnostico-anderson?senha=SENHA
+   Read-only. Não altera nada. Pode ser removida depois.
+   ========================= */
+app.get("/diagnostico-anderson", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const userTarget = "5532920001830";
+    const userMaskedRegex = /5532.*30/;
+
+    // 1. Conversa completa do Anderson em conversations
+    const conversation = await db.collection("conversations").findOne(
+      { user: userTarget },
+      { projection: { messages: 1, totalMessages: 1, createdAt: 1, updatedAt: 1 } }
+    );
+
+    const messagesFromMongo = (conversation?.messages || []).map(m => ({
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt
+    }));
+
+    // 2. Buffer órfão do Anderson + contagem global
+    const bufferOrfao = await db.collection("incoming_message_buffers").find({
+      $or: [
+        { _id: userTarget },
+        { user: userTarget }
+      ]
+    }).toArray();
+
+    const totalBuffersGlobal = await db.collection("incoming_message_buffers")
+      .countDocuments({});
+
+    // 3. Audit events do Anderson — todos
+    const auditAll = await db.collection("audit_events").find({
+      $or: [
+        { userMasked: userMaskedRegex },
+        { user: userTarget }
+      ]
+    })
+    .sort({ timestamp: 1 })
+    .project({
+      timestamp: 1,
+      component: 1,
+      eventType: 1,
+      severity: 1,
+      "payload.mensagemLead": 1,
+      "payload.respostaFinal": 1,
+      "payload.criticosRemanescentes": 1,
+      "payload.tiposIgnorados": 1
+    })
+    .toArray();
+
+    // 4. Buscas específicas por frases-chave nos audits
+    const buscarFrase = async (regex) => {
+      const docs = await db.collection("audit_events").find({
+        $and: [
+          { $or: [ { userMasked: userMaskedRegex }, { user: userTarget } ] },
+          { $or: [
+            { "payload.mensagemLead": { $regex: regex, $options: "i" } },
+            { "payload.respostaFinal": { $regex: regex, $options: "i" } },
+            { "payload.text": { $regex: regex, $options: "i" } }
+          ] }
+        ]
+      }).project({
+        timestamp: 1,
+        eventType: 1,
+        component: 1,
+        "payload.mensagemLead": 1,
+        "payload.text": 1
+      }).toArray();
+      return docs;
+    };
+
+    const buscaRepresentante = await buscarFrase("representante");
+    const buscaDistribuidor = await buscarFrase("distribuidor");
+    const buscaValidade = await buscarFrase("validade");
+    const buscaExperiencia = await buscarFrase("28 anos");
+
+    // 5. Resumo agregado por eventType
+    const resumoEventTypes = {};
+    for (const ev of auditAll) {
+      resumoEventTypes[ev.eventType] = (resumoEventTypes[ev.eventType] || 0) + 1;
+    }
+
+    return res.json({
+      _meta: {
+        geradoEm: new Date().toISOString(),
+        userAlvo: userTarget,
+        descricao: "Diagnostico Bug 20 - Anderson"
+      },
+
+      conversations: {
+        totalMessagesField: conversation?.totalMessages || 0,
+        countRealDoArray: messagesFromMongo.length,
+        countUserRole: messagesFromMongo.filter(m => m.role === "user").length,
+        countAssistantRole: messagesFromMongo.filter(m => m.role === "assistant").length,
+        createdAt: conversation?.createdAt || null,
+        updatedAt: conversation?.updatedAt || null,
+        mensagensCompletas: messagesFromMongo
+      },
+
+      buffer: {
+        totalGlobalNoSistema: totalBuffersGlobal,
+        anderson: bufferOrfao
+      },
+
+      auditEvents: {
+        totalGeral: auditAll.length,
+        resumoPorEventType: resumoEventTypes,
+        amostraCronologica: auditAll
+      },
+
+      buscaPorFrase: {
+        representante: {
+          count: buscaRepresentante.length,
+          eventos: buscaRepresentante
+        },
+        distribuidor: {
+          count: buscaDistribuidor.length,
+          eventos: buscaDistribuidor
+        },
+        validade: {
+          count: buscaValidade.length,
+          eventos: buscaValidade
+        },
+        "28 anos": {
+          count: buscaExperiencia.length,
+          eventos: buscaExperiencia
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("Erro em /diagnostico-anderson:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
