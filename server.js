@@ -4517,6 +4517,63 @@ const TRUNCATION_SHORT_WORD_WHITELIST = new Set([
 
 const TRUNCATION_RARE_FINAL_CONSONANTS = /[cfgjkpqtvwy]$/i;
 
+/*
+  Bug 8 — Detecção determinística de lead que se declara lojista,
+  revendedor, distribuidor ou representante comercial.
+
+  Esse caminho comercial é diferente do Programa Parceiro Homologado
+  e exige atendimento humano da equipe IQG. Heurística é dupla
+  defesa (camada A) com o classificador semântico (campo
+  leadDeclareSerRevendedorOuLojista — camada B).
+
+  Padrões cobrem variantes coloquiais BR observadas em produção:
+  - "sou/seria representante" (caso real do lead José)
+  - "sou representante moro em Ponte Nova MG" (caso real do Edson)
+  - "tenho minha loja" / "trabalho com atacado"
+*/
+const REVENDEDOR_LOJISTA_PATTERNS = [
+  // "sou/ser/seria + categoria"
+  /\bs(?:ou|er|eria) (?:lojista|revendedor[a]?|distribuidor[a]?|representante comercial)\b/i,
+  /\bs(?:ou|er|eria) (?:um |uma )?representante\b/i,
+
+  // "tenho/minha + estrutura" (cnpj sozinho removido — ambíguo)
+  /\btenho (?:loja|empresa|com[eé]rcio|distribuidora|revenda)\b/i,
+  /\bminha (?:loja|empresa|distribuidora|revenda|loja f[íi]sica)\b/i,
+
+  // "já vendo / quero revender"
+  /\bj[áa] (?:revendo|vendo) produtos\b/i,
+  /\bquero (?:revender|distribuir|representar)\b/i,
+  /\bcomprar (?:para revender|pra revender|com desconto|para minha loja|pra minha loja)\b/i,
+
+  // termos de revenda/atacado/distribuição
+  /\b(?:revenda|atacado|distribui[cç][aã]o) (?:de|dos|para)\b/i,
+  /\btrabalho com (?:atacado|distribui[cç][aã]o|revenda)\b/i,
+
+  // pedido de tabela/preço/margem para lojista
+  /\btabela (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
+  /\bpre[cç]o (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
+  /\bmargem (?:para |pra )?(?:lojistas?|revendedor)\b/i
+];
+
+function detectRevendedorOuLojistaPretendido(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return { detected: false, motivo: null, trecho: null };
+
+  for (let i = 0; i < REVENDEDOR_LOJISTA_PATTERNS.length; i++) {
+    const pattern = REVENDEDOR_LOJISTA_PATTERNS[i];
+    const match = pattern.exec(raw);
+    if (match) {
+      return {
+        detected: true,
+        motivo: `pattern_${i + 1}`,
+        trecho: match[0]
+      };
+    }
+  }
+
+  return { detected: false, motivo: null, trecho: null };
+}
+
 function detectMessageTruncation(text = "") {
   const raw = String(text || "").trim();
   if (!raw) return { truncated: false, motivo: null };
@@ -4594,6 +4651,7 @@ otherProductLineTopics: [],
     schedulingDate: "",
     schedulingTime: "",
     mensagemParecesTruncada: false,
+    leadDeclareSerRevendedorOuLojista: false,
     confidence: "baixa",
     reason: "Fallback local. Classificador semântico não executado ou falhou."
   };
@@ -5087,6 +5145,25 @@ REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
 
 - Se a última mensagem do lead termina de forma inesperada (palavra cortada no meio, preposição/artigo/pronome solto no final, frase interrompida sem ponto final ou interrogação), marque mensagemParecesTruncada true. Isso indica que a mensagem provavelmente foi cortada antes de chegar (limite do WhatsApp, transcrição de áudio incompleta, etc). Nesse caso NÃO invente o tema do que faltou — o backend vai pedir esclarecimento ao lead. Se a mensagem termina naturalmente (mesmo curta), marque false.
 
+- leadDeclareSerRevendedorOuLojista: marque true SOMENTE quando o lead afirma ser ou querer ser LOJISTA, REVENDEDOR, DISTRIBUIDOR ou REPRESENTANTE COMERCIAL com CNPJ próprio para REVENDER produtos IQG — caminho diferente do "Parceiro Homologado".
+
+  Exemplos VÁLIDOS (true):
+  - "sou lojista"
+  - "tenho minha loja e quero revender"
+  - "sou representante comercial"
+  - "seria um representante"
+  - "quero comprar para revender"
+  - "tenho CNPJ, qual a tabela para revenda?"
+  - "trabalho com atacado / distribuição"
+
+  NÃO marcar quando o lead apenas:
+  - pergunta "como funciona representação" sem se identificar como lojista atual;
+  - diz "trabalho com vendas" genérico;
+  - diz "sou autônomo" ou "trabalho por conta própria";
+  - se apresenta profissionalmente em fase final do funil (após aceite de taxa, em coleta de dados).
+
+  REGRA DE OURO: em dúvida, marque false. O backend tem heurística determinística que pega casos óbvios; o classificador só precisa capturar nuances semânticas que regex não pega.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRA — positiveCommitment (CRÍTICA)
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -5146,6 +5223,7 @@ Responda somente JSON válido neste formato:
   "dataCorrectionIntent": false,
   "requestedFile": "",
   "mensagemParecesTruncada": false,
+  "leadDeclareSerRevendedorOuLojista": false,
   "confidence": "baixa",
   "reason": ""
 }
@@ -5203,6 +5281,7 @@ Responda somente JSON válido neste formato:
     : [],
   requestedFile: parsed?.requestedFile || "",
   mensagemParecesTruncada: parsed?.mensagemParecesTruncada === true,
+  leadDeclareSerRevendedorOuLojista: parsed?.leadDeclareSerRevendedorOuLojista === true,
   confidence: parsed?.confidence || "baixa",
   reason: parsed?.reason || ""
 };
@@ -21522,6 +21601,40 @@ async function flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes
   }
 }
 
+/*
+  Bug 8 — handoff para Janela 2 quando lead declara ser revendedor/lojista.
+
+  Análogo a flagHotLeadForHumanHandoff (encerramento de cadência com lead
+  quente) e flagLeadForRegenerationFailureHandoff (regeneração falhou).
+  Distinção no dashboard via motivo específico para o operador identificar
+  o caso e oferecer o caminho comercial correto (não Parceiro Homologado).
+*/
+async function flagLeadAsRevendedorLojista(from, contexto = {}) {
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: "Lead declarou ser lojista/revendedor/representante comercial — caminho comercial diferente do Programa Parceiro Homologado, exige atendimento humano da equipe IQG.",
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date(),
+    leadEhRevendedorLojista: true,
+    leadEhRevendedorLojistaEm: new Date()
+  });
+
+  console.log("🏪 Lead marcado como revendedor/lojista — Janela 2:", {
+    user: from,
+    origem: contexto?.origem || null,
+    motivoHeuristica: contexto?.motivoHeuristica || null,
+    trechoMatch: contexto?.trechoMatch || null
+  });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("lead_declarou_revendedor_lojista", "medium", from, {
+      origem: contexto?.origem || null,
+      motivoHeuristica: contexto?.motivoHeuristica || null,
+      trechoMatch: contexto?.trechoMatch || null
+    });
+  }
+}
+
 const FOLLOWUP_STEP_MESSAGES = {
   programa: {
     1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
@@ -24935,6 +25048,76 @@ if (devePularGptsNaColeta) {
         mensagemPreview: String(text || "").slice(0, 100)
       });
     }
+  }
+
+  /*
+    Bug 8 — Detecção de lead lojista/revendedor/representante (combina
+    heurística determinística + classificador semântico).
+
+    Quando qualquer dos dois sinais dispara, abortamos o flow comercial
+    do composer (que mandaria paredão de Parceiro Homologado) e enviamos
+    diretamente uma mensagem de handoff humano + marcamos Janela 2.
+    Esse caminho comercial é diferente do Parceiro Homologado e exige
+    equipe humana da IQG.
+
+    Padrão de early return cirúrgico, similar a isHumanAssumedLead
+    (linha 23085) mas com mensagem de handoff enviada ao lead.
+  */
+  const revendedorHeuristica = detectRevendedorOuLojistaPretendido(text);
+  const revendedorClassifier = semanticIntent?.leadDeclareSerRevendedorOuLojista === true;
+  const leadEhRevendedor = revendedorHeuristica.detected || revendedorClassifier;
+
+  if (leadEhRevendedor) {
+    const origemRevendedor =
+      revendedorHeuristica.detected && revendedorClassifier ? "both"
+      : revendedorHeuristica.detected ? "heuristic"
+      : "classifier";
+
+    const mensagemHandoff = "Posso te ajudar com isso — esse caminho é diferente do Programa Parceiro Homologado e exige conversar direto com alguém da equipe comercial da IQG. Vou passar tua conversa pra um consultor humano continuar daqui.";
+
+    try {
+      await sendWhatsAppMessage(from, mensagemHandoff);
+    } catch (sendError) {
+      console.error("Erro ao enviar handoff revendedor/lojista no WhatsApp:", sendError.message);
+    }
+
+    // Salva resposta no histórico para continuidade
+    history.push({
+      role: "assistant",
+      content: mensagemHandoff,
+      createdAt: new Date(),
+      origem: "handoff_revendedor_lojista"
+    });
+    try {
+      await saveConversation(from, history);
+    } catch (saveErr) {
+      console.error("Erro ao salvar histórico do handoff revendedor (ignorado):", saveErr.message);
+    }
+
+    // Marca Janela 2 + audit estruturado
+    try {
+      await flagLeadAsRevendedorLojista(from, {
+        origem: origemRevendedor,
+        motivoHeuristica: revendedorHeuristica.motivo || null,
+        trechoMatch: revendedorHeuristica.trecho || null
+      });
+    } catch (flagErr) {
+      console.error("Erro ao marcar lead como revendedor (ignorado):", flagErr.message);
+    }
+
+    // Marca mensagens como processadas
+    if (Array.isArray(bufferedMessageIds) && bufferedMessageIds.length > 0) {
+      markMessageIdsAsProcessed(bufferedMessageIds);
+    }
+
+    console.log("🏪 Lead detectado como revendedor/lojista — handoff aplicado, abortando flow comercial:", {
+      user: from,
+      origem: origemRevendedor,
+      motivoHeuristica: revendedorHeuristica.motivo || null,
+      trechoMatch: revendedorHeuristica.trecho || null
+    });
+
+    return;
   }
 
   console.log("🧠 Intenção semântica observada:", {
