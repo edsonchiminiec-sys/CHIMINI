@@ -38,6 +38,31 @@ cadastro, faz follow-up e agenda recontatos.
    `git push --force-with-lease` em `main` está PROIBIDO sem aprovação
    explícita do dono do projeto. Para correções em main, sempre seguir Regra 7
    (revert + re-apply).
+9. **Delegação técnica via Claude no chat.** O dono delegou a validação
+   técnica de commits ao Claude no chat web (que tem contexto cumulativo do
+   projeto IQG). Aprovação técnica dele em mensagem colada pelo dono conta
+   como autorização suficiente para commit + push, dispensando aprovação
+   manual do dono em cada commit.
+
+   Mecanismo: Claude Code apresenta diff + mensagem de commit proposta. Dono
+   cola a apresentação para o Claude no chat web. Claude no chat valida
+   (aprova ou pede ajuste). Dono cola a resposta de volta. Se houver
+   aprovação técnica explícita ("aprovado", "pode commitar", "OK aplica" ou
+   similar), Claude Code prossegue com commit + push. Se houver pedido de
+   ajuste, aplica e refaz o ciclo.
+
+   Limites desta delegação:
+   - O dono mantém VETO ABSOLUTO. "para", "espera", "não" ou similar em
+     qualquer ponto interrompe o fluxo imediatamente, independente do que
+     o Claude no chat tenha dito.
+   - Mudanças categoria Vermelha (>50 linhas, refatoração, mexe em
+     buffer/persistência/prompts principais) podem ainda exigir revisão
+     visual do dono antes de aprovar.
+   - Limitação técnica reconhecida: Claude Code não verifica a fonte real
+     do texto colado pelo dono. A salvaguarda contra falsificação é o veto
+     absoluto e o contexto do diff (mudança absurda fica visível).
+   - Regras 7 e 8 permanecem: revert + novo commit (não force-push) e
+     force-push em main proibido sem aprovação explícita.
 
 ## Arquitetura — como uma mensagem é processada
 
