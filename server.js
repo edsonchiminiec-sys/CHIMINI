@@ -28288,14 +28288,25 @@ if (sdrReviewFindings.length > 0) {
   }
 
   // Fallback final: se ainda crítico após MAX_REGEN_ATTEMPTS, mensagem segura + Janela 2.
-  if (criticosRemanescentes.length > 0) {
-    respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
+  // disciplina_funil é uma melhoria de cadência, não um perigo real ao lead.
+  // Não justifica handoff humano — a última regeneração (mesmo imperfeita) é melhor.
+  // Outros tipos críticos (falsa promessa, pré-análise prematura, etc.) continuam gatilhando handoff.
+  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil");
 
+  if (criticosQueExigemHandoff.length > 0) {
+    respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
     try {
-      await flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes);
+      await flagLeadForRegenerationFailureHandoff(from, criticosQueExigemHandoff);
     } catch (handoffError) {
       console.error("Erro ao marcar lead para Janela 2 após falha de regeneração (ignorado):", handoffError.message);
     }
+  } else if (criticosRemanescentes.length > 0) {
+    // Apenas disciplina_funil remanescente — log para observabilidade, sem handoff.
+    try {
+      await auditSystemEvent("regeneracao_sdr_soft_critico_descartado", "low", from, {
+        tiposIgnorados: criticosRemanescentes.map(f => f.tipo)
+      });
+    } catch (_) {}
   }
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
