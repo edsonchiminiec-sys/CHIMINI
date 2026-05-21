@@ -25,6 +25,19 @@ cadastro, faz follow-up e agenda recontatos.
 5. **Rastreie dependências antes de editar.** Se for mexer numa variável ou
    função, procure TODOS os usos dela antes. (Um bug grave já aconteceu por
    editar uma variável usada em duas funções sem perceber.)
+6. **Apresentar mensagem de commit antes do push.** Antes de QUALQUER
+   `git push` em `main`, apresentar a mensagem de commit proposta ao dono do
+   projeto e aguardar aprovação explícita ("OK", "aprovado", "pode", ou
+   ajustes). Silêncio NÃO é aprovação.
+7. **Ajuste de mensagem após push em main.** Se a mensagem do commit precisa
+   ser corrigida APÓS o push em `main`, NUNCA usar `git push --force`. Use
+   `git revert <hash>` + novo commit com a mensagem corrigida. Gera 2 commits
+   "ruído" no histórico (revert + re-apply), mas é o trade-off aceitável para
+   preservar histórico imutável em main.
+8. **Force-push em main proibido.** `git push --force` ou
+   `git push --force-with-lease` em `main` está PROIBIDO sem aprovação
+   explícita do dono do projeto. Para correções em main, sempre seguir Regra 7
+   (revert + re-apply).
 
 ## Arquitetura — como uma mensagem é processada
 
