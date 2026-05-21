@@ -406,3 +406,177 @@ silenciosamente, gravar audit_event tipo:
 **Prioridade:** baixa. É instrumentação de observabilidade, não corrige
 comportamento. Atacar quando o time de monitoramento reportar confusão
 recorrente com audit "vazio".
+
+---
+
+## 16. Bug 20-A Path A — preservar mensagem do lead no agendamento
+
+**Onde:** server.js, bloco de scheduling em ~23286-23311 (Path A 
+mapeado durante investigação Anderson).
+
+**Problema:** mesmo bug estrutural do Path B (Bug 20-A já fixado em 
+commit 2ff6211), mas no caminho de detecção de agendamento. Quando 
+`detectScheduleRequest` aciona early-return, a mensagem do lead 
+não é pushada no `history` antes do save. Lead que pede agendamento 
+desaparece de `conversations.messages`.
+
+**Sugestão de correção:** aplicar mesmo padrão do R-A do Path B 
+(history.push role: "user" com origem: "lead" antes do retorno), 
+porém com adaptação: Path A não tem `loadConversation` no fluxo 
+atual, então é necessário adicionar load + 2 pushes + saveConversation 
+ao bloco. Implementação mais invasiva — recomendado commit isolado, 
+após R-A do Path B validar em produção (1-2 dias).
+
+**Prioridade:** média.
+
+**Identificado:** sessão Anderson, análise R-A do Claude Code 
+(2026-05-21).
+
+---
+
+## 17. Bug 19 candidato — race condition em saveConversation
+
+**Onde:** server.js, função saveConversation (~linha 570). Usado 
+amplamente em ~30 call sites.
+
+**Problema:** `saveConversation` faz `updateOne($set: { messages })` 
+substituindo o array inteiro a cada chamada, sem version check ou 
+optimistic locking. Quando 2 webhooks do mesmo lead processam em 
+paralelo (caso real observado no Anderson, debounce do buffer 
+expira entre mensagens), ambos carregam `history` em momentos 
+diferentes, divergem em memória, e o último a salvar sobrescreve 
+o outro. Resultado: mensagens silenciosamente perdidas do histórico.
+
+**Sugestão de correção:** refatoração arquitetural. Opções:
+(a) trocar $set por $push de elementos novos (mas complica retry/dedup);
+(b) optimistic locking com `findOneAndUpdate` + campo `version` 
+    incrementado por `$inc`, retry em caso de conflict;
+(c) lock per-user no início do webhook (Map de Promises por `from`).
+Operação grande — requer mapeamento completo de quem chama 
+`saveConversation` e quem consome via `loadConversation`. Sessão 
+dedicada, não atacar em ciclos curtos.
+
+**Prioridade:** alta (impacto silencioso em produção) mas esforço alto.
+
+**Identificado:** sessão Anderson, análise R-A do Claude Code 
+(2026-05-21).
+
+---
+
+## 18. Bug 20 candidato — ampliar REVENDEDOR_LOJISTA_PATTERNS
+
+**Onde:** server.js linhas 4534-4556 (12 regex patterns atuais).
+
+**Problema:** após R-C mergeado (commit bbf6797), classifier 
+sozinho não dispara handoff. Lead que é genuinamente revendedor 
+mas usa fraseado fora dos 12 patterns atuais (ex: "sou dono de 
+uma rede", "trabalho com volume") pode escapar da detecção, 
+gerando handoff perdido (TP false negative). Patterns atuais são 
+precisos mas restritos.
+
+**Sugestão de correção:** após 30-60 dias com R-C/R-B em produção, 
+revisar audit logs de `revendedor_classifier_descartado`. Identificar 
+textos recorrentes que são TPs claros mas escaparam da heurística. 
+Promover esses padrões a novos regex em `REVENDEDOR_LOJISTA_PATTERNS`. 
+Candidatos iniciais:
+- `/\bdono d[ea] (uma )?(rede|loja|comércio)\b/i`
+- `/\btrabalho com volume\b/i`
+
+**Prioridade:** baixa-média (depende de evidência empírica).
+
+**Critério de priorização:** atacar somente se audit do 
+`revendedor_classifier_descartado` mostrar TPs escapados.
+
+**Identificado:** sessão Anderson, análise R-C do Claude Code 
+(2026-05-21).
+
+---
+
+## 19. Bug 21 candidato — remover leadDeclareSerRevendedorOuLojista do classifier
+
+**Onde:** server.js ~linha 5226 (schema retornado por 
+`runLeadSemanticIntentClassifier`) e ~linha 25091 (consumo no 
+gate de Bug 8).
+
+**Problema:** após R-C mergeado, o campo 
+`leadDeclareSerRevendedorOuLojista` retornado pelo classifier GPT 
+só é usado em logging de descarte (`revendedor_classifier_descartado`). 
+O gate efetivo passou a depender apenas de `revendedorHeuristica.detected`. 
+Token gasto na inferência do campo no GPT vira parcialmente waste.
+
+**Sugestão de correção:** após 30-60 dias com R-C/R-B validados:
+(a) se audit de descartes mostrar zero valor analítico, remover 
+    o campo do schema do classifier e da instrução do prompt 
+    (economia de tokens, prompt menor);
+(b) se audit revelar TPs escapados via classifier-only (Bug 20 acima), 
+    promover patterns para a heurística e DEPOIS remover do classifier;
+(c) se TP rate justificar, manter o campo como observabilidade 
+    permanente.
+
+**Prioridade:** baixa.
+
+**Critério de priorização:** aguardar 60 dias de dados pós-R-C/R-B.
+
+**Identificado:** sessão Anderson, análise R-C do Claude Code 
+(2026-05-21).
+
+---
+
+## 20. Bug 22 candidato — dedup noop em processedMessages/processingMessages
+
+**Onde:** server.js, declarações de `processedMessages` Map e 
+`processingMessages` Set (~linha 2118), função 
+`markMessageAsProcessed` e `markMessageIdsAsProcessed`.
+
+**Problema:** as duas estruturas foram criadas como mecanismo de 
+proteção contra reprocessamento de mensagens (idempotência de 
+webhook). São escritas (`.set()`, `.add()`, `.delete()`) mas 
+**nunca lidas via `.has()` em pontos de decisão**. O dedup nunca 
+funcionou — é noop. `markMessageIdsAsProcessed` é apenas 
+observabilidade/cleanup de memória com TTL.
+
+**Sugestão de correção:** decidir entre 2 caminhos:
+(a) **Ativar dedup:** adicionar `.has()` check no início do 
+    handler do webhook, retornar early se messageId já processado. 
+    Resolve uma classe inteira de bugs (retry de WhatsApp, 
+    webhooks duplicados);
+(b) **Remover código morto:** se decisão de produto é tolerar 
+    duplicatas, deletar as estruturas e funções pra reduzir 
+    confusão no leitor do código.
+
+Recomendação: caminho (a). Risco baixo (só impede execuções 
+realmente duplicadas) e alto valor.
+
+**Prioridade:** média.
+
+**Identificado:** sessão Anderson, análise R-A do Claude Code 
+(2026-05-21).
+
+---
+
+## 21. Decisão de produto — mídia não-texto (Path E) no histórico
+
+**Onde:** server.js, bloco de fallback "consigo te atender por 
+texto/áudio 😊" em ~linhas 23262-23269 (Path E mapeado).
+
+**Problema:** quando lead envia sticker, figurinha ou outro tipo 
+de mídia não suportado, o sistema responde fallback mas **não 
+registra nada no histórico**. Para o dashboard e a SDR, é como se 
+o lead não tivesse interagido. Próximo turno do lead pode confundir 
+a SDR (contexto de "lead sumiu" vs "lead mandou sticker e foi 
+ignorado").
+
+**Sugestão de correção:** decisão pendente do dono. Opções:
+(a) registrar entrada `{ role: "user", content: "[lead enviou 
+    sticker/mídia não-texto]", origem: "lead_midia_nao_suportada" }` 
+    no histórico — dashboard vê, SDR tem contexto;
+(b) manter comportamento atual (ignorar) — minimalismo, conta com 
+    o lead reenviar.
+
+**Prioridade:** baixa.
+
+**Critério de priorização:** depende de evidência de leads 
+confundindo SDR após enviar sticker. Atacar quando observado.
+
+**Identificado:** sessão Anderson, análise R-A do Claude Code 
+(2026-05-21).
