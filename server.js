@@ -5164,6 +5164,18 @@ REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
 
   REGRA DE OURO: em dúvida, marque false. O backend tem heurística determinística que pega casos óbvios; o classificador só precisa capturar nuances semânticas que regex não pega.
 
+  ATENÇÃO REFORÇO: perguntas sobre produto, preço, margem, prazo, validade, tabela, frete, garantia, entrega ou qualquer aspecto COMERCIAL/OPERACIONAL do programa NÃO são declarações de ser revendedor. São perguntas legítimas de interessado. Marque leadDeclareSerRevendedorOuLojista=false nesses casos.
+
+  Exemplos CRÍTICOS que NÃO são leadDeclareSerRevendedorOuLojista:
+  - "Validade dos produtos?" — pergunta sobre produto, não declaração;
+  - "Como funciona a margem de 40%?" — pergunta sobre o programa;
+  - "Aceitam CNPJ?" — pergunta administrativa, sem declarar revenda;
+  - "Qual o preço de uma unidade?" — pergunta comercial sem auto-declaração;
+  - "Vocês entregam para todo Brasil?" — pergunta logística;
+  - "Como funciona o frete da reposição?" — pergunta operacional comum.
+
+  REGRA DE PRIORIDADE: auto-declaração explícita SOBRESCREVE pergunta comercial. Se a mensagem contiver alguma das declarações dos exemplos VÁLIDOS acima (ex: "sou lojista", "tenho minha loja", "quero revender"), marque true MESMO que a mesma mensagem também faça perguntas comerciais (preço, margem, frete, etc.). A parte declarativa tem prioridade absoluta.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRA — positiveCommitment (CRÍTICA)
 ━━━━━━━━━━━━━━━━━━━━━━━
