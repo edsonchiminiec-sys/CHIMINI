@@ -826,3 +826,145 @@ esperado: ~200-300 linhas removidas.
 
 **Identificado:** auditoria forense 22/05/2026, decisão consciente
 do auditor de manter as rotas até o ciclo estabilizar.
+
+---
+
+## 28. Bug 2 (cadência repetindo mensagens) — auditoria fechada
+
+**Onde:** `generateFollowupViaGPTs` (server.js ~21642-21885) — gerador
+de mensagens de cadência via OpenAI.
+
+**Problema confirmado:** o gpt-4o-mini gravitava para template
+genérico ("Oi! Espero que esteja tudo bem...") e repetia estrutura
+entre steps de cadência. Empírico (7 dias de logs, 15-22/05): 80 leads
+(38% de 209) receberam mensagens idênticas em follow-ups distintos.
+Caso extremo: lead 5554*****28 recebeu a MESMA mensagem 5 vezes ao
+longo da cadência completa.
+
+**Causas identificadas:**
+- `applyAntiRepetitionGuard` (linha 18050) existia mas era chamado
+  apenas no webhook síncrono (linha 28219), nunca em cadência
+- Regra textual "NÃO repetir o que já foi dito no histórico" no
+  `contextoCadencia` era vaga — gpt-4o-mini interpretava só como
+  "não copie literal", não como "não use mesmo molde estrutural"
+- Sem cenários few-shot específicos para cadência (os 21 cenários
+  do SYSTEM_PROMPT são todos síncronos — ver Item 29 abaixo)
+
+**Fixes aplicados (2 commits, 22/05/2026):**
+
+- bug-2a (commit 322d0ed): guard mecânico em `generateFollowupViaGPTs`
+  com regeneração interna. Após `sanitizeWhatsAppText`, aplica
+  `applyAntiRepetitionGuard`. Se changed=true, faz 1 retry interno
+  ao OpenAI com instruções reforçadas (temperatura sobe de 0.5 para
+  0.7). Se o retry também repetir, retorna null (caller cai no
+  fallback hardcoded). Try/catch isolando: erro no guard não bloqueia
+  envio. Audit events: cadencia_repeticao_detectada (medium),
+  cadencia_regenerada_apos_repeticao (low), cadencia_retry_falhou
+  (medium).
+
+- bug-2b (commit d86f87d): reforço textual no contextoCadencia.
+  Substituiu bullet único "NÃO repetir o que já foi dito" por
+  instrução estrutural com sub-bullets: variar abertura, inverter
+  pergunta/observação entre steps, lista de tokens proibidos
+  (R$ 5.000, R$ 1.990, comodato, vitalícia, 10% comissão, margem
+  40%, suporte+treinamento, taxa de adesão, pré-análise) espelhando
+  a orientação do guard síncrono linha 28243.
+
+**Defesa em camadas:** Bug 2a (mecânico, detecta e regenera) +
+Bug 2b (textual, reduz probabilidade de repetir na 1ª tentativa).
+
+**Status:** FECHADO em produção. Validação empírica esperada nas
+próximas 24-48h via novo relatório de logs.
+
+**Métricas para acompanhar:**
+- `cadencia_repeticao_detectada` (medium) — quantos disparos do guard
+- `cadencia_regenerada_apos_repeticao` (low) — % retries que resolveram
+  (sucesso esperado: > 70%)
+- `cadencia_retry_falhou` (medium) — quantos foram para fallback
+  hardcoded (deve ser baixo, < 10%)
+- % leads com mensagens idênticas em follow-ups distintos
+  (linha de base: 38% / 80 de 209 leads)
+
+**Identificado e fixado:** auditoria forense 22/05/2026.
+
+---
+
+## 29. Pendência: incorporar 21 cenários few-shot faltantes ao SYSTEM_PROMPT
+
+**Onde:** SYSTEM_PROMPT da SDR (server.js) — blocos de EXEMPLOS DE
+DIÁLOGO (~linhas 9811, 11136, 11201, 11348).
+
+**Problema:** o usuário tem um documento com 42 cenários few-shot
+estruturados (cenarios_fewshot_iqg_42_md.docx) mas só 21 estão
+incorporados ao SYSTEM_PROMPT. Os 21 faltantes são:
+
+- **Categoria A** (Abertura): A1, A2, A3, A9, A10 (faltam 5/10)
+  - A1: Abertura tráfego pago (lead I piscineiro)
+  - A2: Fragmentação de mensagens (lead S piscineiro)
+  - A3: Lead D objetivo "Como funciona?"
+  - A9: Cobertura geográfica (lead C)
+  - A10: Cliente final confundido com loja
+
+- **Categoria B** (Objeções/Taxa): completa (10/10) — nada faltando
+
+- **Categoria C** (Compromisso/Coleta): C2, C3, C4, C5, C9 (faltam 5/10)
+  - C2: Lead cauteloso aceitando devagar (lead S)
+  - C3: Lead pede tabela de preços do parceiro (lead C)
+  - C4: F7 pedido de nome após aceite (lead I)
+  - C5: F7 lead manda CPF errado e corrige (lead C)
+  - C9: F7 lead manda 2 dados juntos (lead D)
+
+- **Categoria D** (Casos especiais): todos faltando (10/10)
+  - D1: Lead lojista (handoff humano)
+  - D2: Mensagem truncada/ambígua (lead S)
+  - D3: Três perguntas misturadas (lead D)
+  - D4: Lead desiste explicitamente (saída para Afiliado)
+  - D5: Lead questiona credibilidade da IQG (lead C)
+  - D6: Indicação de amigos pro programa (lead I) — anti-mistura
+  - D7: Lead pergunta explicitamente sobre Afiliado (lead D)
+  - D8: Lead pede falar com humano (lead D)
+  - D9: Lead irritado com a IA (lead D)
+  - D10: Cliente final que vira candidato (lead I)
+
+- **Categoria KIT** (Sequência send_folder → send_kit): todos faltando
+  - KIT1: Lead pede lista após folder
+  - KIT2: Lead resistente pede ver kit como condição
+
+**Sugestão de correção:** incorporar os 21 cenários faltantes nos
+blocos existentes do SYSTEM_PROMPT. Manter o padrão atual (header
+de bloco + cenários numerados + markers ━━━).
+
+**Impacto esperado:** melhor variedade estilística para o gpt-4o-mini
+escolher tom/abordagem em mensagens síncronas e em cadência (mesmo
+não sendo cenários específicos de cadência, fornecem biblioteca
+estilística mais rica). Possíveis ganhos:
+- Mensagens síncronas com mais variedade de tom/abordagem
+- Casos especiais (Categoria D) cobertos com tratamento adequado
+  (handoff lojista, irritação, anti-mistura afiliado/homologado)
+- Sequência SEND_KIT documentada para uso pós-folder
+
+**Risco/cuidado:** aumentar significativamente o tamanho do
+SYSTEM_PROMPT (+21 cenários × ~30-50 linhas cada = +600 a +1000
+linhas no prompt enviado ao OpenAI por chamada). Impactos a
+considerar:
+- Latência da SDR sobe (mais tokens para processar)
+- Custo por chamada sobe proporcionalmente
+- Risco de o modelo "perder foco" com prompt muito longo
+
+**Prioridade:** média. Não bloqueia operação. Atacar APENAS depois
+que:
+- Bug 2 estiver validado em produção (24-48h após commits d86f87d e
+  322d0ed) com métricas concretas
+- Bug 3 estiver validado (próximas 24-72h após auto-correção dos
+  42 leads inconsistentes)
+- Houver janela operacional estável (sem outros fixes em rodagem)
+
+**Critério de priorização:** se as métricas do Bug 2 mostrarem que o
+fix mecânico + textual já reduziu a repetição para níveis aceitáveis
+(<10%), este item passa para baixa prioridade. Se a repetição ainda
+estiver alta, este item passa para prioridade alta.
+
+**Fonte:** documento cenarios_fewshot_iqg_42_md.docx (compartilhado
+pelo usuário em 22/05/2026, sessão de auditoria forense).
+
+**Identificado:** auditoria forense 22/05/2026.
