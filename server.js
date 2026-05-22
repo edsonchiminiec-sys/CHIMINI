@@ -21768,6 +21768,110 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
       mensagem: mensagemLimpa.slice(0, 100)
     });
 
+    // ANTI-REPETIÇÃO NA CADÊNCIA (fix bug-2):
+    // Aplica o guard de anti-repetição estrutural. Se a mensagem gerada
+    // repete tema/tokens em relação ao histórico recente, faz UMA segunda
+    // tentativa ao OpenAI com instruções reforçadas. Se a 2ª também
+    // repetir, retorna null para o caller cair no fallback hardcoded.
+    try {
+      const guardResult = applyAntiRepetitionGuard({
+        leadText: "",
+        respostaFinal: mensagemLimpa,
+        currentLead: lead,
+        history: historyParaSdr
+      });
+
+      if (guardResult?.changed === true) {
+        const tokensRepetidos = guardResult.reason?.repeatedTokens || [];
+        const temaRepetido = guardResult.reason?.repeatedSameTheme || null;
+
+        await auditSystemEvent("cadencia_repeticao_detectada", "medium", from, {
+          step,
+          temaRepetido,
+          tokensRepetidos,
+          mensagemOriginal: mensagemLimpa.slice(0, 200)
+        });
+
+        // Monta instrução reforçada para a regeneração
+        const orientacaoReforcada = [
+          orientacaoPreSdr,
+          "",
+          "⚠️ ATENÇÃO — REGENERAÇÃO POR REPETIÇÃO DETECTADA:",
+          "A primeira tentativa repetiu tema/tokens da última resposta da SDR no histórico.",
+          temaRepetido ? `Tema repetido: "${temaRepetido}".` : "",
+          tokensRepetidos.length > 0 ? `Tokens repetidos: ${tokensRepetidos.join(", ")}.` : "",
+          "REESCREVA com:",
+          "- Estrutura DIFERENTE da última mensagem da SDR (se foi pergunta, faça observação; se começou com 'Oi!', NÃO comece com 'Oi!')",
+          "- Ângulo NOVO do tema, sem repetir os mesmos valores monetários, frases-chave ou explicações",
+          "- Se já citou R$ 5.000, R$ 1.990, comodato, 10% comissão, vitalícia, margem 40%, suporte+treinamento, taxa de adesão ou pré-análise — NÃO repita; busque outro argumento ou conduza para próximo passo natural",
+          "- Mantenha as REGRAS DA CADÊNCIA originais (curta, 2-3 frases, tom consultivo)"
+        ].filter(Boolean).join("\n");
+
+        // Retry interno: 1 segunda tentativa
+        const retryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+            temperature: 0.7,
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              { role: "system", content: orientacaoReforcada },
+              ...historyParaSdr,
+              { role: "user", content: "[GERAR MENSAGEM DE CADÊNCIA — regeneração após detecção de repetição, varie o formato e o ângulo]" }
+            ]
+          })
+        });
+
+        if (retryResponse.ok) {
+          const retryData = await retryResponse.json();
+          const retryMensagem = retryData?.choices?.[0]?.message?.content || "";
+          const retryLimpa = sanitizeWhatsAppText(retryMensagem);
+
+          if (retryLimpa) {
+            // Valida se o retry resolveu a repetição
+            const retryGuard = applyAntiRepetitionGuard({
+              leadText: "",
+              respostaFinal: retryLimpa,
+              currentLead: lead,
+              history: historyParaSdr
+            });
+
+            if (retryGuard?.changed !== true) {
+              // Retry OK — sem repetição. Loga sucesso e retorna a nova mensagem.
+              await auditSystemEvent("cadencia_regenerada_apos_repeticao", "low", from, {
+                step,
+                mensagemAnterior: mensagemLimpa.slice(0, 200),
+                mensagemNova: retryLimpa.slice(0, 200)
+              });
+              return retryLimpa;
+            }
+
+            // Retry também repetiu — descarta e cai no fallback
+            await auditSystemEvent("cadencia_retry_falhou", "medium", from, {
+              step,
+              motivoFalha: "retry_tambem_repetiu"
+            });
+            return null;
+          }
+        }
+
+        // Retry falhou (resposta vazia ou HTTP erro) — descarta e cai no fallback
+        await auditSystemEvent("cadencia_retry_falhou", "medium", from, {
+          step,
+          motivoFalha: "retry_resposta_vazia_ou_erro_http"
+        });
+        return null;
+      }
+    } catch (guardError) {
+      // Erro no guard: NÃO bloqueia a mensagem original — segue com ela.
+      // Anti-repetição é melhoria, não pré-requisito de envio.
+      console.error("Erro no guard anti-repetição da cadência (ignorado):", guardError?.message || guardError);
+    }
+
     return mensagemLimpa;
   } catch (error) {
     console.error("Erro ao gerar cadência via GPTs:", { user: from, step, error: error.message });
