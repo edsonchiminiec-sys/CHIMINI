@@ -23550,6 +23550,45 @@ let history = await loadConversation(from);
 // ReferenceError: currentLead is not defined
 let currentLead = await loadLeadProfile(from);
 
+// CLEANUP DE REENGAJAMENTO (fix bug-3c):
+// Se o lead foi marcado como perdido pela IA por cadência completa
+// e está enviando nova mensagem, limpar os campos terminais para
+// permitir continuidade do fluxo conversacional e da cadência regular.
+// Sem essa limpeza, o filtro do bootstrap (fix bug-3a) bloqueia o lead
+// permanentemente — IA responde mas cadência nunca mais reativa.
+const leadFoiEncerradoPelaIaPorCadencia =
+  currentLead &&
+  currentLead.status === "perdido" &&
+  currentLead.encerradoPor === "ia" &&
+  currentLead.motivoPerda === "cadencia_completa_sem_resposta";
+
+if (leadFoiEncerradoPelaIaPorCadencia) {
+  try {
+    await saveLeadProfile(from, {
+      status: "morno",
+      statusOperacional: "ativo",
+      faseQualificacao: "morno",
+      motivoPerda: null,
+      encerradoPor: null,
+      perdidoEm: null,
+      reativadoPorReengajamentoEm: new Date()
+    });
+    await auditSystemEvent("reengajamento_pos_perdido", "low", from, {
+      motivoOriginal: "cadencia_completa_sem_resposta",
+      perdidoEmAnterior: currentLead.perdidoEm,
+      mensagemQueReativou: typeof text === "string" ? text.slice(0, 200) : null
+    });
+    // Recarrega currentLead com o estado atualizado, para o fluxo
+    // que vem a seguir trabalhar com o lead "reengajado".
+    currentLead = await loadLeadProfile(from);
+  } catch (cleanupError) {
+    console.error(
+      "Erro no cleanup de reengajamento pós-perdido (ignorado):",
+      cleanupError?.message || cleanupError
+    );
+  }
+}
+
 currentLead = await cleanupStaleOperationalMemory({
   user: from,
   lead: currentLead || {},
