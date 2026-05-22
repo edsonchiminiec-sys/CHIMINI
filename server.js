@@ -16670,6 +16670,80 @@ function isShortNeutralLeadReply(text = "") {
   return neutralPatterns.some(pattern => pattern.test(t));
 }
 
+/*
+  Bug fechamento conversacional — detecção determinística.
+  Combina 3 sinais (lead curto + SDR longa + bordão muleta na SDR).
+  Conservador: precisa dos 3 simultâneos pra disparar — falso positivo
+  é improvável. Usado pelo bypass de fechamento (antes do gate de
+  regeneração) que substitui a resposta por fallback contextual curto.
+*/
+const FECHAMENTO_BORDAO_PATTERNS = [
+  /estou (?:à |a )?disposi[çc][ãa]o/i,
+  /fico (?:à |a )?disposi[çc][ãa]o/i,
+  /estou (?:aqui |sempre )?(?:para |pra )?(?:te )?ajudar/i,
+  /estarei aqui/i,
+  /fique (?:a |à )vontade/i,
+  /(?:^|\s)se precisar/i,
+  /qualquer d[úu]vida/i,
+  /qualquer coisa/i,
+  /qualquer momento/i,
+  /(?:é )?s[óo] me (?:chamar|avisar|mandar)/i,
+  /n[ãa]o hesite/i,
+  /retomar (?:a |nossa )?conversa/i,
+  /quando (?:voc[êe] )?(?:puder|voltar|estiver|quiser|tiver)/i,
+  /quando estiver pronto/i,
+  /estou por aqui/i
+];
+
+function detectFechamentoConversacionalParedao(leadText = "", sdrText = "") {
+  const lead = String(leadText || "").trim();
+  const sdr = String(sdrText || "").trim();
+
+  if (lead.length < 1 || lead.length > 25) return false;
+  if (sdr.length <= 100) return false;
+
+  return FECHAMENTO_BORDAO_PATTERNS.some(re => re.test(sdr));
+}
+
+/*
+  Fallback contextual curto quando o bypass de fechamento dispara.
+  Hierarquia de match (primeira que casar vence):
+    1. Lead só emojis -> espelha o emoji
+    2. Lead agradece (amém/gratidão/obrigado/valeu) -> espelha com nome
+    3. Lead pausa (depois/amanhã/viagem/reunião/etc) -> "Combinado, [Nome]. Quando puder a gente continua."
+    4. Lead ack curto (ok/sim/show/top/etc) -> "Combinado!"
+    5. Default -> 📌 (não deveria chegar — detect já filtrou)
+*/
+function buildClosureSafeFallback(leadText = "", currentLead = {}) {
+  const lead = String(leadText || "").trim();
+  const nome = getFirstName(currentLead?.nome || currentLead?.nomeWhatsApp || "");
+
+  // 1. Só emojis
+  if (lead.length > 0 && /^[\p{Extended_Pictographic}\s]+$/u.test(lead)) {
+    return lead;
+  }
+
+  // 2. Agradecimento
+  if (/^(am[ée]m|gratid[ãa]o|obrigad[oa]|valeu)/i.test(lead)) {
+    return nome ? `${lead}, ${nome}!` : `${lead}!`;
+  }
+
+  // 3. Pausa
+  if (/(depois|amanh[ãa]|outra hora|estou viajando|em viagem|sem tempo|em reuni[ãa]o|vou pensar|vou olhar)/i.test(lead)) {
+    return nome
+      ? `Combinado, ${nome}. Quando puder a gente continua.`
+      : "Combinado. Quando puder a gente continua.";
+  }
+
+  // 4. Ack curto
+  if (/^(ok|sim|certo|entendi|show|top|fez sentido|ficou claro|tudo bem|beleza)\.?!?$/i.test(lead)) {
+    return "Combinado!";
+  }
+
+  // 5. Default
+  return "📌";
+}
+
 function detectReplyMainTheme(text = "") {
   const t = normalizeCommercialText(text);
 
@@ -27620,6 +27694,20 @@ REGRAS OBRIGATÓRIAS PARA A SDR:
 - Não repetir explicação que o lead já disse ter entendido.
 - "ok", "sim", "sei sim", "entendi", "fez sentido", "foi explicativo", "show", "top" e "ficou claro" indicam apenas entendimento quando não houver pedido claro de avanço.
 - Expressões como "bora", "mete bala", "manda ver", "demorou", "toca ficha", "pode seguir", "vamos nessa" e equivalentes indicam intenção explícita de avançar, mas a SDR só pode conduzir para pré-análise se o backend/fase atual permitir.
+
+REGRA OBRIGATÓRIA — RESPOSTA A SINAL DE FECHAMENTO/PAUSA/AGRADECIMENTO:
+Quando a última mensagem do lead for um sinal curto de entendimento, agradecimento, despedida ou pausa, a SDR DEVE responder no MÁXIMO 1 frase curta.
+
+São sinais desse tipo: "ok", "sim", "entendi", "show", "top", "fez sentido", "ficou claro", "obrigado", "obrigada", "amém", "gratidão", "valeu", emojis sozinhos (👍 🙏 🙌 🫡 ✌️ 👌 💪 🤝 ✅), "depois falamos", "depois falo", "amanhã a gente fala", "outra hora", "estou viajando", "em viagem", "sem tempo agora", "em reunião", "vou olhar e te falo", "vou pensar".
+
+PROIBIDO nesses casos:
+- Convites condicionais: "se precisar", "qualquer dúvida", "qualquer coisa", "quando você puder", "quando você voltar", "quando estiver pronto"
+- Bordões muletas: "estou à disposição", "fico à disposição", "fique à vontade", "é só me chamar", "é só me avisar", "estou aqui para ajudar", "estou aqui pra ajudar", "estarei aqui", "não hesite em me chamar"
+- Paredões de explicação ou retomada de conteúdo da fase
+- Convites de "retomar a conversa"
+
+Resposta esperada: espelhar o tom do lead em UMA frase curta (ex: lead "👍" → SDR "👍" ou "Combinado!"; lead "Gratidão 🙌" → SDR "Gratidão 🙏" ou "Bom papo, [Nome]!"; lead "Estou viajando agora" → SDR "Combinado, [Nome]. Quando voltar a gente continua.").
+
 - Responder de forma natural, curta e consultiva.
 - Nunca mostrar ao lead que existe Consultor Assistente, Supervisor, Classificador ou análise interna de IA.`;
 
@@ -28586,6 +28674,51 @@ if (sdrReviewFindings.length > 0) {
     - Observabilidade: 4 audit_events distintos (gate_disparado,
       tentativa_sucesso, tentativa_falha, fallback_humano).
   */
+
+  // ========================================================================
+  // BYPASS DE FECHAMENTO CONVERSACIONAL
+  // ========================================================================
+  // Padrão identificado em produção: lead envia mensagem curta de fechamento
+  // ("Ok", "👍", "Gratidão", "Estou viajando") e SDR responde paredão com bordão
+  // muleta ("estou aqui pra ajudar", "qualquer dúvida estou à disposição").
+  //
+  // Tratamento DIFERENTE do gate de regeneração:
+  // - Não passa pelo regenerador (taxa de sucesso histórica baixa em padrões
+  //   semânticos sutis como este)
+  // - Substitui diretamente por resposta hardcoded contextual curta
+  // - Audita como evento próprio (não como disciplina_funil, que é descartado
+  //   como soft pelo gate principal)
+  //
+  // Critério conservador: 3 condições obrigatórias para disparar (lead curto +
+  // SDR longa + bordão detectado). Falso positivo é improvável.
+  if (detectFechamentoConversacionalParedao(text, respostaFinal)) {
+    const respostaOriginal = respostaFinal;
+    const novaResposta = buildClosureSafeFallback(text, currentLead);
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("fechamento_conversacional_bypass_aplicado", "medium", from, {
+        textoLead: text,
+        respostaOriginalLen: respostaOriginal.length,
+        respostaOriginalTrecho: respostaOriginal.slice(0, 200),
+        respostaFallback: novaResposta
+      });
+    }
+
+    console.log("🛑 Bypass de fechamento conversacional aplicado:", {
+      user: from,
+      textoLead: text,
+      respostaOriginalLen: respostaOriginal.length,
+      respostaFallback: novaResposta
+    });
+
+    respostaFinal = novaResposta;
+
+    // Limpar sdrReviewFindings que se tornariam irrelevantes após o fallback
+    // (a resposta curta não dispara os mesmos guards que o paredão original)
+    sdrReviewFindings = [];
+  }
+  // ========================================================================
+
   const criticosIniciais = sdrReviewFindings
     .filter(f => f.prioridade === "critica")
     .map(f => f.tipo);
