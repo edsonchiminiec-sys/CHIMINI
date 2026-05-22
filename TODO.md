@@ -716,3 +716,113 @@ frequência do caso.
 **Identificado:** investigação durante mapeamento R5d, sessão 
 2026-05-22. Decisão de seguir Caminho A no R5d posterga implementação 
 deste feature.
+
+---
+
+## 26. Bug 3 — Leads "perdidos por cadência" reaparecendo (FECHADO)
+
+**Resumo:** durante a auditoria forense de 22/05/2026, identificamos
+que leads que completavam a cadência de 5 follow-ups sem responder
+estavam sendo persistidos com `status="perdido"` no banco, mas o
+campo `statusOperacional` continuava `"ativo"`. Isso causava o
+bootstrap de follow-ups no startup do servidor reativá-los e mandar
+novamente toda a cadência, gerando duplicatas e degradando a
+experiência do lead.
+
+**Causa raiz identificada (3 camadas):**
+
+1. **Bootstrap (server.js linha 22682+):** a função
+   `bootstrapFollowupsParaLeadsExistentes` filtrava leads apenas por
+   `statusOperacional !== "ativo"`, ignorando o campo `status`. Leads
+   com `status="perdido"` mas `statusOperacional="ativo"` eram
+   re-incluídos no scheduler de follow-ups indevidamente.
+
+2. **saveLeadProfile (server.js linha 592, trap 621-630):** a trava
+   `tentativaDePerdaIndevida` rejeitava silenciosamente updates que
+   tentassem persistir `status="perdido"` sem motivo explícito,
+   inclusive durante o step 5 final da cadência (que é uma perda
+   legítima). Resultado: o último step da cadência tentava marcar
+   `status="perdido"` mas era reescrito para `status="morno"` pela
+   trap, deixando o lead em estado inconsistente.
+
+3. **Webhook callback (server.js linha 23258+):** quando um lead
+   "perdido por cadência" voltava a mandar mensagem espontaneamente,
+   não havia código de cleanup para reativá-lo formalmente — ele
+   continuava marcado como perdido enquanto o atendimento prosseguia.
+
+**Fix aplicado em 3 commits sequenciais:**
+
+- **bug-3a (commit d5101c2):** ampliar filtro do
+  `bootstrapFollowupsParaLeadsExistentes` para excluir TAMBÉM leads
+  com `status="perdido"` (não só `statusOperacional !== "ativo"`).
+  Defesa contra o sintoma observado (leads reaparecendo no startup).
+
+- **bug-3b (commit 1b34711):** adicionar allowlist explícita à trap
+  `tentativaDePerdaIndevida` em `saveLeadProfile`, permitindo
+  persistir `status="perdido"` quando o `motivoPerda` for
+  `"cadencia_completa_sem_resposta"`. Defesa na origem (causa raiz
+  da inconsistência).
+
+- **bug-3c (commit aa748a2):** adicionar bloco de cleanup no webhook
+  callback (linhas 23553-23591) que detecta lead "perdido por
+  cadência" reaparecendo e o reativa formalmente para
+  `status="morno"`, `statusOperacional="ativo"`,
+  `faseQualificacao="morno"`, registrando audit event
+  `reengajamento_pos_perdido`. Defesa de UX (lead não fica em estado
+  zumbi).
+
+**Status: FECHADO.** Novos leads que chegarem à cadência completa
+serão marcados terminais corretamente. Os 42 leads ainda em estado
+inconsistente (pré-fix) vão receber novamente o step 5 quando o
+`proximoFollowupEm` vencer (próximas horas/dias). Nesse momento, com
+o fix bug-3b ativo, o `saveLeadProfile` vai persistir
+`status="perdido"` e `statusOperacional="perdido_cadencia_completa"`
+corretamente. Auto-correção esperada ao longo de 24-72h.
+
+**Validação pós-fix recomendada:** rodar query G novamente após 72h
+para confirmar que o número de leads inconsistentes caiu para zero
+(ou próximo de zero, considerando leads que voltarem a mandar
+mensagem nesse intervalo e forem reativados pelo cleanup do bug-3c).
+
+**Identificado:** auditoria forense 22/05/2026, sessão Edson + Claude
+Code + Claude no chat (auditor). Rotas diagnósticas usadas:
+`/diagnostico-22-05-2026` (commit 7b7d23e),
+`/diagnostico-22-05-2026-bis` (commit 757d053),
+`/diagnostico-22-05-2026-ter` (commit 58762a0).
+
+---
+
+## 27. Cleanup das 3 rotas diagnósticas read-only (sem prioridade)
+
+**Resumo:** durante a auditoria forense do Bug 3 em 22/05/2026, foram
+criadas 3 rotas HTTP read-only no `server.js` para extrair JSONs de
+diagnóstico do MongoDB de produção (o auditor — Claude no chat — não
+tem acesso direto ao banco e precisava dos dados para análise).
+
+**Rotas a remover (futuro):**
+
+- `/diagnostico-22-05-2026` — server.js linha ~35210 (commit 7b7d23e)
+- `/diagnostico-22-05-2026-bis` — server.js linha ~35402 (commit 757d053)
+- `/diagnostico-22-05-2026-ter` — server.js linha ~35493 (commit 58762a0)
+
+**Características:** todas read-only (só Mongo `.find()` e
+`.aggregate()`), protegidas por `requireDashboardAuth`, não alteram
+estado. Não representam vulnerabilidade ativa enquanto a auth do
+dashboard estiver íntegra.
+
+**Por que adiar:** as rotas podem ser úteis se aparecer um sintoma
+novo nas próximas 72h relacionado ao Bug 3 (ex: lead inconsistente
+não auto-corrigir). Manter durante o período de monitoramento do
+fix.
+
+**Prioridade:** baixa. Atacar quando:
+- O ciclo Bug 3 estabilizar (72h+ sem regressões)
+- OU quando precisar consolidar/limpar o `server.js` num ciclo de
+  refactor maior
+
+**Sugestão de execução:** commit único `chore: remove rotas
+diagnósticas Bug 3 22/05` removendo os 3 blocos de rota. Diff
+esperado: ~200-300 linhas removidas.
+
+**Identificado:** auditoria forense 22/05/2026, decisão consciente
+do auditor de manter as rotas até o ciclo estabilizar.
