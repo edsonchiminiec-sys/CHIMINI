@@ -35394,6 +35394,97 @@ app.get("/diagnostico-22-05-2026", async (req, res) => {
   }
 });
 
+/* =========================
+   ROTA DE DIAGNÓSTICO — auditoria forense 22/05/2026 BIS
+   Uso: GET /diagnostico-22-05-2026-bis?senha=SENHA
+   Read-only. Query I — audit_events de followup dos 12 leads em step 5.
+   ========================= */
+app.get("/diagnostico-22-05-2026-bis", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const result = {
+      geradoEm: new Date().toISOString(),
+      descricao: "Diagnóstico forense 22/05/2026 bis — audit events de followup dos 12 leads em step 5"
+    };
+
+    const users = [
+      "5514991168002",
+      "554498810007",
+      "556291976462",
+      "554191562241",
+      "5521998831065",
+      "559180802440",
+      "554488430811",
+      "555391665576",
+      "556796495136",
+      "557588386322",
+      "555191989781",
+      "554498820362"
+    ];
+
+    const seteDiasAtrasMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const queryI = {};
+
+    for (const user of users) {
+      const events = await db.collection("audit_events").find(
+        { userPhone: user, eventType: { $regex: "followup" } },
+        { projection: {
+            timestamp: 1, eventType: 1,
+            "payload.step": 1, "payload.followupStep": 1,
+            "payload.evento": 1, "payload.respostaFinalSdr": 1,
+            "payload.closeAfter": 1, "payload.stepAnterior": 1,
+            "payload.proximoStep": 1
+          }
+        }
+      ).sort({ timestamp: -1 }).limit(15).toArray();
+
+      const eventosUltimos7d = events.filter(e => {
+        const ts = e.timestamp ? new Date(e.timestamp).getTime() : 0;
+        return ts >= seteDiasAtrasMs;
+      });
+
+      const teveCadenciaCompleta = events.some(e =>
+        e.payload?.evento === "cadencia_completa_lead_perdido"
+      );
+
+      const step5ComCloseAfter = events.some(e =>
+        (e.payload?.step === 5 || e.payload?.followupStep === 5) &&
+        e.payload?.closeAfter === true
+      );
+
+      const ultimoEvento = events[0] || null;
+
+      queryI[user] = {
+        totalEventosAll: events.length,
+        countEventos7d: eventosUltimos7d.length,
+        teveCadenciaCompletaLeadPerdido: teveCadenciaCompleta,
+        algumStep5ComCloseAfter: step5ComCloseAfter,
+        ultimoEvento: ultimoEvento ? {
+          timestamp: ultimoEvento.timestamp,
+          eventType: ultimoEvento.eventType,
+          payload: ultimoEvento.payload
+        } : null,
+        eventos: events
+      };
+    }
+
+    result.queryI_auditEventsPorUser = queryI;
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error("Erro em /diagnostico-22-05-2026-bis:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
