@@ -968,3 +968,105 @@ estiver alta, este item passa para prioridade alta.
 pelo usuário em 22/05/2026, sessão de auditoria forense).
 
 **Identificado:** auditoria forense 22/05/2026.
+
+---
+
+## 30. Bug — SDR não reconhece sinais de fechamento conversacional
+
+**Onde:** SYSTEM_PROMPT da SDR (server.js, blocos de comportamento) + few-shots em produção.
+
+**Problema:** SDR responde com textão + bordão muleta + convite pra retomar a TODA mensagem do lead, incluindo sinais inequívocos de fechamento conversacional. Exemplos empíricos coletados em produção (22/05/2026):
+- Lead: "Estou viajando agora" → SDR: 220 chars com 😊🚀 + convite pra retomar
+- Lead: "Depois falaremos melhor" → SDR: 100+ chars com 😊 + convite
+- Lead: "Ok" → SDR: 130 chars + 😊 + convite
+- Lead: "👍" → SDR: 150 chars + 😊 + convite
+
+Risco operacional concreto:
+- Lead pode bloquear o número (percepção de spam/insistência)
+- Lead pode reportar como assédio comercial ao WhatsApp Business (risco de banimento)
+- Degrada percepção da marca IQG
+
+Causas concorrentes mapeadas (investigação forense 22/05/2026):
+- Sem regra explícita no SYSTEM_PROMPT sobre quando NÃO responder
+- Detecção existe (isShortNeutralLeadReply linha 16634, 26 padrões; positiveEmojiPatterns linha 12981) mas só alimenta diagnóstico, não decisão de silêncio
+- Mensagens hardcoded de getEncerramentoMessage e 3 few-shots (B1, B5/B6, C6) ENSINAM bordão muleta "qualquer coisa, é só me chamar"
+
+**Sugestão de correção:** novo bloco no SYSTEM_PROMPT "FECHAMENTO CONVERSACIONAL — REGRA DE RESPOSTA MÍNIMA" + 2-3 few-shots novos ensinando padrão correto + atualizar 3 few-shots existentes (B1 linha 11244, B5/B6 linha 11302, C6 linha 11400) que ensinam o bordão.
+
+**Prioridade:** crítica.
+
+**Status:** atacado no Commit fix/fechamento-conversacional (em curso).
+
+**Identificado:** 22/05/2026, evidência empírica colada por Edson (exemplos Sandro + Armando).
+
+---
+
+## 31. Anti-bordão — expansão de isBadResponse
+
+**Onde:** server.js, função isBadResponse (~linhas 28110-28148).
+
+**Problema:** isBadResponse cobre apenas 7 strings literais como bordão muleta ("como posso ajudar", "em que posso ajudar", "estou aqui para ajudar", "fico à disposição", "qualquer dúvida me avise", "ok 👍", "certo 👍"). Variantes lexicais escapam:
+- "estou aqui pra ajudar" (sem o "para")
+- "tô aqui pra o que precisar"
+- "tô no aguardo" / "fico no aguardo"
+- "qualquer coisa me chama"
+- "fica à vontade" (sem o "fique")
+- etc
+
+Resultado: modelo gera variantes sem trava mecânica, replicando bordão pra fins de fechamento.
+
+**Sugestão de correção:** expandir badPatterns com:
+- Variantes ortográficas ("estou", "tô", "fico")
+- Flexões verbais comuns ("ajudar", "te ajudar", "auxiliar")
+- Combinações: regex que capture "(estou|tô|fico) (aqui|à disposição|no aguardo)..."
+
+**Risco:** isBadResponse dispara regeneração — expansão grande pode causar loops infinitos. Antes de expandir, investigar estatística atual de regenerações por dia (audit_events).
+
+**Prioridade:** média (Fase 4).
+
+**Identificado:** 22/05/2026, investigação forense complementar (#7).
+
+---
+
+## 32. Lógica arquitetural — bypass para mensagens curtas pós-resposta SDR
+
+**Onde:** server.js, webhook handler (~linha 23258) ou função pré-SDR.
+
+**Problema:** TODA mensagem síncrona do lead dispara resposta da SDR, mesmo quando:
+- Mensagem é "ok"/"👍"/"obrigado" enviada imediatamente após SDR ter mandado mensagem
+- Lead apenas confirma recebimento, sem demandar resposta
+
+Ciclo problemático: SDR manda X → lead "ok" → SDR responde 100 chars de "que bom!" + convite → lead "👍" → SDR responde mais 100 chars → loop.
+
+**Sugestão de correção:** lógica de bypass em código (não só prompt):
+- Se mensagem do lead < N chars (ex: 30) E é match de isShortNeutralLeadReply (já existe!) ou positiveEmojiPatterns (já existe!) E há mensagem da SDR recente (< 1-2 min) → bypass, não chamar SDR
+- Pode reaproveitar funções já existentes (linha 16634, 12981)
+- Resposta sistêmica: silêncio (nada enviado) ou reação simples ("👍")
+
+**Risco:** falso positivo pode parar SDR de continuar conversa válida (ex: lead diz "ok, sigo" sem ponto após — SDR deveria continuar). Calibragem cuidadosa necessária.
+
+**Prioridade:** média-alta. Resolve definitivamente o caso "👍" sem confiar em comportamento do modelo.
+
+**Identificado:** 22/05/2026, investigação forense complementar (#6).
+
+---
+
+## 33. Stats empíricos via MongoDB / rota diagnóstica
+
+**Onde:** infraestrutura operacional (não código).
+
+**Problema:** sem stats empíricos, atacar problemas de comportamento da SDR (brevidade, bordão, fechamento) é decisão sem baseline. Hoje não sabemos:
+- % real de respostas SDR com cada bordão ("estou aqui para ajudar", "à disposição", etc)
+- Distribuição real de razão SDR/lead em produção (few-shots mostram 3,12x; tua observação aponta ~10x; produção pode estar em qualquer ponto entre)
+- % de regenerações por dia (necessário antes de expandir isBadResponse — TODO #31)
+- % de leads que recebem mensagem da SDR após sinal de fechamento
+
+**Sugestão de correção:** 3 caminhos possíveis:
+- (a) Edson roda queries manualmente no Mongo Atlas / Compass / shell — gratuito, sem deploy. Queries propostas no reporte forense de 22/05/2026.
+- (b) Rota diagnóstica temporária HTTP (similar às /diagnostico-22-05-2026* que foram limpas no Item 27) — commit cirúrgico + cleanup posterior
+- (c) Adicionar logs temporários no webhook agregando contadores específicos — sem queries, dados crescem em tempo real
+
+**Prioridade:** baixa (não bloqueia mudanças, mas dá baseline pra medir antes/depois de cada commit corretivo).
+
+**Identificado:** 22/05/2026, investigação forense (#8) — acesso ao Mongo bloqueado no container Claude Code.
+
