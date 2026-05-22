@@ -666,3 +666,53 @@ investimento).
 abandono pós-apresentação de taxa.
 
 **Identificado:** avaliação R3 do roadmap Fase 4, sessão de 2026-05-21.
+
+---
+
+## 25. Feature — Caminho 2 handoff dual para outras linhas IQG
+
+**Onde:** SYSTEM_PROMPT principal (~linha 9482, após resposta-modelo 
+do Caminho 1), CONSULTANT_ASSISTANT_SYSTEM_PROMPT, REVENDEDOR_LOJISTA_
+PATTERNS, classificador semântico.
+
+**Problema:** Regra atual cobre apenas Caminho 1 — lead pergunta sobre 
+outra linha (ordenha/agro/dipping/cosmético vet) → SDR conduz de volta 
+para piscina. NÃO há cobertura para Caminho 2 — lead INSISTE que NÃO 
+quer piscina e SÓ aceitaria começar com outra linha IQG. Atualmente 
+SDR entra em loop tentando conduzir para piscina, sem opção legítima.
+
+**Sugestão de correção:** implementar handoff dual quando lead 
+insistir em linha específica:
+
+1. **SYSTEM_PROMPT:** adicionar bloco "EXCEÇÃO — CAMINHO 2" após 
+   linha ~9482 com regra de roteamento (texto sugerido durante 
+   investigação 22/05/2026)
+
+2. **Classificador:** adicionar gatilho para detectar insistência 
+   em linha não-piscina (não basta `mentionsOtherProductLine` 
+   existente — precisa nuance de "insistência" vs "pergunta casual")
+
+3. **REVENDEDOR_LOJISTA_PATTERNS:** ampliar ou criar novo array 
+   `OUTRAS_LINHAS_INSISTENCIA_PATTERNS` para detectar via regex
+
+4. **Mensagem padrão:** redigir texto canônico para handoff 
+   (paralelo ao texto do Bug 8 lojista) direcionando para 
+   "consultor humano da linha X"
+
+5. **Audit event:** registrar lead com motivo "lead quer atuar em 
+   linha específica fora do escopo atual do Programa Homologado"
+
+**Prioridade:** baixa-média (depende de evidência empírica).
+
+**Critério de priorização:** atacar quando audit mostrar pelo menos 
+3-5 casos em 30 dias de leads que insistem em linha não-piscina e 
+SDR entra em loop. Antes disso, casos podem ser tratados manualmente 
+(operador humano intervém).
+
+**Trabalho relacionado:** após F5 do roadmap (auditor especialista 
+vendas IQG) estar rodando, pode usar dados do auditor para confirmar 
+frequência do caso.
+
+**Identificado:** investigação durante mapeamento R5d, sessão 
+2026-05-22. Decisão de seguir Caminho A no R5d posterga implementação 
+deste feature.
