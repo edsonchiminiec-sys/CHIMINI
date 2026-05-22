@@ -35202,6 +35202,198 @@ app.get("/diagnostico-anderson", async (req, res) => {
   }
 });
 
+/* =========================
+   ROTA DE DIAGNÓSTICO — auditoria forense 22/05/2026
+   Uso: GET /diagnostico-22-05-2026?senha=SENHA
+   Read-only. 8 queries (A-H). Pode ser removida após análise.
+   ========================= */
+app.get("/diagnostico-22-05-2026", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const result = {
+      geradoEm: new Date().toISOString(),
+      descricao: "Diagnóstico forense 22/05/2026 — Bugs 1/2/3 + Edson Chimini"
+    };
+
+    // QUERY A — estado completo do lead Edson + detecção de campos inexistentes
+    const camposEsperados = [
+      "taxaAlinhada", "wantsAffiliate", "priceObjection", "humanRequest",
+      "positiveCommitment", "paymentIntent", "riskObjection",
+      "leadPediuHumano", "solicitouAtendimentoHumano",
+      "faseQualificacao", "status", "statusOperacional", "rotaComercial",
+      "etapas", "dadosConfirmadosPeloLead", "crmEnviado",
+      "followupStep", "proximoFollowupEm", "followupVersionDb", "ultimoFollowupEm",
+      "nome", "cpf", "telefone", "cidade", "estado",
+      "statusDashboard", "statusVisualDashboard", "statusAnteriorDashboard",
+      "botBloqueadoPorHumano", "humanoAssumiu", "atendimentoHumanoAtivo",
+      "encerradoPor", "origemEncerramento", "motivoPerda",
+      "reativadoPeloDashboardEm", "semanticIntent"
+    ];
+    const projectionA = {};
+    camposEsperados.forEach(f => { projectionA[f] = 1; });
+    const leadEdson = await db.collection("leads").findOne(
+      { user: "5554996223975" },
+      { projection: projectionA }
+    );
+    const camposPresentes = leadEdson ? Object.keys(leadEdson) : [];
+    const camposInexistentes = camposEsperados.filter(f => !camposPresentes.includes(f));
+    result.queryA_leadEdson = {
+      documentExiste: leadEdson !== null,
+      document: leadEdson,
+      camposInexistentes
+    };
+
+    // QUERY B — contagens de flags do classificador (validação Bug 1)
+    result.queryB_contagensFlags = {
+      wantsAffiliate: await db.collection("leads").countDocuments({ wantsAffiliate: true }),
+      priceObjection: await db.collection("leads").countDocuments({ priceObjection: true }),
+      humanRequest: await db.collection("leads").countDocuments({ humanRequest: true }),
+      positiveCommitment: await db.collection("leads").countDocuments({ positiveCommitment: true }),
+      paymentIntent: await db.collection("leads").countDocuments({ paymentIntent: true }),
+      riskObjection: await db.collection("leads").countDocuments({ riskObjection: true })
+    };
+
+    // QUERY C — step 5 sem encerramento (validação Bug 3)
+    const step5Count = await db.collection("leads").countDocuments({
+      followupStep: 5,
+      status: { $ne: "perdido" },
+      statusOperacional: { $ne: "perdido_cadencia_completa" }
+    });
+    const step5Sample = await db.collection("leads").find(
+      { followupStep: 5, status: { $ne: "perdido" } },
+      { projection: {
+          user: 1, status: 1, statusOperacional: 1, followupStep: 1,
+          proximoFollowupEm: 1, reativadoPeloDashboardEm: 1, ultimoFollowupEm: 1
+        }
+      }
+    ).limit(20).toArray();
+    result.queryC_step5SemEncerramento = {
+      count: step5Count,
+      amostra: step5Sample
+    };
+
+    // QUERY D — cadência fantasma
+    result.queryD_cadenciaFantasma = await db.collection("leads").countDocuments({
+      followupStep: { $gt: 0 },
+      proximoFollowupEm: null,
+      status: { $nin: ["perdido", "fechado"] }
+    });
+
+    // QUERY E — distribuição status × statusOperacional
+    result.queryE_statusVsStatusOperacional = await db.collection("leads").aggregate([
+      { $group: { _id: { status: "$status", op: "$statusOperacional" }, count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]).toArray();
+
+    // QUERY F — leads cujo user termina em "11" (procurar 5544*****11)
+    const leads11 = await db.collection("leads").find(
+      { user: { $regex: /11$/ } },
+      { projection: {
+          user: 1, followupStep: 1, status: 1, statusOperacional: 1,
+          proximoFollowupEm: 1, ultimoFollowupEm: 1,
+          reativadoPeloDashboardEm: 1, followupVersionDb: 1,
+          nome: 1, encerradoPor: 1
+        }
+      }
+    ).limit(20).toArray();
+    result.queryF_leadsRegex11 = leads11;
+
+    // QUERY G — audit events de followup do lead 5544*****11
+    const candidatos5544 = leads11.filter(l =>
+      typeof l.user === "string" && l.user.startsWith("5544") && l.user.endsWith("11")
+    );
+    if (candidatos5544.length === 1) {
+      const userReal = candidatos5544[0].user;
+      const events = await db.collection("audit_events").find(
+        { userPhone: userReal, eventType: { $regex: "followup" } },
+        { projection: {
+            timestamp: 1, eventType: 1,
+            "payload.step": 1, "payload.followupStep": 1,
+            "payload.evento": 1, "payload.proximoStep": 1,
+            "payload.stepAnterior": 1
+          }
+        }
+      ).sort({ timestamp: 1 }).toArray();
+      result.queryG_auditEventsLead11 = {
+        userIdentificado: userReal,
+        totalEvents: events.length,
+        events
+      };
+    } else {
+      result.queryG_auditEventsLead11 = {
+        userIdentificado: null,
+        candidatosEncontrados: candidatos5544.length,
+        candidatos: candidatos5544.map(l => l.user),
+        nota: candidatos5544.length === 0
+          ? "Nenhum lead com user começando em 5544 e terminando em 11"
+          : "Múltiplos candidatos — desambiguar manualmente antes de re-rodar"
+      };
+    }
+
+    // QUERY H — mensagens do Edson com tag "Ao desenvolvedor"
+    const allCollections = await db.listCollections().toArray();
+    const collectionNames = allCollections.map(c => c.name);
+    const conversationCandidate = collectionNames.find(n =>
+      ["conversations", "messages", "conversation_history"].includes(n)
+    );
+
+    if (!conversationCandidate) {
+      result.queryH_msgsAoDesenvolvedor = {
+        collectionsEncontradas: collectionNames,
+        nota: "Nenhuma collection de conversa identificada (conversations/messages/conversation_history)"
+      };
+    } else {
+      const conversaEdson = await db.collection(conversationCandidate).findOne(
+        { user: "5554996223975" },
+        { projection: { messages: { $slice: -100 } } }
+      );
+
+      const flagged = [];
+      const totalMensagens = (conversaEdson && Array.isArray(conversaEdson.messages))
+        ? conversaEdson.messages.length
+        : 0;
+
+      if (conversaEdson && Array.isArray(conversaEdson.messages)) {
+        conversaEdson.messages.forEach((m, i) => {
+          const content = String(m.content || "");
+          if (m.role === "user" && /ao desenvolvedor|ao claude|favor validar/i.test(content)) {
+            const prev = conversaEdson.messages[i - 1];
+            const next = conversaEdson.messages[i + 1];
+            flagged.push({
+              index: i,
+              timestamp: m.timestamp || m.createdAt || null,
+              sdrAnterior: prev ? String(prev.content || "").slice(0, 600) : null,
+              edsonMsg: content,
+              sdrPosterior: next ? String(next.content || "").slice(0, 600) : null
+            });
+          }
+        });
+      }
+
+      result.queryH_msgsAoDesenvolvedor = {
+        collectionUsada: conversationCandidate,
+        leadDocumentExiste: conversaEdson !== null,
+        totalMensagensAnalisadas: totalMensagens,
+        marcacoesEncontradas: flagged.length,
+        marcacoes: flagged
+      };
+    }
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error("Erro em /diagnostico-22-05-2026:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
