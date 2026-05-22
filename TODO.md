@@ -588,3 +588,81 @@ confundindo SDR após enviar sticker. Atacar quando observado.
 
 **Identificado:** sessão Anderson, análise R-A do Claude Code 
 (2026-05-21).
+
+---
+
+## 22. Polimento — wording absolutista da EXCEÇÃO DE BREVIDADE Fase 6
+
+**Onde:** server.js, EXCEÇÃO DE BREVIDADE da Fase 6 (~linha 10088 
+pós R2c-1). Trecho específico: "NÃO resuma, NÃO encurte, NÃO corte 
+partes."
+
+**Problema:** após R2c-1 (commit 86ff33f) restringir a EXCEÇÃO a 
+"conversa ATIVA", o wording absolutista remanescente ("NÃO resuma, 
+NÃO encurte, NÃO corte partes") ainda força paredão mesmo quando o 
+lead deu sinais inequívocos de aceite. Em casos onde lead diz "topo", 
+"aceito", "pode mandar", mandar a mensagem-base obrigatória inteira 
+(80+ linhas) pode ser pior que uma forma sintética.
+
+**Sugestão de correção:** opcional, dependente de evidência empírica. 
+Substituir wording absolutista por algo proporcional, tipo: "Cubra os 
+5 pontos obrigatórios abaixo; tamanho proporcional ao engajamento do 
+lead." OU adicionar branch: "Se o lead deu sinal inequívoco de aceite 
+explícito, pular para forma sintética: 'Investimento R$ 1.990, 10x 
+R$ 199, pode ser PIX. Vamos ao próximo passo?'"
+
+**Prioridade:** baixa (polimento, não bug).
+
+**Critério de priorização:** atacar somente se audit mostrar leads 
+que aceitaram explicitamente mas receberam paredão e abandonaram.
+
+**Identificado:** avaliação R3 do roadmap Fase 4, sessão de 2026-05-21 
+(durante mapeamento R3 pós-R2c-1).
+
+---
+
+## 23. Polimento — duplicação "Mensagem obrigatória base:" Fase 6
+
+**Onde:** server.js, Fase 6 do SYSTEM_PROMPT (~linhas 10107 e 10109 
+pós R2c-1). Mesma string aparece literalmente 2 vezes consecutivas.
+
+**Problema:** bug cosmético menor. Não impacta funcionamento (modelo 
+ignora a duplicação), mas polui o prompt e gasta tokens marginalmente. 
+Identificado durante análise do R2c-1 mas estava fora de escopo.
+
+**Sugestão de correção:** remover uma das duas ocorrências (linha 10107 
+OU 10109, manter a outra). Trivial — 1 linha deletada.
+
+**Prioridade:** baixa (cosmético).
+
+**Identificado:** avaliação R2c-1 do roadmap Fase 4, sessão de 
+2026-05-21.
+
+---
+
+## 24. Refatoração — tamanho da mensagem-base obrigatória Fase 6
+
+**Onde:** server.js, mensagem-base obrigatória da Fase 6 (~linhas 
+10111-10180+ pós R2c-1, ~70 linhas total).
+
+**Problema:** a mensagem-base obrigatória que o SDR é instruído a 
+enviar quando apresenta a taxa de adesão tem ~70 linhas no prompt. 
+Mesmo com R2c-1 protegendo cadência, em conversa ativa o modelo é 
+forçado a gerar uma mensagem extensa que pode causar abandono em 
+leads que preferem comunicação mais sintética.
+
+**Sugestão de correção:** após R5 (substituição dos 17 few-shots 
+pelos 42 validados) estabilizar, revisar a mensagem-base com possíveis 
+abordagens:
+(a) Reduzir wording mantendo os 5 pontos obrigatórios;
+(b) Criar variantes "curta/média/longa" e instruir o modelo a escolher 
+    conforme engajamento do lead;
+(c) Quebrar em 2-3 mensagens consecutivas em vez de paredão único.
+
+**Prioridade:** média (impacto direto em conversão na fase de 
+investimento).
+
+**Critério de priorização:** atacar após R5 + medição de taxa de 
+abandono pós-apresentação de taxa.
+
+**Identificado:** avaliação R3 do roadmap Fase 4, sessão de 2026-05-21.
