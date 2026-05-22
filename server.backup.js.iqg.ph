@@ -1,3 +1,4 @@
+
 import express from "express";
 import fetch from "node-fetch";
 import FormData from "form-data";
@@ -241,6 +242,19 @@ async function ensureIndexes() {
     { expireAfterSeconds: 7 * 24 * 60 * 60 }
   );
 
+await db.collection("scheduled_callbacks").createIndex(
+    { status: 1, scheduledDate: 1 }
+  );
+
+  await db.collection("scheduled_callbacks").createIndex(
+    { user: 1 }
+  );
+
+  await db.collection("scheduled_callbacks").createIndex(
+    { createdAt: 1 },
+    { expireAfterSeconds: 30 * 24 * 60 * 60 }
+  );
+   
   await db.collection("crm_send_logs").createIndex(
     { createdAt: 1 },
     { expireAfterSeconds: 30 * 24 * 60 * 60 }
@@ -372,7 +386,7 @@ async function updateLeadStatus(user, status) {
     currentLead?.status === "em_atendimento" ||
     currentLead?.faseQualificacao === "em_atendimento";
 
-  if (liberarAtendimentoHumano) {
+  if (liberarAtendimentoHumano && status !== "fechado" && status !== "perdido") {
     await db.collection("leads").updateOne(
       { user },
       {
@@ -385,6 +399,19 @@ async function updateLeadStatus(user, status) {
           liberadoDoAtendimentoHumanoEm: new Date(),
 
           statusOperacional: "ativo",
+
+          /*
+            Bug C — limpeza forte do estado de cadência ao devolver lead pra IA.
+            Sem isso, o proximoFollowupEm antigo (de antes do humano assumir)
+            fica residual e o cron pode disparar com base ruim assim que
+            botBloqueadoPorHumano vira false. Zeramos aqui e chamamos
+            scheduleLeadFollowups na sequência, que reagenda do zero
+            respeitando o horário comercial (Bug B fix).
+          */
+          proximoFollowupEm: null,
+          followupStep: 0,
+          followupLockEm: null,
+
           updatedAt: new Date()
         }
       }
@@ -395,16 +422,25 @@ async function updateLeadStatus(user, status) {
       statusDashboard: status
     });
 
+    try {
+      await scheduleLeadFollowups(user);
+    } catch (rescheduleError) {
+      console.error("Erro ao reagendar follow-up após liberação humano→IA (ignorado):", {
+        user,
+        error: rescheduleError.message
+      });
+    }
+
     return;
   }
-
+   
   /*
   Para status "fechado" e "perdido":
   - muda status real para que o dashboard reflita a ação
   - bloqueia o bot para não reabrir conversa
   - libera atendimento humano se estava ativo
   */
-  if (status === "fechado" || status === "perdido") {
+  if (status === "fechado" || status === "negociado" || status === "perdido") {
     // Toggle: se já está neste status, reverter para o anterior
     if (currentLead?.status === status) {
       const statusAnterior = currentLead?.statusAnteriorDashboard || "morno";
@@ -450,11 +486,14 @@ async function updateLeadStatus(user, status) {
           humanoAssumiu: false,
           atendimentoHumanoAtivo: false,
           botBloqueadoPorHumano: true,
+          // Registra que foi o HUMANO que deu este status pelo dashboard
+          origemEncerramento: status === "perdido" ? "humano" : "humano",
+          encerradoPor: "humano",
+          encerradoEm: new Date(),
           updatedAt: new Date()
         }
       }
     );
-
     console.log("✅ Dashboard marcou lead como " + status + ":", {
       user,
       statusAnterior: currentLead?.status
@@ -790,6 +829,7 @@ const STATUS_OPERACIONAL_VALUES = [
   "em_atendimento",
   "enviado_crm",
   "fechado",
+  "negociado",
   "perdido",
   "erro_dados",
   "erro_envio_crm"
@@ -1371,6 +1411,52 @@ async function recordAuditEvent({
   }
 }
 
+/*
+  ===========================================================
+  auditSystemEvent — registra eventos OPERACIONAIS no MongoDB
+  ===========================================================
+  Diferente do recordAuditEvent (que registra GPTs e webhook),
+  esta função grava eventos do BACKEND que antes só apareciam
+  no console do Render e se perdiam.
+
+  Categorias:
+    - "erro_sistema"      → falha de função, API, GPT
+    - "ciclo_followup"    → avanço de step, encerramento, bootstrap
+    - "auto_perda"        → lead marcado como perdido e por quê
+    - "decisao_taxa"      → aceite, objeção, condicionamento, recusa
+    - "mudanca_fase"      → transição de fase do lead (morno→qualificando etc)
+    - "decisao_backend"   → orientações estratégicas e travas do backend
+    - "rota_comercial"    → migração homologado↔afiliado
+    - "coleta_dados"      → início, progresso e conclusão do pré-cadastro
+    - "envio_followup"    → mensagem de cadência efetivamente enviada
+    - "evento_geral"      → qualquer outro evento relevante
+
+  Tem try/catch interno — nunca derruba o fluxo principal.
+*/
+async function auditSystemEvent(categoria, severidade, userPhone, payload = {}) {
+  try {
+    await connectMongo();
+
+    const userMasked = userPhone
+      ? String(userPhone).slice(0, 4) + "*****" + String(userPhone).slice(-2)
+      : "-";
+
+    await db.collection("audit_events").insertOne({
+      traceId: payload.traceId || `sistema_${categoria}_${Date.now()}`,
+      component: "backend_sistema",
+      eventType: categoria,
+      severity: severidade || "low",
+      userPhone: userPhone || null,
+      userMasked: userMasked,
+      timestamp: new Date(),
+      payload: payload || {}
+    });
+  } catch (error) {
+    // Nunca derruba o fluxo — apenas loga.
+    console.error("⚠️ Erro no auditSystemEvent (não-crítico):", error.message);
+  }
+}
+
 async function recordRequestCompleted({
   traceId = null,
   userPhone = "",
@@ -1391,12 +1477,29 @@ async function recordRequestCompleted({
         respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
         actions: Array.isArray(actions) ? actions : [],
         sdrReviewFindingsCount: Array.isArray(sdrReviewFindings) ? sdrReviewFindings.length : 0,
-        sdrReviewFindings: Array.isArray(sdrReviewFindings)
-          ? sdrReviewFindings.slice(0, 5).map(f => ({
-              tipo: f.tipo,
-              prioridade: f.prioridade
-            }))
+        
+         sdrReviewFindings: Array.isArray(sdrReviewFindings)
+          ? sdrReviewFindings.slice(0, 5).map(f => {
+              const motivoTexto = (() => {
+                if (typeof f.motivo === "string" && f.motivo.trim()) return f.motivo.trim();
+                if (typeof f.reason === "string" && f.reason.trim()) return f.reason.trim();
+                if (f.reason && typeof f.reason === "object") {
+                  try { return JSON.stringify(f.reason).slice(0, 500); }
+                  catch (_) { return ""; }
+                }
+                return "";
+              })();
+
+              return {
+                tipo: f.tipo,
+                prioridade: f.prioridade,
+                motivo: motivoTexto,
+                orientacao: String(f.orientacao || "").slice(0, 800),
+                detalhes: f.reason && typeof f.reason === "object" ? f.reason : undefined
+              };
+            })
           : [],
+         
         estadoLead: {
           status: currentLead?.status || "-",
           faseQualificacao: currentLead?.faseQualificacao || "-",
@@ -1756,6 +1859,9 @@ const MAX_PROCESSED_MESSAGES = 5000;
 const TYPING_DEBOUNCE_MS = 12000; // espera 12s após a última mensagem (funil)
 const TYPING_DEBOUNCE_MS_COLETA = 5000; // espera 5s durante coleta de dados
 const MAX_TYPING_WAIT_MS = 35000; // limite máximo de agrupamento
+
+// Cooldown anti-spam para reenvio forçado de arquivo (lead reclamou que não recebeu)
+const FILE_RESEND_COOLDOWN_MS = 30 * 1000; // 30s entre reenvios do mesmo arquivo
 /* =========================
    STATE
 ========================= */
@@ -1920,16 +2026,37 @@ if (!finalBuffer) {
       : []
   };
 }
+/*
+  ===========================================================
+  clearTimers (HÍBRIDO RAM + BANCO — V2)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Agora limpa DUAS coisas:
+    1. Timers em memória (compatibilidade — pra caso ainda exista
+       algum setTimeout vivo de antes do redeploy).
+    2. Campos do banco (proximoFollowupEm, followupStep, followupLockEm)
+       pra cancelar o próximo disparo do cron job.
+
+  ⚠️ ATENÇÃO: a função virou ASYNC porque agora persiste no banco.
+  Onde ela é chamada (várias dezenas de lugares no código), o
+  comportamento continua igual — não é mais necessário `await` 
+  exceto se você quiser garantir que o cancelamento foi gravado
+  antes de prosseguir.
+
+  Sem await: o cancelamento ainda acontece, só não bloqueia.
+  Com await: garante que o banco gravou antes do próximo passo.
+
+  Como o cron só roda a cada 60s, o pequeno delay no banco não
+  causa disparo duplo.
+*/
 function clearTimers(from) {
   const state = getState(from);
 
   /*
-    Controle de versão dos follow-ups.
-
-    Explicação simples:
-    Toda vez que limpamos os timers, aumentamos uma "senha".
-    Se um timer antigo acordar depois, ele vai ver que a senha mudou
-    e NÃO vai mandar mensagem fora de contexto.
+    Controle de versão dos follow-ups em RAM.
+    Mantido pra compatibilidade caso ainda exista algum setTimeout
+    rodando de antes do deploy do modelo V2.
   */
   state.followupVersion = Number(state.followupVersion || 0) + 1;
   state.followupScheduledAtMs = 0;
@@ -1948,8 +2075,28 @@ function clearTimers(from) {
     for (const timer of state.followupTimers) {
       clearTimeout(timer);
     }
-
     state.followupTimers = [];
+  }
+
+  /*
+    Limpa o agendamento persistente do banco.
+    Não usamos await pra não bloquear o webhook.
+    Como o cron só roda a cada 60s, o pequeno delay de gravação
+    não causa disparo indevido (a chance de o cron passar exatamente
+    nesse intervalo é mínima e mesmo se passar, o followupLockEm
+    protege contra disparo duplo).
+  */
+  if (from) {
+    saveLeadProfile(from, {
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null
+    }).catch(error => {
+      console.error("Erro ao limpar follow-up persistente:", {
+        user: from,
+        error: error.message
+      });
+    });
   }
 }
 
@@ -2894,12 +3041,37 @@ auditLog("Resposta do Consultor Pre-SDR", {
 return parsedConsultantAdvice;
 }
 
+/* =========================================================
+   DATA/HORA ATUAL — FONTE ÚNICA (fuso de Brasília)
+   Função utilitária usada por todos os GPTs que precisam
+   calcular datas relativas ("amanhã", "quinta que vem").
+   Definida uma vez, no escopo global, para qualquer função
+   poder chamar sem depender de variável de outra função.
+========================================================= */
+function obterDataHojeBrasil() {
+  const agoraBrasil = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+  );
+  const diasSemanaPt = [
+    "domingo", "segunda-feira", "terça-feira", "quarta-feira",
+    "quinta-feira", "sexta-feira", "sábado"
+  ];
+  return {
+    agoraBrasil,
+    dataHojeISO: `${agoraBrasil.getFullYear()}-${String(agoraBrasil.getMonth() + 1).padStart(2, "0")}-${String(agoraBrasil.getDate()).padStart(2, "0")}`,
+    diaSemanaHoje: diasSemanaPt[agoraBrasil.getDay()],
+    horaAgora: `${String(agoraBrasil.getHours()).padStart(2, "0")}:${String(agoraBrasil.getMinutes()).padStart(2, "0")}`
+  };
+}
+
 async function runConversationContinuityAnalyzer({
   lead = {},
   history = [],
   lastUserText = "",
-  lastSdrText = ""
+  lastSdrText = "",
+  traceId = null
 } = {}) {
+   
   const fallback = {
     leadEntendeuUltimaExplicacao: false,
     leadQuerAvancar: false,
@@ -2910,7 +3082,7 @@ async function runConversationContinuityAnalyzer({
     proximaAcaoSemantica: "nao_analisado",
     orientacaoParaPreSdr: "",
     confidence: "baixa",
-    reason: "Fallback local. Analisador de continuidade não executado ou falhou."
+   reason: "Fallback local. Analisador de continuidade não executado ou falhou."
   };
 
   const recentHistory = Array.isArray(history)
@@ -2919,6 +3091,9 @@ async function runConversationContinuityAnalyzer({
         content: message.content
       }))
     : [];
+
+  // Data atual (fonte única) — para o Historiador entender datas relativas
+  const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
 
   try {
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2949,6 +3124,56 @@ Sua função é analisar:
 - o histórico recente;
 - o estado atual do lead;
 e dizer se a SDR deve avançar, responder dúvida, parar repetição ou retomar coleta.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA CENTRAL — ANTI-REPETIÇÃO PELO ESTADO (PRIORIDADE MÁXIMA)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+O objeto "lead.etapas" que você recebe é o registro FACTUAL e PERMANENTE
+de quais etapas do funil já foram explicadas ao lead.
+
+Cada campo de "etapas" é um fato objetivo:
+- programa = true        → a explicação do programa JÁ FOI dada
+- beneficios = true      → os benefícios JÁ FORAM explicados
+- estoque = true         → o estoque em comodato JÁ FOI explicado
+- responsabilidades = true → as responsabilidades JÁ FORAM explicadas
+- investimento = true OU taxaPerguntada = true → a taxa JÁ FOI apresentada
+
+REGRA OBRIGATÓRIA:
+Uma etapa marcada como "true" foi explicada ao lead em ALGUM momento da
+conversa — pode ter sido há minutos ou há vários dias. Isso NÃO muda.
+O histórico recente que você recebe é curto (últimas mensagens) e pode
+NÃO conter a explicação original. NUNCA conclua que um tema precisa ser
+reexplicado só porque ele não aparece no histórico recente.
+
+Para TODA etapa marcada como "true" em "lead.etapas":
+- inclua o tema correspondente em "temaUltimaRespostaSdr";
+- marque "naoRepetirUltimoTema" = true;
+- na "orientacaoParaPreSdr", liste explicitamente os temas já concluídos
+  e instrua a SDR a NÃO reexplicá-los.
+
+PRÓXIMO PASSO:
+Identifique a primeira etapa que ainda está "false" na ordem:
+programa → beneficios → estoque → responsabilidades → investimento.
+Essa é a próxima etapa a abordar. Oriente o Pré-SDR a conduzir para ela.
+Se todas estão "true", oriente a conduzir para a decisão da taxa ou a
+coleta de dados, conforme o estado.
+
+EXEMPLO:
+Estado recebido: etapas = { programa:true, beneficios:true, estoque:true,
+responsabilidades:false, investimento:false }
+Mensagem do lead: "sim, vamos"
+
+Interpretação correta:
+naoRepetirUltimoTema = true
+temaUltimaRespostaSdr = ["programa", "beneficios", "estoque"]
+proximaAcaoSemantica = "nao_repetir_e_avancar"
+orientacaoParaPreSdr = "Programa, benefícios e estoque já foram explicados
+e NÃO devem ser repetidos. O lead confirmou. Avançar direto para as
+responsabilidades do parceiro, de forma curta."
+
+Esta regra vale mesmo que o lead NÃO tenha reclamado de repetição.
+A prevenção é proativa: baseada no estado, não na reclamação do lead.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 REGRA CENTRAL — CORREÇÃO DE CONTEXTO
@@ -3500,7 +3725,10 @@ Se houver objeção, use:
           },
           {
             role: "user",
-            content: JSON.stringify({
+           content: JSON.stringify({
+              dataDeHoje: dataHojeISO,
+              diaSemanaHoje: diaSemanaHoje,
+              horaAgora: horaAgora,
               ultimaMensagemLead: lastUserText || "",
               ultimaRespostaSdr: lastSdrText || "",
               historicoRecente: recentHistory,
@@ -3547,7 +3775,7 @@ Se houver objeção, use:
 };
 
      await recordAuditEvent({
-  traceId: null,
+  traceId,
   component: AUDIT_COMPONENTS.GPT_SEMANTIC_CONTINUITY,
   eventType: AUDIT_EVENT_TYPES.GPT_CALL_SUCCESS,
   payload: {
@@ -4162,6 +4390,233 @@ function buildHomologadoIndicationBenefitGuidance({
   };
 }
 
+/* =========================================================
+   RECUPERAÇÃO DE DADOS CADASTRAIS DO HISTÓRICO
+   Quando um lead em coleta está com campos vazios mas já tem
+   histórico de conversa, este GPT varre as mensagens trocadas,
+   identifica os dados (nome, CPF, telefone, cidade, estado) que
+   o lead JÁ informou e CONFIRMOU, e devolve esses valores para
+   o backend preencher o perfil automaticamente.
+   Evita pedir de novo dados que o lead já passou.
+========================================================= */
+async function recuperarDadosCadastraisDoHistorico({ history = [], lead = {} } = {}) {
+  const vazio = { encontrou: false, nome: "", cpf: "", telefone: "", cidade: "", estado: "" };
+
+  try {
+    const historicoTexto = (Array.isArray(history) ? history : [])
+      .map(m => `${m.role === "assistant" ? "SDR" : "LEAD"}: ${String(m.content || "").trim()}`)
+      .filter(linha => linha.length > 6)
+      .join("\n");
+
+    if (historicoTexto.length < 40) {
+      return vazio;
+    }
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_SEMANTIC_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Você é um extrator interno da IQG.
+
+Sua tarefa: ler o histórico de uma conversa de WhatsApp e identificar quais dados cadastrais do LEAD já foram informados por ele e confirmados na conversa.
+
+Os dados procurados são: nome completo, CPF, telefone, cidade, estado.
+
+REGRAS:
+- Só extraia um dado se ele estiver CLARAMENTE presente no histórico, dito pelo LEAD ou exibido pela SDR num resumo que o LEAD confirmou.
+- Um dado é considerado confirmado se a SDR mostrou um resumo (ex: "Nome: ... CPF: ... Esses dados estão corretos?") e o LEAD respondeu de forma positiva ("sim", "correto", "isso", "pode seguir").
+- Também vale se o LEAD digitou o dado diretamente e a SDR confirmou recebimento.
+- CPF: devolva só os números (11 dígitos) ou no formato 000.000.000-00, como apareceu.
+- Telefone: devolva como apareceu, com DDD.
+- Estado: devolva a sigla de 2 letras (ex: RS, SP) se possível.
+- Se um dado NÃO aparece claramente no histórico, deixe o campo como "" (string vazia). NUNCA invente.
+- "encontrou" deve ser true se você conseguiu extrair pelo menos um dos cinco dados; false se não achou nenhum.
+
+Responda SOMENTE um JSON neste formato, sem texto extra:
+{
+  "encontrou": false,
+  "nome": "",
+  "cpf": "",
+  "telefone": "",
+  "cidade": "",
+  "estado": ""
+}`
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ historicoDaConversa: historicoTexto })
+          }
+        ]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Erro ao recuperar dados do histórico:", data);
+      return vazio;
+    }
+
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}");
+
+    return {
+      encontrou: parsed?.encontrou === true,
+      nome: typeof parsed?.nome === "string" ? parsed.nome.trim() : "",
+      cpf: typeof parsed?.cpf === "string" ? parsed.cpf.trim() : "",
+      telefone: typeof parsed?.telefone === "string" ? parsed.telefone.trim() : "",
+      cidade: typeof parsed?.cidade === "string" ? parsed.cidade.trim() : "",
+      estado: typeof parsed?.estado === "string" ? parsed.estado.trim() : ""
+    };
+  } catch (erro) {
+    console.error("Falha na recuperação de dados do histórico:", erro.message);
+    return vazio;
+  }
+}
+
+/*
+  Bug 6 — Heurística determinística de truncamento de mensagem do lead.
+  Roda antes do classificador semântico (sem latência, sem custo).
+  Combinada via OR com sinal do classificador GPT no orquestrador.
+*/
+const TRUNCATION_TRAILING_WORDS = new Set([
+  // artigos
+  "o", "a", "os", "as", "um", "uma", "uns", "umas",
+  // preposições
+  "de", "do", "da", "dos", "das",
+  "em", "no", "na", "nos", "nas",
+  "por", "pelo", "pela", "pelos", "pelas",
+  "para", "pra", "pro", "pros", "pras",
+  "com", "sem", "ao", "à", "aos", "às",
+  "sobre", "até", "ate", "desde", "entre", "contra",
+  // conjunções
+  "e", "ou", "mas", "nem", "que", "se",
+  "como", "qual", "quando", "onde", "porque",
+  // pronomes possessivos e demonstrativos (modificadores aguardando substantivo)
+  "meu", "minha", "meus", "minhas",
+  "seu", "sua", "seus", "suas",
+  "esse", "essa", "este", "esta",
+  "aquele", "aquela", "aqueles", "aquelas",
+  // pronomes pessoais átonos / clíticos
+  "me", "te", "se", "lhe", "nos", "vos", "lhes", "vc", "voce", "você", "vcs", "vocês"
+]);
+
+const TRUNCATION_SHORT_WORD_WHITELIST = new Set([
+  "ok", "blz", "tv", "pc", "vc", "tk", "uau", "oi",
+  // termos do domínio IQG/WhatsApp que terminam em consoante rara
+  "kit", "pdf", "link", "app", "doc", "cep"
+]);
+
+const TRUNCATION_RARE_FINAL_CONSONANTS = /[cfgjkpqtvwy]$/i;
+
+/*
+  Bug 8 — Detecção determinística de lead que se declara lojista,
+  revendedor, distribuidor ou representante comercial.
+
+  Esse caminho comercial é diferente do Programa Parceiro Homologado
+  e exige atendimento humano da equipe IQG. Heurística é dupla
+  defesa (camada A) com o classificador semântico (campo
+  leadDeclareSerRevendedorOuLojista — camada B).
+
+  Padrões cobrem variantes coloquiais BR observadas em produção:
+  - "sou/seria representante" (caso real do lead José)
+  - "sou representante moro em Ponte Nova MG" (caso real do Edson)
+  - "tenho minha loja" / "trabalho com atacado"
+*/
+const REVENDEDOR_LOJISTA_PATTERNS = [
+  // "sou/ser/seria + categoria"
+  /\bs(?:ou|er|eria) (?:lojista|revendedor[a]?|distribuidor[a]?|representante comercial)\b/i,
+  /\bs(?:ou|er|eria) (?:um |uma )?representante\b/i,
+
+  // "tenho/minha + estrutura" (cnpj sozinho removido — ambíguo)
+  /\btenho (?:loja|empresa|com[eé]rcio|distribuidora|revenda)\b/i,
+  /\bminha (?:loja|empresa|distribuidora|revenda|loja f[íi]sica)\b/i,
+
+  // "já vendo / quero revender"
+  /\bj[áa] (?:revendo|vendo) produtos\b/i,
+  /\bquero (?:revender|distribuir|representar)\b/i,
+  /\bcomprar (?:para revender|pra revender|com desconto|para minha loja|pra minha loja)\b/i,
+
+  // termos de revenda/atacado/distribuição
+  /\b(?:revenda|atacado|distribui[cç][aã]o) (?:de|dos|para)\b/i,
+  /\btrabalho com (?:atacado|distribui[cç][aã]o|revenda)\b/i,
+
+  // pedido de tabela/preço/margem para lojista
+  /\btabela (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
+  /\bpre[cç]o (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
+  /\bmargem (?:para |pra )?(?:lojistas?|revendedor)\b/i
+];
+
+function detectRevendedorOuLojistaPretendido(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return { detected: false, motivo: null, trecho: null };
+
+  for (let i = 0; i < REVENDEDOR_LOJISTA_PATTERNS.length; i++) {
+    const pattern = REVENDEDOR_LOJISTA_PATTERNS[i];
+    const match = pattern.exec(raw);
+    if (match) {
+      return {
+        detected: true,
+        motivo: `pattern_${i + 1}`,
+        trecho: match[0]
+      };
+    }
+  }
+
+  return { detected: false, motivo: null, trecho: null };
+}
+
+function detectMessageTruncation(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return { truncated: false, motivo: null };
+
+  // Regra 1 — termina em pontuação final ou emoji → não truncada.
+  if (/[.!?…]$|[\p{Extended_Pictographic}]$/u.test(raw)) {
+    return { truncated: false, motivo: null };
+  }
+
+  const words = raw.split(/\s+/);
+  const lastWord = (words[words.length - 1] || "").toLowerCase();
+  const lastWordClean = lastWord.replace(/[^\p{L}\p{N}]/gu, "");
+
+  if (!lastWordClean) return { truncated: false, motivo: null };
+
+  // Regra 2 — última "palavra" é letra solta (1 char alfabético).
+  if (lastWordClean.length === 1 && /[a-zA-ZÀ-ÿ]/.test(lastWordClean)) {
+    return { truncated: true, motivo: "letra_solta_final" };
+  }
+
+  // Regra 3 — última palavra é preposição/artigo/conjunção/pronome
+  // que normalmente espera continuação.
+  if (TRUNCATION_TRAILING_WORDS.has(lastWordClean)) {
+    return { truncated: true, motivo: "termina_em_palavra_de_funcao" };
+  }
+
+  // Regra 4 — palavra curta (2-5 chars) terminada em consoante rara em PT-BR,
+  // fora da whitelist de termos válidos do domínio.
+  if (
+    lastWordClean.length >= 2 &&
+    lastWordClean.length <= 5 &&
+    TRUNCATION_RARE_FINAL_CONSONANTS.test(lastWordClean) &&
+    !TRUNCATION_SHORT_WORD_WHITELIST.has(lastWordClean)
+  ) {
+    return { truncated: true, motivo: "consoante_rara_final" };
+  }
+
+  // Casos sutis (mensagem longa que parece interrompida sem palavra
+  // obviamente cortada) ficam por conta do Sinal B (classificador GPT),
+  // que tem contexto semântico que regex não captura.
+  return { truncated: false, motivo: null };
+}
+
 async function runLeadSemanticIntentClassifier({
   lead = {},
   history = [],
@@ -4192,10 +4647,15 @@ otherProductLineTopics: [],
     humanRequest: false,
     dataCorrectionIntent: false,
     requestedFile: "",
+    schedulingRequest: false,
+    schedulingDate: "",
+    schedulingTime: "",
+    mensagemParecesTruncada: false,
+    leadDeclareSerRevendedorOuLojista: false,
     confidence: "baixa",
     reason: "Fallback local. Classificador semântico não executado ou falhou."
   };
-
+   
   const recentHistory = Array.isArray(history)
     ? history.slice(-8).map(message => ({
         role: message.role,
@@ -4666,7 +5126,81 @@ REGRAS:
 - Se o lead fala em pagar, pagamento, pix, cartão ou boleto, marque paymentIntent true.
 - Se o lead pede atendente, pessoa, humano, consultor ou vendedor, marque humanRequest true.
 - Se o lead diz que algum dado está errado ou quer corrigir CPF, telefone, cidade, estado ou nome, marque dataCorrectionIntent true.
+- Se o lead pede para conversar/falar/ser contatado em outro momento, adiar a conversa, agendar, marcar, remarcar ou alterar um horário (ex: "vamos conversar amanhã", "me chama segunda", "melhor às 14h", "deixa pra semana que vem", "podemos falar depois"), marque schedulingRequest true.
+
+REGRA DE DATA DO AGENDAMENTO (schedulingDate e schedulingTime):
+- Quando schedulingRequest for true, calcule a data e a hora pedidas pelo lead.
+- O payload do usuário traz "dataDeHoje" (formato AAAA-MM-DD), "diaSemanaHoje" e "horaAgora". Use esses valores como referência absoluta para calcular qualquer data relativa.
+- Preencha "schedulingDate" no formato AAAA-MM-DD e "schedulingTime" no formato HH:MM (24 horas).
+- "amanhã" = dataDeHoje + 1 dia. "depois de amanhã" = dataDeHoje + 2 dias.
+- "quinta-feira" / "na quinta" sem mais contexto = a próxima ocorrência dessa quinta a partir de amanhã.
+- "quinta que vem" / "quinta da semana que vem" / "próxima quinta" = a quinta-feira da SEMANA SEGUINTE (não a desta semana). O mesmo vale para os outros dias.
+- "semana que vem" sem dia definido = a segunda-feira da semana seguinte.
+- Se o lead não disse a hora, use "09:00" como padrão. Se não disse o dia mas só a hora, use amanhã.
+- "de manhã" = 09:00. "de tarde" / "à tarde" = 14:00. "de noite" / "à noite" = 19:00. "cedo" = 08:00.
+- A data calculada NUNCA pode ser hoje ou no passado. Se o cálculo der hoje ou antes, use o próximo dia válido.
+- Se schedulingRequest for false, deixe schedulingDate e schedulingTime como "".
+
 - Se o lead pede material, PDF, contrato, catálogo, kit, manual, curso ou folder, preencha requestedFile com: "contrato", "catalogo", "kit", "manual", "folder" ou "".
+
+- Se a última mensagem do lead termina de forma inesperada (palavra cortada no meio, preposição/artigo/pronome solto no final, frase interrompida sem ponto final ou interrogação), marque mensagemParecesTruncada true. Isso indica que a mensagem provavelmente foi cortada antes de chegar (limite do WhatsApp, transcrição de áudio incompleta, etc). Nesse caso NÃO invente o tema do que faltou — o backend vai pedir esclarecimento ao lead. Se a mensagem termina naturalmente (mesmo curta), marque false.
+
+- leadDeclareSerRevendedorOuLojista: marque true SOMENTE quando o lead afirma ser ou querer ser LOJISTA, REVENDEDOR, DISTRIBUIDOR ou REPRESENTANTE COMERCIAL com CNPJ próprio para REVENDER produtos IQG — caminho diferente do "Parceiro Homologado".
+
+  Exemplos VÁLIDOS (true):
+  - "sou lojista"
+  - "tenho minha loja e quero revender"
+  - "sou representante comercial"
+  - "seria um representante"
+  - "quero comprar para revender"
+  - "tenho CNPJ, qual a tabela para revenda?"
+  - "trabalho com atacado / distribuição"
+
+  NÃO marcar quando o lead apenas:
+  - pergunta "como funciona representação" sem se identificar como lojista atual;
+  - diz "trabalho com vendas" genérico;
+  - diz "sou autônomo" ou "trabalho por conta própria";
+  - se apresenta profissionalmente em fase final do funil (após aceite de taxa, em coleta de dados).
+
+  REGRA DE OURO: em dúvida, marque false. O backend tem heurística determinística que pega casos óbvios; o classificador só precisa capturar nuances semânticas que regex não pega.
+
+  ATENÇÃO REFORÇO: perguntas sobre produto, preço, margem, prazo, validade, tabela, frete, garantia, entrega ou qualquer aspecto COMERCIAL/OPERACIONAL do programa NÃO são declarações de ser revendedor. São perguntas legítimas de interessado. Marque leadDeclareSerRevendedorOuLojista=false nesses casos.
+
+  Exemplos CRÍTICOS que NÃO são leadDeclareSerRevendedorOuLojista:
+  - "Validade dos produtos?" — pergunta sobre produto, não declaração;
+  - "Como funciona a margem de 40%?" — pergunta sobre o programa;
+  - "Aceitam CNPJ?" — pergunta administrativa, sem declarar revenda;
+  - "Qual o preço de uma unidade?" — pergunta comercial sem auto-declaração;
+  - "Vocês entregam para todo Brasil?" — pergunta logística;
+  - "Como funciona o frete da reposição?" — pergunta operacional comum.
+
+  REGRA DE PRIORIDADE: auto-declaração explícita SOBRESCREVE pergunta comercial. Se a mensagem contiver alguma das declarações dos exemplos VÁLIDOS acima (ex: "sou lojista", "tenho minha loja", "quero revender"), marque true MESMO que a mesma mensagem também faça perguntas comerciais (preço, margem, frete, etc.). A parte declarativa tem prioridade absoluta.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REGRA — positiveCommitment (CRÍTICA)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+positiveCommitment = true SOMENTE quando o lead afirma EXPLICITAMENTE que vai atuar nas vendas como parceiro, que entende as responsabilidades do parceiro homologado, ou que está pronto para seguir para a pré-análise / pré-cadastro.
+
+Marque positiveCommitment = true em mensagens como:
+- "concordo, posso atuar nas vendas como parceiro";
+- "entendo que dependo da minha atuação para gerar resultado";
+- "estou de acordo com a responsabilidade pelo estoque";
+- "topo o compromisso de revender";
+- "vamos seguir para a pré-análise / pré-cadastro";
+- "quero entrar como parceiro homologado".
+
+NÃO marque positiveCommitment = true em ack curto, vago ou genérico, mesmo que apareça "sim", "ok", "tá", "beleza", "show", "perfeito", "concordo" SEM contexto comercial específico de atuação/responsabilidade/avanço.
+
+Exemplos CRÍTICOS que NÃO são positiveCommitment:
+- "sim" sozinho;
+- "ok" sozinho;
+- "Por enquanto sim, fale mais" — é ack pra continuar ouvindo, não compromisso;
+- "tá bom, me explica" — é pedido de explicação, não compromisso;
+- "entendi" — é compreensão (use positiveRealInterest ou softUnderstandingOnly conforme o caso), não compromisso;
+- "beleza" / "perfeito" / "show" / "legal" sozinhos.
+
+REGRA DE OURO: em dúvida, marque positiveCommitment = false. O backend tem outras vias de detectar compromisso real (consolidação por contexto de responsabilidades explicadas). Erro de marcar positiveCommitment = true em ack vago cascateia em marcar compromisso/compromissoPerguntado no funil e libera pré-cadastro antes da hora.
 
 IMPORTANTE:
 - Não invente intenção.
@@ -4679,6 +5213,9 @@ Responda somente JSON válido neste formato:
   "greetingOnly": false,
   "asksQuestion": false,
   "questionTopics": [],
+  "schedulingRequest": false,
+  "schedulingDate": "",
+  "schedulingTime": "",
     "mentionsOtherProductLine": false,
   "otherProductLineTopics": [],
   "wantsAffiliate": false,
@@ -4697,6 +5234,8 @@ Responda somente JSON válido neste formato:
   "humanRequest": false,
   "dataCorrectionIntent": false,
   "requestedFile": "",
+  "mensagemParecesTruncada": false,
+  "leadDeclareSerRevendedorOuLojista": false,
   "confidence": "baixa",
   "reason": ""
 }
@@ -4746,10 +5285,15 @@ Responda somente JSON válido neste formato:
   ...fallback,
   ...parsed,
   questionTopics: Array.isArray(parsed?.questionTopics) ? parsed.questionTopics : [],
+  schedulingRequest: parsed?.schedulingRequest === true,
+  schedulingDate: typeof parsed?.schedulingDate === "string" ? parsed.schedulingDate.trim() : "",
+  schedulingTime: typeof parsed?.schedulingTime === "string" ? parsed.schedulingTime.trim() : "",
   otherProductLineTopics: Array.isArray(parsed?.otherProductLineTopics)
     ? parsed.otherProductLineTopics
     : [],
   requestedFile: parsed?.requestedFile || "",
+  mensagemParecesTruncada: parsed?.mensagemParecesTruncada === true,
+  leadDeclareSerRevendedorOuLojista: parsed?.leadDeclareSerRevendedorOuLojista === true,
   confidence: parsed?.confidence || "baixa",
   reason: parsed?.reason || ""
 };
@@ -5272,19 +5816,42 @@ function buildTurnPolicy({
   }
 
   if (pediuHomologado && !pediuAfiliado) {
+    const etapaAtualFunil = getCurrentFunnelStage(lead || {});
+    const podeColetarAgora = canStartDataCollection(lead || {});
+    const etapaJaChegouEmTaxa = etapaAtualFunil >= 5;
+    const etapaJaPassouTaxa = etapaAtualFunil >= 7;
+
     return {
       ...base,
-      modo: "homologado_escolhido",
+      modo: etapaJaPassouTaxa && podeColetarAgora
+        ? "coleta_dados_liberada"
+        : etapaJaChegouEmTaxa
+          ? "homologado_fase_taxa"
+          : "homologado_escolhido",
       ofertaPermitida: "homologado",
       podeFalarAfiliado: false,
       podeMandarLinkAfiliado: false,
       podeCompararProgramas: false,
-      estrategiaObrigatoria: "reforcar_valor",
-      proximaMelhorAcao:
-        "Responder focando somente no Programa Parceiro Homologado e conduzir para a próxima etapa pendente.",
-      cuidadoPrincipal:
-        "Não comparar com Afiliado, não mandar link de Afiliado, não falar taxa cedo e não pedir dados.",
-      motivo: "Lead escolheu ou reforçou preferência pelo Homologado."
+      podeFalarTaxa: etapaJaChegouEmTaxa,
+      podePedirDados: etapaJaPassouTaxa && podeColetarAgora,
+      estrategiaObrigatoria: etapaJaPassouTaxa && podeColetarAgora
+        ? "avancar_pre_analise"
+        : etapaJaChegouEmTaxa
+          ? "reforcar_valor"
+          : "reforcar_valor",
+      proximaMelhorAcao: etapaJaPassouTaxa && podeColetarAgora
+        ? "Conduzir para o início da pré-análise, pedindo o próximo dado faltante."
+        : etapaJaChegouEmTaxa
+          ? "Explicar o investimento/taxa com transparência e conduzir para validação."
+          : "Responder focando somente no Programa Parceiro Homologado e conduzir para a próxima etapa pendente.",
+      cuidadoPrincipal: etapaJaChegouEmTaxa
+        ? "Não comparar com Afiliado. Não pedir dados antes de alinhar taxa. Explicar valor percebido antes do número."
+        : "Não comparar com Afiliado, não mandar link de Afiliado, não falar taxa cedo e não pedir dados.",
+      motivo: etapaJaPassouTaxa && podeColetarAgora
+        ? "Lead no Homologado com todas etapas concluídas e coleta liberada."
+        : etapaJaChegouEmTaxa
+          ? "Lead no Homologado na etapa de investimento/taxa. Liberado para falar de taxa."
+          : "Lead escolheu ou reforçou preferência pelo Homologado."
     };
   }
 
@@ -5916,8 +6483,7 @@ const canEvaluateInvestmentUnderstanding = lastReplyActuallyExplainedInvestment;
     responsabilidades ou atuação.
   */
   const lastReplyActuallyExplainedCommitment =
-    /\b(compromisso|responsabilidade|responsabilidades|atuacao|atuação|vendas|conservar|conservacao|conservação|comunicar vendas|resultado depende|dedicacao|dedicação)\b/i.test(lastSdrText || "") ||
-    semanticListIncludesAny(lastSdrTopics, [
+    /\b(compromisso|responsabilidade|responsabilidades|atuacao|atuação|conservar|conservacao|conservação|comunicar vendas|resultado depende|dedicacao|dedicação)\b/i.test(lastSdrText || "") ||    semanticListIncludesAny(lastSdrTopics, [
       "compromisso",
       "responsabilidade",
       "responsabilidades",
@@ -5999,7 +6565,15 @@ if (shouldConfirmInvestmentComValor && lead?.taxaAlinhada !== true) {
       leadShowedProgress
     );
 
-  if (shouldConfirmCommitment && updatedEtapas.compromisso !== true) {
+ // Compromisso só pode ser marcado se benefícios E estoque já estão concluídos.
+  // Sem isso, o compromisso é marcado prematuramente e as etapas ficam incoerentes
+  // (compromisso=True com beneficios=False e estoque=False), o que trava o funil.
+  const etapasPreRequisitosCompromisso =
+    updatedEtapas.programa === true &&
+    updatedEtapas.beneficios === true &&
+    updatedEtapas.estoque === true;
+
+  if (shouldConfirmCommitment && updatedEtapas.compromisso !== true && etapasPreRequisitosCompromisso) {
     updatedEtapas.compromisso = true;
     updatedEtapas.compromissoPerguntado = true;
     patch.compromissoConfirmadoEm = new Date();
@@ -6463,7 +7037,9 @@ O JSON deve ter exatamente esta estrutura:
   "objecaoPrincipal": "sem_objecao_detectada",
   "confiancaClassificacao": "nao_analisado",
   "sinaisObservados": [],
-  "resumoPerfil": ""
+  "resumoPerfil": "",
+  "leadHostilOuAgressivo": false,
+  "leadPediuParaParar": false
 }
 `;
 
@@ -7123,6 +7699,27 @@ Lead:
 Resposta correta do Supervisor:
 necessitaHumano=true
 prioridadeHumana="alta" ou "urgente"
+
+━━━━━━━━━━━━━━━━━━━━━━━
+DETECÇÃO DE HOSTILIDADE E PEDIDO PARA PARAR
+━━━━━━━━━━━━━━━━━━━━━━━
+
+leadHostilOuAgressivo (true/false):
+Marque true se o lead demonstrar hostilidade, agressividade, irritação extrema,
+xingamento, ofensa pessoal, tom ameaçador ou desrespeito claro na mensagem atual.
+Exemplos: "tá louco", "ficou doido", "cala a boca", "vai te catar", "que inferno",
+"pirou?", "endoidou", xingamentos, provocações, tons agressivos.
+NÃO marque true para insatisfação educada, crítica construtiva ou reclamação normal.
+A análise deve ser SEMÂNTICA: entenda o TOM e a INTENÇÃO, não dependa de palavras exatas.
+
+leadPediuParaParar (true/false):
+Marque true se o lead pediu explicitamente para parar de receber mensagens,
+ser removido, não ser mais contactado ou encerrar o contato de forma definitiva.
+Exemplos: "esquece meu zap", "para de me mandar mensagem", "me tira dessa lista",
+"não me manda mais nada", "me remove", "me bloqueia", "sai do meu whatsapp",
+"para de me perturbar", "não quero mais receber mensagem".
+NÃO marque true para "agora não", "depois", "vou pensar" — isso é adiamento, não pedido de parar.
+A análise deve ser SEMÂNTICA: entenda a INTENÇÃO real do lead.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 FORMATO DE SAÍDA OBRIGATÓRIO
@@ -7986,6 +8583,89 @@ function isClearlyHomologadoOnlyReply({
   );
 }
 
+/*
+  Aprovação local — fase de coleta de dados no Homologado.
+
+  Quando a SDR está pedindo nome, CPF, telefone, cidade ou estado dentro
+  do fluxo do Programa Parceiro Homologado, não faz sentido chamar o GPT
+  anti-mistura: a resposta é só uma pergunta de cadastro, não há contexto
+  de Afiliado. O GPT estava dando falso positivo nesses casos.
+
+  Critérios para aprovar localmente (TODOS precisam ser verdadeiros):
+    1. A rota comercial é homologado (ou indefinida apontando pra homologado).
+    2. O lead NÃO está pedindo Afiliado nem mencionou afiliado/link/minhaiqg.
+    3. A fase do lead é de coleta/confirmação de dados (faseQualificacao
+       ou faseFunil correspondente).
+    4. A resposta da SDR NÃO contém elementos reais de Afiliado
+       (link minhaiqg.com.br, "programa de afiliados", "cadastro de afiliado").
+
+  Se todos os critérios baterem, é coleta legítima do Homologado.
+*/
+function isSafeCollectionPhaseReply({
+  lead = {},
+  leadText = "",
+  respostaFinal = "",
+  commercialRouteDecision = null
+} = {}) {
+  /* 1. Rota é homologado? */
+  const rotaLead = String(lead?.rotaComercial || "").toLowerCase();
+  const rotaDecisao = String(commercialRouteDecision?.rotaSugerida || "").toLowerCase();
+  const rotaEhAfiliado =
+    rotaLead === "afiliado" ||
+    rotaDecisao === "afiliado" ||
+    lead?.interesseAfiliado === true ||
+    lead?.faseFunil === "afiliado" ||
+    lead?.faseQualificacao === "afiliado";
+
+  if (rotaEhAfiliado) return false;
+
+  /* 2. Lead NÃO mencionou nada de Afiliado na mensagem atual? */
+  const textoLead = String(leadText || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const leadFalouAfiliado =
+    /afiliad|minhaiqg|link de divulga|programa de afiliad/i.test(textoLead);
+
+  if (leadFalouAfiliado) return false;
+
+  /* 3. Está em fase de coleta/confirmação de dados? */
+  const faseQualificacao = String(lead?.faseQualificacao || "");
+  const faseFunil = String(lead?.faseFunil || "");
+
+  const estaEmColeta = Boolean(
+    [
+      "coletando_dados",
+      "dados_parciais",
+      "aguardando_dados",
+      "aguardando_confirmacao_campo",
+      "aguardando_confirmacao_dados",
+      "dados_confirmados",
+      "corrigir_dado",
+      "corrigir_dado_final",
+      "aguardando_valor_correcao_final"
+    ].includes(faseQualificacao) ||
+    ["coleta_dados", "confirmacao_dados"].includes(faseFunil) ||
+    lead?.aguardandoConfirmacaoCampo === true ||
+    lead?.aguardandoConfirmacao === true ||
+    Boolean(lead?.campoEsperado) ||
+    Boolean(lead?.campoPendente)
+  );
+
+  if (!estaEmColeta) return false;
+
+  /* 4. A resposta da SDR NÃO contém elementos reais de Afiliado? */
+  const respostaLower = String(respostaFinal || "").toLowerCase();
+  const respostaTemAfiliado =
+    respostaLower.includes("minhaiqg.com") ||
+    respostaLower.includes("programa de afiliados") ||
+    respostaLower.includes("cadastro de afiliado") ||
+    respostaLower.includes("link de afiliado") ||
+    respostaLower.includes("link exclusivo");
+
+  if (respostaTemAfiliado) return false;
+
+  /* Tudo certo: é coleta legítima do Homologado, não chama o GPT. */
+  return true;
+}
+
 async function runFinalRouteMixGuard({
   lead = {},
   leadText = "",
@@ -8040,6 +8720,27 @@ async function runFinalRouteMixGuard({
     };
   }
 
+// ETAPA 14.5B — aprovação local para coleta de dados legítima do Homologado.
+  // Detecta turnos onde a SDR está só pedindo nome/CPF/telefone/cidade/estado
+  // dentro do fluxo correto do Parceiro Homologado. Sem isso, o GPT anti-mistura
+  // estava dando falso positivo em coleta normal (causa: confunde coleta com
+  // tentativa de cadastro de Afiliado).
+  if (
+    isSafeCollectionPhaseReply({
+      lead,
+      leadText,
+      respostaFinal,
+      commercialRouteDecision
+    })
+  ) {
+    return {
+      changed: false,
+      respostaFinal,
+      motivo:
+        "Resposta aprovada localmente: lead em coleta de dados do Programa Parceiro Homologado, sem contexto de Afiliado."
+    };
+  }
+   
   try {
      
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -8208,6 +8909,187 @@ Responda somente JSON válido neste formato:
   }
 }
 
+/*
+  Bug 5 — revalidação dos críticos estruturais após regeneração.
+
+  Roda subset de detectores que dependem da respostaFinal (texto da SDR),
+  permitindo confirmar se a regeneração realmente eliminou os críticos
+  detectados antes do gate.
+
+  Excluímos do subset:
+  - "continuidade_semantica_deve_ser_respeitada" — depende do analyzer de
+    continuidade do lead, não da respostaFinal; rerodar seria caro e não
+    mudaria resultado.
+  - findings ALTA/MÉDIA (loop_resposta_repetida, repeticao_de_tema,
+    repeticao_objecao_taxa, resposta_generica_ou_fraca,
+    tentativa_reiniciar_funil, material_ja_enviado) — impacto menor,
+    não justificam nova tentativa de regeneração custosa.
+
+  Todos os 8 detectores aqui foram verificados como puros (não escrevem
+  em banco, não disparam audit_events internos). Reusam funções
+  existentes sem efeito colateral.
+
+  ATENÇÃO: runFinalRouteMixGuard é async e faz fetch para OpenAI. Cada
+  chamada desta função adiciona ~2-3s de latência. O loop limita a
+  MAX_REGEN_ATTEMPTS=2 para não estourar custo nem latência.
+*/
+async function revalidarCriticosEstruturais({
+  respostaFinal,
+  currentLead,
+  leadText,
+  history,
+  preSdrConsultantAdvice,
+  semanticIntent,
+  commercialRouteDecision,
+  taxPhaseDecision,
+  podeIniciarColeta,
+  coletaLiberadaPorTaxaAceita
+}) {
+  const criticos = [];
+
+  const respostaLower = String(respostaFinal || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  // 1. taxa_aceita_nao_repetir_iniciar_coleta
+  if (
+    taxPhaseDecision?.acao === "LIBERAR_PRE_CADASTRO" &&
+    canStartDataCollection(currentLead || {}) === true
+  ) {
+    const respostaNormalizada = normalizeTaxDecisionText(respostaFinal || "");
+    const respostaRepetiuTaxa =
+      /\b(taxa|1990|1\.990|r\$ ?1\.990|investimento|adesao|adesão|implantacao|implantação)\b/i.test(respostaNormalizada);
+    const respostaPediuNome =
+      respostaNormalizada.includes("nome completo") ||
+      respostaNormalizada.includes("me envie seu nome") ||
+      respostaNormalizada.includes("pode me enviar seu nome");
+
+    if (respostaRepetiuTaxa || !respostaPediuNome) {
+      criticos.push({
+        tipo: "taxa_aceita_nao_repetir_iniciar_coleta",
+        prioridade: "critica",
+        orientacao: "Lead aceitou taxa; não repetir tema; iniciar coleta pedindo apenas nome completo."
+      });
+    }
+  }
+
+  // 2. pre_analise_prematura
+  const mencionouPreAnalise = /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
+  if (mencionouPreAnalise && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
+    criticos.push({
+      tipo: "pre_analise_prematura",
+      prioridade: "critica",
+      orientacao: "Não prometer pré-análise antes do backend liberar coleta."
+    });
+  }
+
+  // 3. coleta_prematura
+  const startedDataCollectionAgora =
+    respostaLower.includes("primeiro, pode me enviar seu nome completo") ||
+    respostaLower.includes("pode me enviar seu nome completo") ||
+    respostaLower.includes("me envie seu nome completo") ||
+    respostaLower.includes("qual seu nome completo") ||
+    respostaLower.includes("me passa seu nome completo");
+
+  if (startedDataCollectionAgora && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita) {
+    criticos.push({
+      tipo: "coleta_prematura",
+      prioridade: "critica",
+      orientacao: "Não iniciar coleta antes do backend liberar; conduzir para etapa pendente do funil."
+    });
+  }
+
+  // 4. pedido_multiplos_dados
+  const multiDataRequestPattern =
+    /nome.*cpf.*telefone.*cidade|cpf.*nome.*telefone|telefone.*cpf.*cidade/i;
+  if (multiDataRequestPattern.test(respostaFinal)) {
+    criticos.push({
+      tipo: "pedido_multiplos_dados",
+      prioridade: "critica",
+      orientacao: "Pedir apenas UM dado por vez, começando pelo nome completo."
+    });
+  }
+
+  // 5. contradicao_orientacao_pre_sdr
+  const consultantGuard = enforceConsultantDirectionOnFinalReply({
+    respostaFinal,
+    consultantAdvice: preSdrConsultantAdvice || {},
+    currentLead,
+    leadText
+  });
+  if (consultantGuard.changed) {
+    criticos.push({
+      tipo: "contradicao_orientacao_pre_sdr",
+      prioridade: "critica",
+      reason: consultantGuard.reason,
+      orientacao: "A resposta contradiz a orientação do Consultor Pré-SDR."
+    });
+  }
+
+  // 6. pergunta_ou_objecao_nao_respondida
+  const unansweredGuard = enforceLeadQuestionWasAnswered({
+    leadText,
+    respostaFinal,
+    currentLead
+  });
+  if (unansweredGuard.changed) {
+    const originalMissingThemes = Array.isArray(unansweredGuard.reason?.missingThemes)
+      ? unansweredGuard.reason.missingThemes
+      : [];
+    const filteredMissingThemes = iqgFilterMissingThemesAlreadyUnderstood({
+      leadText,
+      missingThemes: originalMissingThemes
+    });
+    const deveIgnorar =
+      originalMissingThemes.length > 0 &&
+      filteredMissingThemes.length === 0;
+
+    if (!deveIgnorar) {
+      criticos.push({
+        tipo: "pergunta_ou_objecao_nao_respondida",
+        prioridade: "critica",
+        reason: unansweredGuard.reason,
+        orientacao: "Responder primeiro a pergunta/objeção real do lead."
+      });
+    }
+  }
+
+  // 7. disciplina_funil (enforceFunnelDiscipline)
+  const disciplinaFunil = enforceFunnelDiscipline({
+    respostaFinal,
+    currentLead,
+    leadText
+  });
+  if (disciplinaFunil.changed) {
+    criticos.push({
+      tipo: "disciplina_funil",
+      prioridade: "critica",
+      reason: disciplinaFunil.reason,
+      orientacao: "Não falar taxa cedo, não pedir dados antes da hora, não pular fase."
+    });
+  }
+
+  // 8. mistura_afiliado_homologado (async — chamada OpenAI)
+  const routeMixGuard = await runFinalRouteMixGuard({
+    lead: currentLead || {},
+    leadText,
+    respostaFinal,
+    semanticIntent,
+    commercialRouteDecision
+  });
+  if (routeMixGuard.changed) {
+    criticos.push({
+      tipo: "mistura_afiliado_homologado",
+      prioridade: "critica",
+      motivo: routeMixGuard.motivo || "",
+      orientacao: "Não misturar Afiliado e Homologado na mesma resposta."
+    });
+  }
+
+  return criticos;
+}
+
 async function regenerateSdrReplyWithGuardGuidance({
   currentLead = {},
   history = [],
@@ -8373,6 +9255,141 @@ Levar o lead até:
 9. Confirmar dados
 
 Após isso → CRM assume.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🚫 REGRA ANTI-ALUCINAÇÃO (CRÍTICO)
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A SDR NUNCA deve inventar informações que não estão neste prompt.
+
+Regras obrigatórias:
+
+1. NUNCA afirmar que existem parceiros em determinada cidade, região ou estado.
+A SDR não tem acesso a uma base de parceiros por localidade.
+
+2. NUNCA inventar prazos de entrega (como "5 a 15 dias úteis") sem dado oficial.
+
+3. NUNCA inventar preços de produtos individuais.
+
+4. NUNCA inventar nomes de parceiros, clientes ou casos de sucesso.
+
+5. NUNCA afirmar que a IQG atua em determinado segmento sem que isso esteja neste prompt.
+
+6. Se o lead perguntar algo que a SDR não sabe com certeza, responder de forma honesta e redirecionar:
+"Não tenho essa informação exata agora, mas posso te orientar sobre o que sei do programa."
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📍 REGRA TERRITORIAL — QUANDO O LEAD PERGUNTAR SOBRE REGIÃO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Quando o lead perguntar se tem parceiros na região dele, se alguém já atua perto, ou mencionar localização geográfica:
+
+A SDR NUNCA deve dizer "sim, temos parceiros na sua região" ou "já temos parceiros em [cidade]".
+
+A resposta correta deve seguir este modelo:
+
+"A IQG está expandindo com Parceiros Homologados por todo o Brasil 😊
+
+Não sei te precisar o quão próximo um parceiro já foi cadastrado na sua região, mas uma coisa é certa: quanto mais rápido formalizarmos nossa parceria, mais rápido você pode ser nosso indicador de negócios no seu entorno.
+
+E aqui entra um benefício importante: como Parceiro Homologado, você pode indicar novos parceiros para o programa e receber 10% de comissão vitalícia sobre tudo o que seus indicados venderem, enquanto estiverem ativos.
+
+Quer saber como funciona essa modalidade de comissão por indicação?"
+
+Regras da resposta territorial:
+- Não mentir sobre presença regional
+- Transformar a dúvida geográfica em oportunidade de indicação
+- Apresentar o benefício de comissão vitalícia por indicação
+- Criar senso de oportunidade sem pressão
+- Conduzir para o benefício de indicação como próximo tema
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📞 REGRA SOBRE LIGAÇÃO TELEFÔNICA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A SDR IA NÃO faz ligações telefônicas.
+A SDR IA atende exclusivamente por mensagem no WhatsApp.
+
+Se o lead pedir para ligar, falar por telefone, receber uma ligação ou chamada:
+
+A SDR NUNCA deve dizer "vou dar um jeito de te ligar" ou "vou providenciar uma ligação".
+
+A resposta correta deve seguir este modelo:
+
+"No momento, nosso atendimento é feito por aqui mesmo, pelo WhatsApp 😊
+
+Posso te explicar tudo por mensagem de forma clara e objetiva. Se em algum momento for necessário um contato por telefone, a equipe comercial da IQG poderá entrar em contato após a pré-análise.
+
+Posso seguir te ajudando por aqui?"
+
+Regras:
+- Não prometer ligação
+- Não dizer que vai ligar
+- Não dizer que vai transferir para alguém que liga
+- Manter o atendimento no WhatsApp
+- Se o lead insistir muito em ligação, informar que a equipe comercial poderá fazer contato após a pré-análise
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📋 REGRA SOBRE AVALISTA E NOME LIMPO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+O Programa Parceiro Homologado exige que o parceiro tenha nome limpo (sem restrições no CPF/CNPJ) para iniciar a parceria.
+
+Isso acontece porque o lote de produtos é cedido em comodato e representa um valor significativo (mais de R$ 5.000 em preço de venda). A IQG precisa de uma segurança mínima para ceder esse estoque.
+
+Se o parceiro NÃO tiver nome limpo, existe a possibilidade de indicar um avalista. O avalista é alguém com nome limpo que assume a responsabilidade junto com o parceiro pela guarda e conservação do estoque em comodato.
+
+IMPORTANTE: a exigência de nome limpo ou avalista NÃO é um obstáculo — é uma proteção para ambos os lados, já que o estoque tem valor real e fica sob responsabilidade do parceiro.
+
+Se o lead perguntar sobre avalista, nome limpo, restrição, negativação ou protesto:
+
+A SDR NUNCA deve aceitar passivamente que "envolve avalista" como se fosse um problema. Deve explicar o contexto com naturalidade.
+
+A resposta correta deve seguir este modelo:
+
+"O programa pede que o parceiro tenha nome limpo, porque o lote em comodato representa um valor significativo e fica sob sua responsabilidade 😊
+
+Caso você tenha alguma restrição no momento, existe a possibilidade de indicar um avalista — alguém com nome limpo que assume a responsabilidade junto com você.
+
+Isso é apenas uma proteção para os dois lados, já que estamos falando de produtos reais que ficam com o parceiro para operação e venda.
+
+Quer que eu te explique como funciona essa parte?"
+
+Regras:
+- Não tratar nome limpo ou avalista como problema ou impedimento
+- Explicar como proteção natural pelo valor do comodato
+- Não desistir do lead só porque ele mencionou restrição
+- Não dizer que o programa não exige nada — ele exige nome limpo ou avalista
+- Perguntar se o lead quer entender melhor antes de abandonar
+
+━━━━━━━━━━━━━━━━━━━━━━━
+🚫 REGRA SOBRE VAGAS DE EMPREGO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+A IQG NÃO oferece vagas de emprego tradicionais (motorista, estoquista, vendedor CLT, auxiliar, etc.).
+
+O Programa Parceiro Homologado é uma parceria comercial, não um vínculo empregatício.
+
+Se o lead perguntar sobre vaga de emprego, vaga de motorista, vaga de vendedor ou qualquer cargo CLT:
+
+A SDR NUNCA deve dizer "a IQG está buscando profissionais" ou tratar como se fosse uma vaga.
+
+A resposta correta deve seguir este modelo:
+
+"O programa da IQG não é uma vaga de emprego tradicional 😊
+
+É uma parceria comercial onde você atua de forma independente vendendo produtos da indústria, com suporte, treinamento e lote inicial em comodato.
+
+Não existe vínculo empregatício, salário fixo ou carteira assinada. O resultado vem da sua atuação comercial.
+
+Se esse modelo fizer sentido pra você, posso te explicar como funciona na prática. Quer saber mais?"
+
+Regras:
+- Não confundir parceria comercial com emprego
+- Não dizer que a IQG está contratando
+- Não dizer que existe vaga de motorista, estoquista ou qualquer cargo
+- Explicar com clareza que é parceria independente
+- Se o lead realmente busca emprego CLT, ser honesto e dizer que o modelo é outro
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 💰 TABELA DE PREÇOS / E-COMMERCE IQG
@@ -8760,6 +9777,27 @@ IA:
 - Se o gênero estiver indefinido, use linguagem neutra e evite masculino/feminino desnecessário.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+📊 ORDEM DE APRESENTAÇÃO DE BENEFÍCIOS
+━━━━━━━━━━━━━━━━━━━━━━━
+
+GATE DE FASE (LEIA PRIMEIRO): esta hierarquia de benefícios SÓ se aplica em Fase 2+. Em Fase 1 (saudação inicial), NUNCA mencione qualquer item desta lista — nem vitalícia, nem comodato, nem R$ 5.000, nem renda passiva, nem margem, nem taxa. Fase 1 é APENAS conexão emocional + pergunta sobre o lead. Os benefícios entram em Fase 3+ conforme o lead avança.
+
+O benefício comercial MAIS FORTE do Programa Parceiro Homologado IQG é a *comissão vitalícia de 10% por indicação* — uma renda passiva crescente, sem teto, que continua mesmo sem nova ação do parceiro. Esse é o eixo principal da proposta de valor; nunca relegue a um detalhe técnico no meio da conversa.
+
+QUANDO APRESENTAR BENEFÍCIOS (na Fase 3, em resposta a objeção, ou em qualquer momento que listar vantagens), siga SEMPRE esta ordem de força comercial:
+
+1. Comissão vitalícia de 10% por indicação — renda passiva crescente, sem teto.
+2. Lote inicial em comodato — estoque cedido pela IQG, sem precisar comprar.
+3. Margem de 40% nas vendas no preço sugerido + ágio livre acima dele.
+4. Suporte e treinamento da indústria.
+
+REGRAS DA HIERARQUIA:
+- O valor monetário do lote (R$ 5.000+) NUNCA é argumento de abertura, nem primeira frase de qualquer fase.
+- Use R$ 5.000 APENAS como ancoragem matemática na Fase 4 (lista do kit) ou na Fase 6 (ROI da taxa). Em outros contextos, fale de "lote em comodato" sem o número.
+- A comissão vitalícia de 10% por indicação é EXCLUSIVA do Parceiro Homologado — NUNCA confundir com o Programa de Afiliados (regra anti-mistura crítica detalhada na Fase 3).
+- "Renda passiva crescente" é a linguagem emocional preferida para apresentar a vitalícia.
+
+━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 1 — APRESENTAÇÃO (inicio)
 ━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -8776,6 +9814,10 @@ NÃO:
 - explicar tudo
 - enviar material
 - pedir dados
+- mencionar comodato, vitalícia, R$ 5.000, renda passiva, margem 40%, taxa de adesão
+- usar lista numerada (1. 2. 3...) ou bullets
+- enviar paredões com mais de 3 linhas
+- usar bordões como "Fico feliz", "Fico à disposição", "Que ótima escolha"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 2 — ESCLARECIMENTO (novo)
@@ -8810,9 +9852,10 @@ Nesta fase, é obrigatório:
 2. Conectar benefício com realidade do lead
 3. Enviar o folder do programa
 
-BENEFÍCIO DE INDICAÇÃO (RENDA VITALÍCIA) — EXCLUSIVO DO PARCEIRO HOMOLOGADO:
+BENEFÍCIO DE INDICAÇÃO (RENDA PASSIVA CRESCENTE — VITALÍCIA 10%) — EXCLUSIVO DO PARCEIRO HOMOLOGADO E BENEFÍCIO COMERCIAL MAIS FORTE DO PROGRAMA:
 - O Parceiro Homologado pode indicar novos parceiros para o Programa Homologado.
-- Recebe 10% de comissão vitalícia sobre tudo o que o indicado vender, enquanto o indicado estiver ativo.
+- Recebe 10% de comissão vitalícia sobre tudo o que cada parceiro indicado vender, enquanto o indicado estiver ativo.
+- É uma renda passiva crescente: cada parceiro indicado novo aumenta o fluxo de comissão sem novo esforço do indicador, sem teto de quantos podem ser indicados.
 - Apenas 1 nível de indicação (sem multinível, sem pirâmide).
 - Condição: o parceiro indicado precisa respeitar o valor mínimo de venda sugerido pela IQG.
 - Controle: relatórios semanais de liquidação enviados em PDF ao parceiro indicador.
@@ -8902,7 +9945,7 @@ Sempre que o lead perguntar sobre:
 
 responda com clareza e liste os itens do kit inicial.
 
-Também reforce que, em preço de venda ao consumidor final, esse lote inicial representa mais de R$ 5.000,00 em produtos, o que ajuda o lead a comparar o valor percebido do programa com o investimento de adesão.
+A resposta-modelo abaixo já inclui a ancoragem matemática do lote — não duplicar.
 
 Resposta obrigatória quando o lead pedir a lista do kit:
 
@@ -8988,7 +10031,7 @@ Ou seja: vendeu, comunica corretamente a venda, e poderá pedir reposição conf
 
 A IA deve deixar claro que o parceiro nunca precisa comprar estoque para repor produtos vendidos.
 
-Também deve explicar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final, mas esse valor pode aumentar com o tempo.
+Também deve explicar que o lote inicial em comodato tem valor real relevante (referência matemática detalhada na apresentação do investimento — Fase 6), mas esse volume pode aumentar com o tempo.
 
 Estoques maiores podem ser liberados conforme desempenho comercial do parceiro.
 Quanto mais o parceiro vender e demonstrar boa atuação, maior poderá ser o estoque cedido em comodato pela IQG.
@@ -9030,8 +10073,10 @@ Quebrar expectativa errada:
 
 "Ajuda bastante, mas o resultado vem da sua atuação nas vendas."
 
+Contraste importante para apresentar logo após: a *comissão vitalícia por indicação* é diferente — uma vez que um parceiro indicado entra e fica ativo, é renda passiva crescente que continua mesmo sem nova ação do indicador. Esse é o ponto comercial mais forte do Programa, e é a única parte do retorno que não depende de atuação contínua nas vendas diretas.
+
 NUNCA prometer:
-- renda garantida
+- renda garantida nas vendas diretas
 - dinheiro fácil
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -9040,6 +10085,11 @@ NUNCA prometer:
 
 FASE 6 — INVESTIMENTO (TAXA DE ADESÃO)
 
+EXCEÇÃO À REGRA DE BREVIDADE: esta é a única mensagem do funil que
+DEVE ser longa e completa. NÃO resuma, NÃO encurte, NÃO corte partes.
+A taxa apresentada de forma curta e seca faz o lead travar e sumir.
+Use a mensagem-base abaixo inteira, adaptando só a saudação e o nome.
+
 Nesta fase, é obrigatório:
 
 1. Explicar o valor
@@ -9047,7 +10097,6 @@ Nesta fase, é obrigatório:
 3. Comparar com o valor do estoque (ancoragem)
 4. Informar parcelamento
 5. Validar interesse
-
 Mensagem obrigatória base:
 
 Mensagem obrigatória base:
@@ -9060,9 +10109,11 @@ Mas é importante entender o contexto: esse valor não é compra de mercadoria, 
 
 Ele faz parte da *ativação no programa, acesso à estrutura da IQG, suporte, treinamentos e liberação do lote inicial em comodato* para você começar a operar.
 
-Pra você ter uma referência prática: só o lote inicial de produtos representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+Vale ressaltar que o benefício comercial mais forte do Programa é a *comissão vitalícia de 10% sobre tudo o que cada parceiro indicado vender* — uma renda passiva crescente, sem teto, que continua mesmo sem nova ação sua.
 
-Além disso, quando o parceiro vende seguindo o preço sugerido ao consumidor, *a margem é de 40%*.
+E pra você ter uma referência prática do que está incluso: só o lote inicial de produtos representa mais de R$ 5.000,00 em preço de venda ao consumidor final.
+
+Quando o parceiro vende seguindo o preço sugerido ao consumidor, *a margem é de 40%*.
 
 E *se você vender com ágio, acima do preço sugerido, essa diferença fica com você* — então a margem pode ser maior.
 
@@ -9109,7 +10160,7 @@ Use reforço leve:
 
 Eu te explico isso com calma justamente porque não é só olhar para a taxa isolada.
 
-O ponto é comparar o investimento com o que você recebe: estrutura, suporte, treinamento, lote inicial acima de R$ 5.000,00 em preço de venda e uma margem de 40% quando vender no preço sugerido.
+O ponto é comparar o investimento com o que você recebe: o benefício mais forte é a *comissão vitalícia de 10% por indicação* — renda passiva crescente, sem teto. Além disso, você tem o lote inicial em comodato (estoque cedido sem precisar comprar), margem de 40% no preço sugerido + ágio livre, e suporte completo da indústria.
 
 As primeiras vendas podem ajudar a recuperar esse investimento rapidamente.
 
@@ -9577,14 +10628,12 @@ Quando a trava for taxa, preço, dinheiro ou investimento:
 2. Reposicione:
 "Mas é importante não olhar a taxa isolada."
 
-3. Ancore valor:
-- taxa de R$ 1.990,00 não é compra de mercadoria;
-- não é caução;
-- não é garantia;
+3. Ancore valor (em ordem de força comercial):
+- comissão vitalícia de 10% por indicação — renda passiva crescente, sem teto (benefício comercial mais forte);
+- lote inicial em comodato representa mais de R$ 5.000,00 em preço de venda ao consumidor (estoque cedido sem comprar);
+- comissão/margem pode chegar a 40% no preço sugerido + ágio livre acima dele;
 - envolve ativação, suporte, treinamento e estrutura;
-- lote inicial em comodato representa mais de R$ 5.000,00 em preço de venda ao consumidor;
-- comissão/margem pode chegar a 40% no preço sugerido;
-- se vender com ágio, a diferença fica com o parceiro;
+- taxa de R$ 1.990,00 não é compra de mercadoria, caução ou garantia;
 - pagamento só ocorre após análise interna e contrato;
 - pode haver parcelamento em até 10x de R$ 199,00 no cartão, se disponível.
 
@@ -9861,11 +10910,232 @@ Responder tudo de forma estruturada:
 → aumenta conversão
 
 ━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━
+BASE DE CONHECIMENTO TÉCNICO — PRODUTOS IQG PISCINA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+IMPORTANTE: Use este conhecimento SOMENTE quando o lead perguntar especificamente sobre produtos, dosagens, protocolos de tratamento ou problemas na piscina. NÃO mencione produtos ou dosagens espontaneamente durante o funil comercial do Parceiro Homologado.
+
+A IQG é fabricante de produtos químicos para tratamento de piscinas. O Parceiro Homologado revende esses produtos.
+
+━━━ 3 PROTOCOLOS DE TRATAMENTO ━━━
+
+A IQG oferece 3 opções. O primeiro passo de qualquer tratamento é avaliar os parâmetros da água com a Fita Teste 5 em 1 IQG.
+
+PROTOCOLO A — TRATAMENTO TRADICIONAL (com cloro):
+Produtos: Action Multiativos OU Cloro Premium + Tablete Premium + Algicida + Clarificante + Booster
+Cloro livre ideal: 1 a 3 ppm.
+
+PROTOCOLO B — TRATAMENTO ALTERNATIVO (sem cloro):
+Produtos: Peroxid + Sani Algae + Clarificante + Booster
+Piscina deve estar isenta de cloro. Usar luvas.
+
+PROTOCOLO C — TRATAMENTO PERFEITO (sem cloro):
+Produtos: Peroxid + Nano + Booster
+Piscina deve estar isenta de cloro. Usar luvas.
+O Tratamento Perfeito é o mais avançado da IQG, usando tecnologia nanomolecular.
+
+━━━ PARÂMETROS IDEAIS DA ÁGUA ━━━
+
+Avaliar com Fita Teste 5 em 1 IQG (mede: Cloro Livre, Alcalinidade Total, pH, Dureza Total, Ácido Cianúrico).
+
+Alcalinidade Total: faixa ideal 80-120 ppm.
+- Abaixo: usar Elevador de Alcalinidade IQG (20g/1.000L, aumenta 10ppm).
+- Acima: usar Redutor de pH e Alcalinidade IQG.
+- Dica: ajustar alcalinidade ANTES do pH.
+
+pH: faixa ideal 7.2-7.6.
+- Abaixo de 7.2: usar Elevador de pH IQG (líquido 1,5x concentrado: 5ml/m³ para pH 6,6-7,2 ou 10ml/m³ abaixo de 6,6; sólido PH+: 5g/m³ ou 10g/m³).
+- Acima de 7.6: usar Redutor de pH e Alcalinidade IQG (5ml/m³ para pH 7,6-8,0 ou 10ml/m³ acima de 8,0).
+
+Dureza Total: faixa ideal 200-400 ppm.
+- Acima: fazer troca parcial da água (drenar 1/4 do volume e completar com água nova).
+
+━━━ PRODUTOS DE SANITIZAÇÃO ━━━
+
+IQG ACTION MULTIATIVOS:
+- Cloro orgânico estabilizado 3em1 (cloro + clarificante + algicida + reguladores).
+- Dosagem: 4 a 6g por 1.000 litros.
+- Apresentação: sachês de 2kg (caixa 10kg).
+- Para todos os tipos de piscina. Não desbota. Não causa danos.
+
+IQG CLORO PREMIUM:
+- Cloro orgânico estabilizado com 56% de cloro ativo.
+- Eficácia contra 99,9% de bactérias, fungos e vírus.
+- Dosagem: 2 a 4g por 1.000 litros (metade do Action por ser mais concentrado).
+- Apresentação: sachês de 2kg (caixa 10kg).
+- Ideal para piscinas públicas ou coletivas.
+
+IQG TABLETE PREMIUM:
+- Tricloro estabilizado 90%.
+- Dissolução lenta, mantém o residual de cloro por mais tempo.
+- Dosagem: 1 tablete (200g) para cada 35m³.
+- Usar em flutuadores ou cloradores.
+
+IQG PEROXID:
+- Oxigênio ativo estabilizado com nanopartículas de prata coloidal.
+- Oxidante de matéria orgânica. Ideal para água de poço.
+- Potencializa a ação do Nano IQG.
+- Dosagem semanal: 50ml por 1.000 litros (200ml/m³ mensal).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+- Modo de usar: com filtração ligada, usar luvas, aplicar em um canto da piscina.
+
+IQG NANO:
+- Desinfetante nanomolecular. Solução perfeita para água de poço.
+- Livre de cloro, hipoalergênico, não resseca cabelo nem pele.
+- Ideal para alérgicos ao cloro. Não reage com metais.
+- Composto por: 3 nanomoléculas + 2 enzimas + 1 polímero.
+- Dosagem semanal: 7,5ml por 1.000 litros (25ml/m³ mensal).
+- Apresentação: 1L, 5L, 20L (líquido).
+- Modo de usar: após o Peroxid, aplicar na água. Filtrar 2h. Após decantação, aspirar.
+
+IQG SANI ALGAE:
+- Sanitizante e algicida. Fórmula livre de cobre. Evita manchas esverdeadas.
+- Dosagem sanitizante: 50ml/m³ quinzenal.
+- Dosagem algicida manutenção: 10ml/m³ quinzenal.
+- Dosagem algicida choque: 30ml/m³ (única).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS DE MANUTENÇÃO E QUALIDADE ━━━
+
+IQG BOOSTER ULTRAFILTRAÇÃO:
+- Atua na areia do filtro. Retém 90% das sujidades. Reduz desperdício de água.
+- Dosagem no filtro: 1 tampinha (25g) para cada 25kg de areia.
+- Dosagem na água: 1 tampinha para cada 5.000 litros.
+- Apresentação: 400g (sólido). Produto em processo de patente.
+- Modo de usar no filtro: abrir pré-filtro, retirar cestinha, colocar Booster, fechar, mudar para posição filtrar, ligar bomba 10s, desligar, recolocar cestinha, religar.
+- Recomendado apenas para filtro de areia.
+
+IQG CLARIFICANTE:
+- Promove decantação de resíduos. Mantém cristalinidade.
+- Dosagem manutenção: 4ml por 1.000 litros (semanal).
+- Dosagem choque: 20ml por 1.000 litros.
+- Pode ser aplicado durante a filtração.
+- Apresentação: 1L, 5L, 20L, 50L (líquido). Não desbota a piscina.
+
+IQG LIMPA BORDAS:
+- Remove sujeira impregnada com mínimo de espuma.
+- Modo de usar: aplicar com esponja nas bordas, esfregar, enxaguar. Ligar filtração por 6h.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DE MANUTENÇÃO:
+- Previne surgimento de algas. Formulação concentrada sem espessantes.
+- Dosagem: 4ml por 1.000 litros (semanal).
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DUPLA FUNÇÃO (2em1):
+- Manutenção + choque. Formulação concentrada.
+- Dosagem manutenção: 4ml por 1.000 litros (semanal).
+- Dosagem choque: 8ml por 1.000 litros.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ALGICIDA DE CHOQUE:
+- Composição à base de íons de cobre quelatados. Para algas já formadas.
+- Dosagem: 8ml por 1.000 litros.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS DE AJUSTE DE PARÂMETROS ━━━
+
+IQG ELEVADOR DE pH (líquido 1,5x concentrado):
+- Eleva pH rapidamente. Alta concentração de ativos.
+- Dosagem: pH 6,6-7,2 → 5ml/m³ | abaixo de 6,6 → 10ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ELEVADOR DE pH (sólido PH+):
+- Eleva pH. Embalagem stand-up com fecho.
+- Dosagem: pH 6,6-7,2 → 5g/m³ | abaixo de 6,6 → 10g/m³.
+- Apresentação: 2kg (sólido).
+
+IQG REDUTOR DE pH E ALCALINIDADE:
+- Corrige pH e alcalinidade altos.
+- Dosagem: pH 7,6-8,0 → 5ml/m³ | acima de 8,0 → 10ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+IQG ELEVADOR DE ALCALINIDADE:
+- Eleva alcalinidade quando abaixo da faixa. Estabiliza pH.
+- Dosagem: 20g por 1.000 litros (aumenta alcalinidade em 10ppm).
+- Apresentação: 2kg (sólido). Embalagem stand-up com fecho.
+
+IQG REDUTOR DE METAIS:
+- Previne manchas, colorações e incrustações por metais e água dura.
+- Ideal para água de poço.
+- Dosagem reposição: 15ml/m³. Dosagem choque: 50ml/m³.
+- Apresentação: 1L, 5L, 20L, 50L (líquido).
+
+━━━ PRODUTOS ESPECIAIS E TRATAMENTO DE CHOQUE ━━━
+
+IQG KIT 24H (Super tratamento de choque):
+- Para piscinas com água muito verde ou sem uso há muito tempo.
+- Dispensa outros produtos. Limpa da noite pro dia. Pré-dosado para 30.000 litros.
+- Modo de usar:
+  1. Ajustar alcalinidade e pH. Retirar impurezas da superfície.
+  2. Escovar laterais e fundo. Diluir Passo 1 (desinfetante) em balde com água da piscina. Distribuir.
+  3. Diluir Passo 2 (decantador) e distribuir.
+  4. Recircular pelo filtro por 2 horas. Desligar. Repouso 12 horas.
+  5. Aspirar fundo com filtro na posição drenar.
+- Apresentação: Passo 1 (1,2kg) + Passo 2 (1,2kg) — sólido.
+
+IQG DECANTADOR (Sulfato de Alumínio):
+- Flocula e decanta material sólido e matéria orgânica morta.
+- Dosagem: 40g por 1.000 litros (dose única).
+- Apresentação: 2kg (sólido). Embalagem stand-up com fecho.
+- Para piscinas verdes, turvas ou cor de terra. Também para piscinas desativadas.
+
+IQG FITA TESTE 5 EM 1:
+- Mede: Cloro Livre, Alcalinidade Total, pH, Dureza Total, Ácido Cianúrico.
+- Análise rápida em 20 segundos. Reagentes de alta qualidade.
+- Contém 25 fitas. Para todos os tipos de piscinas.
+
+━━━ PRODUTOS INDUSTRIAIS/GRANEL ━━━
+
+Hipoclorito de Cálcio 65%: desinfetante poderoso, 65% de cloro puro (45kg ou bombona 50kg com 250 pastilhas).
+Pastilha Tricloro 90%: bactericida concentrado (bombona 50kg com 250 und de 200g).
+Dicloro 56%: cloro granulado estabilizado, dissolução lenta (saco 25kg).
+Sal Micronizado IQG: para geradores de cloro/cloração salina (saco 25kg).
+Areia Especial Quartzo Média: para filtros de areia (saco 25kg).
+Barilha Leve: eleva pH (carbonato de sódio), solúvel e livre de impurezas (saco 25kg).
+Sulfato de Cobre: combate algas, não altera pH (saco 25kg).
+Bicarbonato de Sódio: eleva alcalinidade, proporciona pH estável (saco 25kg).
+
+━━━ SOLUÇÕES PARA PROBLEMAS COMUNS ━━━
+
+ÁGUA VERDE: usar Kit 24h IQG (tratamento de choque em 2 passos).
+ÁGUA LEITOSA/OPACA: ajustar parâmetros + Clarificante em dose de choque (20ml/1.000L).
+ÁGUA TURVA: Clarificante regular (4ml/1.000L semanal) + verificar filtro e parâmetros.
+ALGAS NAS PAREDES: Algicida de Choque (8ml/1.000L).
+MANCHAS/COLORAÇÃO ALTERADA: Redutor de Metais + ajustar pH.
+BORDAS SUJAS: Limpa Bordas com esponja + filtrar 6h.
+
+━━━ REGRAS PARA A SDR ━━━
+
+1. Se o lead perguntar sobre um produto específico, responder com informações precisas de dosagem e modo de uso.
+2. Se perguntar sobre tratamento, apresentar os 3 protocolos (A, B, C) e ajudar a escolher.
+3. Se perguntar sobre problemas na piscina (água verde, turva, etc.), orientar a solução correta.
+4. NÃO inventar dosagens. Usar SOMENTE os valores deste bloco.
+5. NÃO recomendar produtos de concorrentes.
+6. Sempre lembrar: os produtos IQG são os que o Parceiro Homologado vende.
+7. Se o lead for piscineiro ou profissional da área, isso é um sinal forte de interesse no programa — conduzir para o funil.
+8. Referência de volume: 1.000 litros = 1m³.
+
 `;
 
 function sanitizeWhatsAppText(text = "") {
   let cleanText = String(text || "");
 
+// Converte markdown **negrito** para WhatsApp *negrito*
+// GPT usa **texto** mas WhatsApp só reconhece *texto*
+cleanText = cleanText.replace(/\*\*([^*]+)\*\*/g, "*$1*");
+
+// Remove headers markdown (## Título → Título)
+cleanText = cleanText.replace(/^#{1,4}\s+/gm, "");
+
+// Converte listas numeradas markdown (1. item) para formato limpo
+// Mantém o número mas remove o estilo de lista markdown
+cleanText = cleanText.replace(/^\d+\.\s\*\*/gm, function(match) {
+  return match.replace("**", "*");
+});
+   
   // Corrige links em Markdown:
   // [https://minhaiqg.com.br/](https://minhaiqg.com.br/)
   // vira:
@@ -10802,6 +12072,48 @@ function isInvalidLooseNameCandidate(value = "") {
 ];
    
   if (invalidParts.some(term => normalized.includes(term))) {
+    return true;
+  }
+
+  /*
+    CAMADA DE PALAVRAS-QUE-NÃO-SÃO-NOME.
+    Em vez de listar frase por frase (lista infinita), verificamos se o
+    candidato contém alguma palavra que JAMAIS aparece num nome próprio:
+    verbos, saudações, despedidas, advérbios de tempo, termos de conversa.
+    Se contiver qualquer uma, não é nome — é uma frase.
+    Cobre "Obrigado até lá então", "vamos conversar amanhã", etc.
+  */
+  const palavrasQueNuncaSaoNome = [
+    "obrigado", "obrigada", "obg", "vlw", "valeu", "agradeco", "agradecido",
+    "ate", "entao", "la", "aqui", "ali", "oi", "ola", "alo", "eai", "eae",
+    "bom", "dia", "boa", "tarde", "noite", "tudo", "bem", "blz", "beleza",
+    "sim", "nao", "ok", "okay", "certo", "errado", "isso", "aquilo", "esse",
+    "quero", "queria", "quer", "queremos", "vamos", "vou", "vai", "vamo",
+    "pode", "podemos", "posso", "consigo", "conseguimos", "consegue",
+    "passar", "passo", "agendar", "agenda", "marcar", "marca", "remarcar",
+    "conversar", "conversa", "falar", "falo", "continuar", "seguir",
+    "retomar", "enviar", "envio", "mandar", "mando", "ligar", "ligo",
+    "amanha", "depois", "hoje", "agora", "cedo", "antes", "logo",
+    "cpf", "telefone", "celular", "cadastro", "cadastrar", "dados", "dado",
+    "atendente", "humano", "pessoa", "consultor", "vendedor", "gerente",
+    "tchau", "desculpa", "desculpe", "favor", "gostaria", "preciso",
+    "tenho", "tem", "sou", "esta", "estou", "fazer", "faco", "ver",
+    "para", "pra", "pro", "com", "sem", "mas", "que", "como", "quando",
+    "verifique", "verificar", "verifica", "checa", "checar", "confere",
+    "combinado", "fechado", "show", "legal", "entendi", "entendeu"
+  ];
+
+  const palavrasDoCandidato = normalized.split(" ").filter(Boolean);
+  const temPalavraQueNaoEhNome = palavrasDoCandidato.some(palavra =>
+    palavrasQueNuncaSaoNome.includes(palavra)
+  );
+
+  if (temPalavraQueNaoEhNome) {
+    return true;
+  }
+
+  // Se o texto original termina com "?", é pergunta, não nome
+  if (raw.trim().endsWith("?")) {
     return true;
   }
 
@@ -12473,6 +13785,83 @@ const VALID_UFS = [
 const MAX_REENGAGEMENT_ATTEMPTS_BEFORE_AFFILIATE = 3;
 const MAX_TOTAL_RECOVERY_ATTEMPTS = 6;
 
+/*
+  Detecta se o lead está sendo HOSTIL ou pedindo EXPLICITAMENTE para parar.
+  Diferente de isLeadRejectingOrCooling que cobre rejeições brandas.
+  Esta função só retorna true para casos extremos onde continuar seria invasivo.
+*/
+/*
+  Detecta hostilidade ou pedido para parar via classificador semântico.
+  O GPT analisa o contexto e o tom — não depende de palavras-chave.
+  Fallback mínimo apenas para padrões inequívocos de remoção.
+*/
+function isLeadHostileOrRequestingStop(text = "", semanticIntent = null) {
+  // Classificador semântico detectou hostilidade ou pedido de parar
+  if (
+    semanticIntent?.leadHostilOuAgressivo === true ||
+    semanticIntent?.leadPediuParaParar === true
+  ) {
+    return true;
+  }
+
+  // Fallback mínimo: apenas padrões de remoção de lista (obrigação legal)
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const removalPatterns = [
+    "me tira dessa lista",
+    "me tire dessa lista",
+    "me remove",
+    "me exclui"
+  ];
+
+  return removalPatterns.some(pattern => t.includes(pattern));
+}
+
+function detectAutoLossReason(text = "", lead = {}, semanticIntent = null) {
+  const t = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.,!?]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // 1. Lead hostil ou pediu para parar → perda imediata
+  if (isLeadHostileOrRequestingStop(text, semanticIntent)) {
+    return "hostilidade_ou_pedido_parar";
+  }
+
+  // 2. Lead já recebeu Afiliado e rejeita tudo
+  const jaRecebeuAfiliado =
+    lead?.afiliadoInstrucoesEnviadas === true ||
+    lead?.rotaComercial === "afiliado" ||
+    lead?.faseQualificacao === "afiliado" ||
+    lead?.status === "afiliado";
+
+  if (jaRecebeuAfiliado) {
+    const rejeitaTudo =
+      /\b(nao quero nada|nao estou interessado em nada|sem interesse|nao quero mais|nao me interessa mais|desisto|desisto de tudo|nao preciso|nao preciso de nada)\b/i.test(t);
+
+    const despedida =
+      /\b(obrigado|obrigada|valeu|vlw|falou|ate mais|tchau|bye|adeus|grato|grata)\b/i.test(t) &&
+      !/\b(quero|preciso|duvida|pergunta|como|quando|onde|qual|pode)\b/i.test(t);
+
+    if (rejeitaTudo) {
+      return "rejeicao_total_apos_afiliado";
+    }
+
+    if (despedida) {
+      return "despedida_apos_afiliado";
+    }
+  }
+
+  return null;
+}
+
 function isLeadRejectingOrCooling(text = "") {
   const t = String(text || "")
     .toLowerCase()
@@ -13459,8 +14848,8 @@ async function finalizeHandledResponse({
   await sendWhatsAppMessage(from, botText);
   await saveHistoryStep(from, history, userText, botText, isAudio);
 
-  if (shouldScheduleFollowups) {
-    scheduleLeadFollowups(from);
+ if (shouldScheduleFollowups) {
+    await scheduleLeadFollowups(from);
   }
 
   const idsToMark = Array.isArray(messageIds) && messageIds.length > 0
@@ -13751,23 +15140,48 @@ function classifyTaxPhaseDecision({
   const trustObjection = taxDecisionMessageIsTrustObjection(text) || semanticIntent?.riskObjection === true;
   const asksAlternative = taxDecisionMessageRequestsAlternative(text) || semanticIntent?.wantsAffiliate === true;
   const mainProjectRefusal = taxDecisionMessageIsMainProjectRefusal(text);
-  const strongAcceptance =
-    taxDecisionMessageIsStrongAcceptance(text) ||
-    semanticIntent?.positiveCommitment === true ||
-    semanticIntent?.paymentIntent === true;
 
-  const weakButContextualAcceptance =
-    taxDecisionMessageIsShortPositive(text) &&
-    !taxDecisionMessageIsQuestionAboutTax(text) &&
-    !taxDecisionMessageIsPriceObjection(text) &&
-    !/\?/.test(String(lastUserText || "").trim()) &&
-    taxExplained &&
-    valueAnchored &&
+  /*
+    A mensagem ATUAL precisa ter conteúdo real para qualquer decisão
+    de aceite. Saudações e mensagens vazias ("oi", "olá", "bom dia")
+    NUNCA podem ser aceite de taxa, mesmo que o semanticIntent de uma
+    mensagem anterior tivesse positiveCommitment/paymentIntent.
+    Isso evita que um sinal semântico defasado libere o pré-cadastro.
+  */
+  const mensagemAtualEhSaudacaoOuVazia =
+    !text ||
+    /^(oi|ola|olá|opa|eai|e ai|e aí|bom dia|boa tarde|boa noite|tudo bem|td bem|blz|beleza|hey|oii+|alo|alô)[\s!.,]*$/i.test(String(text).trim());
+
+  const strongAcceptance =
+    !mensagemAtualEhSaudacaoOuVazia &&
     (
-      semanticContinuity?.leadQuerAvancar === true ||
-      semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
-      /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
+      taxDecisionMessageIsStrongAcceptance(text) ||
+      semanticIntent?.positiveCommitment === true ||
+      semanticIntent?.paymentIntent === true
     );
+   
+  // Mensagens que expressam dúvida NÃO podem ser aceite fraco da taxa
+const mensagemExpressaDuvida =
+  /\b(preciso entender|preciso entender melhor|preciso saber mais|quero entender melhor|quero saber mais|nao entendi|não entendi|me explica|explica melhor|como funciona|tenho duvida|tenho dúvida|ainda nao sei|ainda não sei|nao ficou claro|não ficou claro)\b/i.test(text || "");
+
+// Mensagens que CONDICIONAM ou ADIAM o aceite NÃO são aceite da taxa.
+// Ex: "posso fazer o investimento sim, mas antes preciso ver os produtos"
+//     "depois de conhecer os produtos eu pago"
+//     "quando eu ver o catálogo eu faço"
+const mensagemCondicionaOuAdia =
+  /\b(mas antes|mas primeiro|antes preciso|antes eu preciso|antes de|depois de|depois que|so depois|só depois|quando eu|assim que eu|primeiro preciso|primeiro quero|preciso ver|preciso conhecer|quero ver primeiro|quero conhecer primeiro|preciso analisar|vou analisar|deixa eu ver|deixa eu pensar|preciso pensar)\b/i.test(text || "");
+   
+const weakButContextualAcceptance =
+  taxDecisionMessageIsShortPositive(text) &&
+  taxExplained &&
+  valueAnchored &&
+  !mensagemExpressaDuvida &&
+  !mensagemCondicionaOuAdia &&
+  (
+     semanticContinuity?.leadQuerAvancar === true ||
+    semanticContinuity?.leadEntendeuUltimaExplicacao === true ||
+    /posso seguir|podemos seguir|pode seguir|quer que eu avance|pre analise|pré analise|pré-análise|cadastro|dados/i.test(contextText)
+  );
 
   /*
     Ordem importante:
@@ -13833,7 +15247,7 @@ function classifyTaxPhaseDecision({
     };
   }
 
-  if (strongAcceptance && valueAnchored) {
+  if (strongAcceptance && valueAnchored && !mensagemCondicionaOuAdia) {
     return {
       categoria: "ACEITE_CLARO",
       acao: "LIBERAR_PRE_CADASTRO",
@@ -13842,6 +15256,16 @@ function classifyTaxPhaseDecision({
     };
   }
 
+  // Lead sinalizou aceite MAS condicionou/adiou (ex: "sim mas antes preciso ver os produtos")
+  if (strongAcceptance && mensagemCondicionaOuAdia) {
+    return {
+      categoria: "ACEITE_CONDICIONADO",
+      acao: "RESPONDER_DUVIDA",
+      shouldSave: false,
+      motivo: "Lead sinalizou aceite, mas condicionou a uma etapa anterior (conhecer produtos, analisar, pensar). Não liberar coleta — atender a condição primeiro."
+    };
+  }
+   
   if (weakButContextualAcceptance) {
     return {
       categoria: "ACEITE_FRACO_MAS_SUFFICIENTE",
@@ -15512,12 +16936,55 @@ function iqgLeadHasBlockingDoubtOrObjection(text = "", semanticIntent = null) {
   );
 }
 
+/*
+  Bug 7 — sinais textuais fortes de entendimento ou movimento.
+  Lista usada como ANCORAGEM LOCAL para validar atalhos do classificador GPT
+  (positiveRealInterest / positiveCommitment). Antes, esses flags eram
+  aceitos cegamente — se o GPT marcasse positiveCommitment=true em ack curto
+  (ex: "Por enquanto sim, fale mais"), iqgLeadHasStrongUnderstandingSignal
+  retornava true sem nenhum sanity check textual, cascateando em markStep
+  para todas as etapas explicadas pela SDR (Ponto 7 do mapa de etapas).
+*/
+const STRONG_UNDERSTANDING_TEXT_ANCHORS = [
+  // verbos e expressões de compreensão
+  "entendi", "entendido", "compreendi",
+  "ficou claro", "faz sentido",
+  "sem duvida", "sem dúvida", "tudo certo",
+  // convite/aceite de avanço
+  "pode seguir", "podemos seguir", "vamos seguir", "pode continuar",
+  "proximo", "próximo",
+  "vamos para o proximo", "vamos para o próximo",
+  "quero continuar", "quero seguir",
+  "vamos pra pre analise", "vamos para pre analise",
+  "vamos pra pré análise", "vamos para pré análise",
+  // vocabulário coloquial BR — Bug 7 ampliação
+  "to dentro", "tô dentro", "estou dentro",
+  "topo o compromisso", "topo seguir",
+  "fechou pra mim", "fechado vamos",
+  "bora seguir", "bora começar", "bora avançar",
+  "vamos la", "vamos lá",
+  "concordo com", "aceito o", "aceito seguir"
+];
+
 function iqgLeadHasStrongUnderstandingSignal(text = "", semanticIntent = null) {
   const t = iqgNormalizeFunnelText(text);
 
-  if (semanticIntent?.positiveRealInterest === true) return true;
-  if (semanticIntent?.positiveCommitment === true) return true;
+  const textoTemAncoraLocal = STRONG_UNDERSTANDING_TEXT_ANCHORS.some(ancora => t.includes(ancora));
 
+  /*
+    Atalho do classificador GPT — Bug 7 fix:
+    Antes era aceite cego do flag. Agora exige co-ocorrência com pelo menos
+    uma âncora textual da lista acima. Defesa em profundidade: se o GPT
+    marcar positiveCommitment=true por engano em ack vago, sem âncora local
+    correspondente, o atalho NÃO dispara.
+  */
+  if (semanticIntent?.positiveRealInterest === true && textoTemAncoraLocal) return true;
+  if (semanticIntent?.positiveCommitment === true && textoTemAncoraLocal) return true;
+
+  /*
+    Acks isolados (palavra única) — sempre falso, independente de outros sinais.
+    Lista mantida e expandida com termos coloquiais que sozinhos são ambíguos.
+  */
   const weakOnlyPatterns = [
     /^ok$/,
     /^sim$/,
@@ -15527,37 +16994,20 @@ function iqgLeadHasStrongUnderstandingSignal(text = "", semanticIntent = null) {
     /^beleza$/,
     /^show$/,
     /^legal$/,
-    /^perfeito$/
+    /^perfeito$/,
+    /^topo$/,
+    /^fechado$/,
+    /^bora$/,
+    /^partiu$/,
+    /^aceito$/,
+    /^concordo$/
   ];
 
   if (weakOnlyPatterns.some(pattern => pattern.test(t))) {
     return false;
   }
 
-  return (
-    t.includes("entendi") ||
-    t.includes("entendido") ||
-    t.includes("compreendi") ||
-    t.includes("ficou claro") ||
-    t.includes("faz sentido") ||
-    t.includes("sem duvida") ||
-    t.includes("sem dúvida") ||
-    t.includes("tudo certo") ||
-    t.includes("pode seguir") ||
-    t.includes("podemos seguir") ||
-    t.includes("vamos seguir") ||
-    t.includes("pode continuar") ||
-    t.includes("proximo") ||
-    t.includes("próximo") ||
-    t.includes("vamos para o proximo") ||
-    t.includes("vamos para o próximo") ||
-    t.includes("quero continuar") ||
-    t.includes("quero seguir") ||
-    t.includes("vamos pra pre analise") ||
-    t.includes("vamos para pre analise") ||
-    t.includes("vamos pra pré análise") ||
-    t.includes("vamos para pré análise")
-  );
+  return textoTemAncoraLocal;
 }
 
 function iqgLeadMovedToNextLogicalTopic({
@@ -15698,6 +17148,56 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
   const lastAssistantText = iqgGetLastAssistantMessageForFunnel(history);
   const explainedPreviously = iqgDetectFunnelStepsExplainedInText(lastAssistantText);
 
+/*
+    Se a última mensagem da SDR PROMETEU explicar um tema
+    (ex: "Quer saber mais sobre estoque e responsabilidades?"),
+    esse tema ainda NÃO foi explicado de verdade — só foi oferecido.
+    Não deve ser marcado como concluído quando o lead diz "Sim".
+    O "Sim" nesse contexto é "sim, quero saber", não "sim, entendi".
+  */
+  const lastSdrText = String(lastAssistantText || "").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  const lastReplyActuallyExplainedCommitment =
+    lastSdrText.includes("resultado depende") ||
+    lastSdrText.includes("sua atuacao") ||
+    lastSdrText.includes("sua atuação") ||
+    lastSdrText.includes("vendas realizadas") ||
+    lastSdrText.includes("dedicacao") ||
+    lastSdrText.includes("dedicação");
+
+  const lastReplyIsOfferToExplain =
+    /\b(quer saber|quer que eu|posso te explicar|posso explicar|vou te explicar|gostaria de saber|quer entender)\b/i.test(lastAssistantText || "");
+
+  if (lastReplyIsOfferToExplain) {
+    // A SDR ofereceu explicar — os temas mencionados nessa oferta
+    // NÃO devem ser marcados como concluídos. "Sim" do lead = "quero ouvir".
+    // Desmarca as detecções para os temas que foram só oferecidos, não explicados.
+    const offerText = String(lastAssistantText || "").toLowerCase();
+
+    if (/estoque|comodato|lote/.test(offerText) && !currentEtapas.estoque) {
+      explainedPreviously.estoque = false;
+    }
+    if (/responsabilidade/.test(offerText) && !currentEtapas.responsabilidades) {
+      explainedPreviously.responsabilidades = false;
+    }
+    if (/beneficio|suporte|treinamento/.test(offerText) && !currentEtapas.beneficios) {
+      explainedPreviously.beneficios = false;
+    }
+    if (/programa|parceiro homologado/.test(offerText) && !currentEtapas.programa) {
+      explainedPreviously.programa = false;
+    }
+    if (/investimento|taxa|1.990|1990/.test(offerText) && !currentEtapas.investimento) {
+      explainedPreviously.investimento = false;
+    }
+  }
+
+  // Compromisso exige que a SDR tenha realmente explicado o tema,
+  // não apenas mencionado "responsabilidades do parceiro" de passagem
+  if (!lastReplyActuallyExplainedCommitment) {
+    explainedPreviously.compromisso = false;
+  }
+   
   const hasStrongUnderstanding = iqgLeadHasStrongUnderstandingSignal(leadText, semanticIntent);
   const hasBlockingDoubtOrObjection = iqgLeadHasBlockingDoubtOrObjection(leadText, semanticIntent);
 
@@ -16186,6 +17686,42 @@ function buildConversationMemoryForAgents({
   };
 }
 
+/*
+  Bug 4 — lista de tokens-âncora cuja repetição em respostas consecutivas
+  da SDR cansa o lead, mesmo quando o tema geral (taxonomia em
+  detectReplyMainTheme) muda. Cada token vira um "label" curto usado em
+  audit_events / reason do finding.
+
+  Tokens validados contra o vocabulário do SYSTEM_PROMPT (regiões com
+  alta densidade no prompt → modelo tende a repetir).
+*/
+const REPETITION_ANCHOR_TOKENS = [
+  // Valores monetários (mais críticos — Volnei 33%, Edson 50%, Trindade 11x no relatório)
+  { pattern: /\b(r\$ ?5\.000|5\.000|5 mil em|cinco mil)\b/i, label: "valor_5000_comodato" },
+  { pattern: /\b(r\$ ?1\.990|1\.990|1990 reais?)\b/i,        label: "valor_1990_taxa" },
+  { pattern: /\b(10x de r\$ ?199|10x de 199|parcelad[oa] em 10x)\b/i, label: "parcelamento_10x" },
+
+  // Conceitos / bordões comerciais
+  { pattern: /\bcomodato\b/i,                                  label: "comodato" },
+  { pattern: /\b(comiss[aã]o vital[ií]cia|10% de comiss[aã]o|renda vital[ií]cia)\b/i, label: "comissao_vitalicia" },
+  { pattern: /\bmargem (de )?40%/i,                            label: "margem_40_porcento" },
+  { pattern: /\bsuporte (e |\& )?treinamento\b/i,              label: "suporte_e_treinamento" },
+  { pattern: /\btaxa de ades[aã]o\b/i,                         label: "taxa_de_adesao" },
+  { pattern: /\b(pr[eé][- ]?an[áa]lise|preanalise)\b/i,        label: "pre_analise" }
+];
+
+function detectRepeatedAnchorTokens(lastAssistantMessage = "", respostaFinal = "") {
+  if (!lastAssistantMessage || !respostaFinal) return [];
+
+  const repetidos = [];
+  for (const { pattern, label } of REPETITION_ANCHOR_TOKENS) {
+    if (pattern.test(lastAssistantMessage) && pattern.test(respostaFinal)) {
+      repetidos.push(label);
+    }
+  }
+  return repetidos;
+}
+
 function applyAntiRepetitionGuard({
   leadText = "",
   respostaFinal = "",
@@ -16201,49 +17737,64 @@ function applyAntiRepetitionGuard({
     };
   }
 
+  /*
+    Bug 4 — early return de mensagem curta REMOVIDO.
+    Antes, este guard só rodava se o lead respondeu com ack curto e neutro
+    (≤45 chars, casando whitelist tipo "ok"/"sim"). Mensagens médias-longas
+    em conversas exploratórias escapavam, e a SDR repetia "R$ 5.000",
+    "comodato", "taxa de adesão" ao longo de várias respostas consecutivas.
+    Agora rodamos para TODA mensagem do lead. leadReplyWasShort vai pro
+    reason apenas como sinal de diagnóstico.
+  */
   const leadReplyWasShort = isShortNeutralLeadReply(leadText);
 
-  if (!leadReplyWasShort) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
+  // Detecção de tema (lógica original — taxonomia grossa).
   const lastTheme = detectReplyMainTheme(lastAssistantMessage);
   const currentTheme = detectReplyMainTheme(respostaFinal);
+  const themeMatched = Boolean(lastTheme && lastTheme === currentTheme);
 
-  if (!lastTheme || !currentTheme) {
+  // Detecção de tokens-âncora repetidos (Bug 4 — nova).
+  const repeatedTokens = detectRepeatedAnchorTokens(lastAssistantMessage, respostaFinal);
+
+  const anyRepetition = themeMatched || repeatedTokens.length > 0;
+
+  if (!anyRepetition) {
     return {
       changed: false,
       respostaFinal
     };
   }
 
-  const repeatedSameTheme = lastTheme === currentTheme;
+  /*
+    Correção crítica (13/05/2026):
+    A chamada antiga a buildContinuationAfterRepeatedTheme foi removida
+    porque essa função não existia no código atual e quebrava o webhook
+    com ReferenceError toda vez que a trava disparava.
 
-  if (!repeatedSameTheme) {
-    return {
-      changed: false,
-      respostaFinal
-    };
-  }
-
-  const continuation = buildContinuationAfterRepeatedTheme({
-    lastTheme,
-    currentLead
-  });
-
+    Quem usa applyAntiRepetitionGuard só lê os campos `changed` e `reason`
+    para empilhar em sdrReviewFindings (que depois é tratado pelo
+    regenerador da SDR via GPT). Os campos `respostaFinal` e `fileKey`
+    nunca eram consumidos — então removê-los é seguro.
+  */
   return {
     changed: true,
     reason: {
+      // Tema repetido (string|null). null quando não houve repetição de tema
+      // ou quando detectReplyMainTheme não encontrou tema reconhecido em ambos.
+      repeatedSameTheme: themeMatched ? lastTheme : null,
+
+      // Lista de labels dos tokens-âncora repetidos entre lastAssistantMessage
+      // e respostaFinal. Vazio se nenhum token bateu nas duas.
+      repeatedTokens,
+
+      // Flag combinado para consumo simplificado downstream (Pré-SDR/regenerador).
+      anyRepetition,
+
+      // Sinais auxiliares para audit/diagnóstico.
       leadReplyWasShort,
-      lastTheme,
-      currentTheme,
-      repeatedSameTheme
-    },
-    respostaFinal: continuation.message,
-    fileKey: continuation.fileKey
+      lastTheme: lastTheme || null,
+      currentTheme: currentTheme || null
+    }
   };
 }
 
@@ -17223,7 +18774,11 @@ async function runDataFlowSemanticRouter({
       }))
     : [];
 
+  // Data/hora atual (fonte única) — para o classificador calcular datas relativas
+  const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
+   
   try {
+     
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -18758,7 +20313,13 @@ function removeFileAction(actions = [], keyToRemove = "") {
   }
 }
 
-async function sendFileOnce(from, key) {
+function leadAskedFileResend(text = "") {
+  return /\b(n[aã]o\s*(recebi|chegou|veio|baixou|abriu|consegui|deu|caiu|mandou|tenho|funcionou)|n[aã]o\s*recebido|cad[eê]|onde\s*est[áa]|manda\s*de\s*novo|envia\s*de\s*novo|reenvia|manda\s*novamente|envia\s*novamente|me\s*manda|manda\s*a[ií]|mandou\s*nada|sumiu|perdi|apaguei|t[áa]\s*quebrado)\b/i.test(text || "");
+}
+
+async function sendFileOnce(from, key, options = {}) {
+  const { forceResend = false, resendReason = null } = options;
+
   /*
     ETAPA 7 PRODUÇÃO — arquivo só é marcado como enviado depois do sucesso real.
 
@@ -18771,6 +20332,11 @@ async function sendFileOnce(from, key) {
     2. se der certo, marca sentFiles;
     3. se falhar, NÃO marca sentFiles;
     4. grava log do erro para auditoria.
+
+    BUG 2 — reenvio quando lead reclama:
+    Se forceResend=true (caller detectou reclamação tipo "não recebi", "cadê"),
+    a função ignora o bloqueio de "já enviou", mas respeita o cooldown
+    FILE_RESEND_COOLDOWN_MS para evitar spam por mensagens repetidas.
   */
 
   if (!FILES[key]) {
@@ -18797,12 +20363,13 @@ async function sendFileOnce(from, key) {
   const sentField = `sentFiles.${key}`;
 
   const lead = await db.collection("leads").findOne({ user: from });
+  const sentAt = lead?.sentFiles?.[key];
 
-  if (lead?.sentFiles?.[key]) {
+  if (sentAt && !forceResend) {
     console.log("📎 Arquivo não reenviado porque já foi enviado:", {
       user: from,
       arquivo: key,
-      enviadoEm: lead.sentFiles[key]
+      enviadoEm: sentAt
     });
 
     await db.collection("file_send_logs").insertOne({
@@ -18810,12 +20377,48 @@ async function sendFileOnce(from, key) {
       fileKey: key,
       filename: FILES[key]?.filename || "",
       status: "skipped_already_sent",
-      alreadySentAt: lead.sentFiles[key],
+      alreadySentAt: sentAt,
       createdAt: new Date()
     });
 
     return false;
   }
+
+  if (sentAt && forceResend) {
+    const ageMs = Date.now() - new Date(sentAt).getTime();
+
+    if (ageMs < FILE_RESEND_COOLDOWN_MS) {
+      console.log("📎 Reenvio ignorado (cooldown anti-spam):", {
+        user: from,
+        arquivo: key,
+        motivo: resendReason || "forced_resend_within_cooldown",
+        ultimoEnvioMs: ageMs,
+        cooldownMs: FILE_RESEND_COOLDOWN_MS
+      });
+
+      await db.collection("file_send_logs").insertOne({
+        user: from,
+        fileKey: key,
+        filename: FILES[key]?.filename || "",
+        status: "resend_cooldown_active",
+        alreadySentAt: sentAt,
+        ageMs,
+        resendReason: resendReason || null,
+        createdAt: new Date()
+      });
+
+      return false;
+    }
+
+    console.log("📎 Reenvio de arquivo autorizado:", {
+      user: from,
+      arquivo: key,
+      motivo: resendReason || "forced_resend",
+      envioAnterior: sentAt
+    });
+  }
+
+  const isResend = Boolean(sentAt && forceResend);
 
   try {
     await db.collection("file_send_logs").insertOne({
@@ -18823,6 +20426,8 @@ async function sendFileOnce(from, key) {
       fileKey: key,
       filename: FILES[key]?.filename || "",
       status: "started",
+      isResend,
+      resendReason: isResend ? resendReason : null,
       createdAt: new Date()
     });
 
@@ -18839,7 +20444,9 @@ async function sendFileOnce(from, key) {
             filename: FILES[key]?.filename || "",
             mediaId: sendResult?.mediaId || "",
             messageId: sendResult?.messageId || "",
-            sentAt: new Date()
+            sentAt: new Date(),
+            isResend,
+            resendReason: isResend ? resendReason : null
           },
           updatedAt: new Date()
         }
@@ -18851,19 +20458,28 @@ async function sendFileOnce(from, key) {
       user: from,
       fileKey: key,
       filename: FILES[key]?.filename || "",
-      status: "success",
+      status: isResend ? "resent_after_complaint" : "success",
       mediaId: sendResult?.mediaId || "",
       messageId: sendResult?.messageId || "",
+      isResend,
+      resendReason: isResend ? resendReason : null,
+      previousSentAt: isResend ? sentAt : null,
       createdAt: new Date()
     });
 
-    console.log("✅ Arquivo marcado como enviado após sucesso real:", {
-      user: from,
-      arquivo: key,
-      filename: FILES[key]?.filename || "",
-      mediaId: sendResult?.mediaId || "",
-      messageId: sendResult?.messageId || ""
-    });
+    console.log(
+      isResend
+        ? "✅ Arquivo REENVIADO com sucesso após reclamação do lead:"
+        : "✅ Arquivo marcado como enviado após sucesso real:",
+      {
+        user: from,
+        arquivo: key,
+        filename: FILES[key]?.filename || "",
+        mediaId: sendResult?.mediaId || "",
+        messageId: sendResult?.messageId || "",
+        motivo: isResend ? resendReason : null
+      }
+    );
 
     return true;
   } catch (error) {
@@ -18871,7 +20487,8 @@ async function sendFileOnce(from, key) {
       user: from,
       arquivo: key,
       filename: FILES[key]?.filename || "",
-      erro: error.message
+      erro: error.message,
+      tentativaReenvio: isResend
     });
 
     await db.collection("file_send_logs").insertOne({
@@ -18880,6 +20497,8 @@ async function sendFileOnce(from, key) {
       filename: FILES[key]?.filename || "",
       status: "failed",
       errorMessage: error.message,
+      isResend,
+      resendReason: isResend ? resendReason : null,
       createdAt: new Date()
     });
 
@@ -18906,6 +20525,511 @@ function getGreetingByBrazilTime() {
   }
 
   return "boa noite";
+}
+
+/* =========================
+   DETECÇÃO INTELIGENTE DE SOLICITAÇÃO DE PRAZO/HORÁRIO
+   Quando o cliente pede para ser contactado depois (ex: "me chama amanhã",
+   "estou ocupado", "à noite te respondo"), o sistema detecta,
+   pausa a cadência e agenda o recontato.
+========================= */
+
+const SCHEDULE_REQUEST_PATTERNS = [
+  // "me chama/liga/retorna" + referência temporal
+  /me\s+(chame|chama|ligue|liga|retorne|retorna|responde|responda)\s+.{0,30}(amanh[aã]|depois|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|daqui|em\s+\d+|mais\s+tarde|noite|tarde|manh[aã])/i,
+  // "estou ocupado/trabalhando" + "me chama"
+  /estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o|em\s+call|atendendo|dirigindo|no\s+trabalho|correndo).{0,60}(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna|retorn[ao]|depois)/i,
+  // "me chama" + "estou ocupado"
+  /(me\s+chame|me\s+chama|me\s+ligue|me\s+liga|me\s+retorne|me\s+retorna).{0,60}estou\s+(ocupad[oa]|trabalhando|em\s+reuni[aã]o)/i,
+  // "pode ser amanhã/depois/à noite"
+  /pode\s+(ser|ficar\s+pra?)\s+(amanh[aã]|depois|à?\s*noite|de\s+noite|mais\s+tarde|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "depois de amanhã"
+  /(depois|dps)\s+de\s+amanh[aã]/i,
+  // "amanhã à noite/de manhã"
+  /amanh[aã]\s+(à?\s*noite|de\s+noite|à?\s*tarde|de\s+tarde|de\s+manh[aã]|cedo|cedinho)/i,
+  // "à noite te respondo/falo"
+  /(à?\s*noite|de\s+noite|mais\s+tarde|depois)\s+(te\s+respondo|te\s+falo|eu\s+respondo|eu\s+falo|a\s+gente\s+conversa|conversamos|vejo)/i,
+  // "na próxima segunda/semana"
+  /n[ao]\s+pr[oó]xim[ao]\s+(segunda|ter[cç]a|quarta|quinta|sexta|semana)/i,
+  // "agora não dá/posso" + tempo
+  /(agora\s+n[aã]o\s+(d[aá]|posso|consigo)|n[aã]o\s+(d[aá]|posso|consigo)\s+agora).{0,40}(depois|amanh[aã]|mais\s+tarde|noite)/i,
+  // "daqui X horas/dias"
+  /daqui\s+(a\s+)?\d+\s*(hora|min|dia|semana)/i,
+  // "me chama às 19h"
+  /(me\s+chame?|me\s+ligue?|retorn[ae]?).{0,30}([àa]s\s+)?\d{1,2}\s*(h|hora|:\d{2})/i,
+  // "depois das 18h"
+  /depois\s+d[ao]s?\s+\d{1,2}\s*(h|hora|:\d{2})/i,
+  // "agendar/marcar conversa/ligação para amanhã/segunda/horário"
+  /(agendar|agenda|marcar|marca|remarcar|remarca)\s+.{0,40}(conversa|conversar|ligação|ligacao|call|reuni[aã]o|papo|hor[aá]rio|amanh[aã]|depois|pr[oó]xim|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "conversar/falar/continuar amanhã/depois/segunda"
+  /(conversar|conversamos|falar|continuar|prosseguir|retomar|seguir)\s+.{0,15}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|outro\s+momento|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "vamos/podemos conversar/falar amanhã" (com palavra no meio)
+  /(vamos|podemos|poderia|consegue|conseguimos|d[aá]\s+pra|tem\s+como|seria\s+possível|seria\s+possivel)\s+.{0,30}(conversar|falar|agendar|marcar|continuar|retomar|seguir).{0,30}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|segunda|ter[cç]a|quarta|quinta|sexta|\d{1,2}\s*(h|hora|:\d{2}))/i,
+  // "amanhã às Xh" / "segunda às Xh"
+  /(amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)\s+([àa]s\s+)?\d{1,2}\s*(h|hora|:\d{2})/i,
+  // "antes de [qualquer coisa], vamos/podemos conversar/falar amanhã"
+  /antes\s+de\s+.{0,40}(conversar|falar|continuar|seguir|conversamos)\s+.{0,15}(amanh[aã]|depois|mais\s+tarde|pr[oó]xim|outro\s+dia|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "só consigo/posso amanhã/à noite"
+  /(só|so)\s+(consigo|posso|d[aá]|tenho\s+tempo)\s+.{0,20}(amanh[aã]|depois|mais\s+tarde|noite|tarde|manh[aã]|segunda|ter[cç]a|quarta|quinta|sexta)/i,
+  // "vamos deixar pra amanhã/depois"
+  /(vamos|bora|melhor)\s+(deixar|adiar|remarcar|empurrar)\s+.{0,20}(amanh[aã]|depois|pr[oó]xim|segunda|outro\s+dia|outro\s+hor[aá]rio)/i
+];
+
+function detectScheduleRequest(text) {
+  if (!text || String(text).trim().length < 5) {
+    return { detected: false };
+  }
+
+  const normalizedText = String(text)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  let matchedPattern = null;
+  for (const pattern of SCHEDULE_REQUEST_PATTERNS) {
+    if (pattern.test(text)) {
+      matchedPattern = pattern.source;
+      break;
+    }
+  }
+
+  if (!matchedPattern) {
+    return { detected: false };
+  }
+
+  const periodo = extractRequestedPeriod(normalizedText);
+  const horario = extractRequestedTime(normalizedText);
+  const motivacao = extractMotivation(normalizedText);
+
+  return {
+    detected: true,
+    periodo,
+    horario,
+    motivacao,
+    patternMatched: matchedPattern,
+    originalText: String(text).slice(0, 200),
+    detectedAt: new Date()
+  };
+}
+
+function extractRequestedPeriod(text) {
+  if (/depois\s*de\s*amanh[aã]|dps\s*de\s*amanh/i.test(text)) return "depois_de_amanha";
+  if (/amanh[aã]/i.test(text)) return "amanha";
+  if (/proxim[ao]\s*segunda|na\s*segunda/i.test(text)) return "segunda";
+  if (/proxim[ao]\s*terca|na\s*terca/i.test(text)) return "terca";
+  if (/proxim[ao]\s*quarta|na\s*quarta/i.test(text)) return "quarta";
+  if (/proxim[ao]\s*quinta|na\s*quinta/i.test(text)) return "quinta";
+  if (/proxim[ao]\s*sexta|na\s*sexta/i.test(text)) return "sexta";
+  if (/proxim[ao]\s*sabado|no\s*sabado/i.test(text)) return "sabado";
+  if (/proxim[ao]\s*semana/i.test(text)) return "proxima_semana";
+
+  const matchDaqui = text.match(/daqui\s*(a\s*)?(\d+)\s*(hora|min|dia|semana)/i);
+  if (matchDaqui) {
+    const quantidade = parseInt(matchDaqui[2]);
+    const unidade = matchDaqui[3].toLowerCase();
+    if (unidade.startsWith("hora")) return `daqui_${quantidade}_horas`;
+    if (unidade.startsWith("min")) return `daqui_${quantidade}_minutos`;
+    if (unidade.startsWith("dia")) return `daqui_${quantidade}_dias`;
+    if (unidade.startsWith("semana")) return `daqui_${quantidade}_semanas`;
+  }
+
+  if (/mais\s*tarde|depois/i.test(text)) return "mais_tarde";
+
+  return "indefinido";
+}
+
+function extractRequestedTime(text) {
+  const matchHorarioExplicito = text.match(/(\d{1,2})\s*(h|hora|:\d{2})/i);
+  if (matchHorarioExplicito) {
+    const hora = parseInt(matchHorarioExplicito[1]);
+    if (hora >= 0 && hora <= 23) return `${hora}h`;
+  }
+
+  const matchDepoisDas = text.match(/depois\s*d[ao]s?\s*(\d{1,2})\s*(h|hora)/i);
+  if (matchDepoisDas) {
+    const hora = parseInt(matchDepoisDas[1]);
+    if (hora >= 0 && hora <= 23) return `${hora}h`;
+  }
+
+  if (/de\s*manha|cedinho|cedo/i.test(text)) return "manha";
+  if (/[aà]\s*tarde|de\s*tarde/i.test(text)) return "tarde";
+  if (/[aà]\s*noite|de\s*noite/i.test(text)) return "noite";
+
+  return "indefinido";
+}
+
+function extractMotivation(text) {
+  if (/ocupad[oa]/i.test(text)) return "ocupado";
+  if (/trabalhando|no\s*trabalho/i.test(text)) return "trabalhando";
+  if (/reuni[aã]o|call/i.test(text)) return "reuniao";
+  if (/dirigindo/i.test(text)) return "dirigindo";
+  if (/atendendo/i.test(text)) return "atendendo";
+  if (/correndo/i.test(text)) return "correndo";
+  return "nenhuma";
+}
+
+/* =========================
+   CÁLCULO DE DATA/HORA DO RECONTATO AGENDADO
+========================= */
+
+function computeScheduledCallbackDate(detection) {
+  const agora = new Date();
+  const data = new Date(agora);
+
+  switch (detection.periodo) {
+    case "amanha":
+      data.setDate(data.getDate() + 1);
+      break;
+    case "depois_de_amanha":
+      data.setDate(data.getDate() + 2);
+      break;
+    case "segunda":
+      advanceToWeekday(data, 1);
+      break;
+    case "terca":
+      advanceToWeekday(data, 2);
+      break;
+    case "quarta":
+      advanceToWeekday(data, 3);
+      break;
+    case "quinta":
+      advanceToWeekday(data, 4);
+      break;
+    case "sexta":
+      advanceToWeekday(data, 5);
+      break;
+    case "sabado":
+      advanceToWeekday(data, 6);
+      break;
+    case "proxima_semana":
+      advanceToWeekday(data, 1);
+      break;
+    case "mais_tarde":
+      data.setTime(data.getTime() + 3 * 60 * 60 * 1000);
+      break;
+    default:
+      if (detection.periodo.startsWith("daqui_")) {
+        const parts = detection.periodo.split("_");
+        const quantidade = parseInt(parts[1]) || 1;
+        const unidade = parts[2] || "horas";
+        if (unidade === "horas") data.setTime(data.getTime() + quantidade * 60 * 60 * 1000);
+        else if (unidade === "minutos") data.setTime(data.getTime() + quantidade * 60 * 1000);
+        else if (unidade === "dias") data.setDate(data.getDate() + quantidade);
+        else if (unidade === "semanas") data.setDate(data.getDate() + quantidade * 7);
+      } else {
+        data.setDate(data.getDate() + 1);
+      }
+      break;
+  }
+
+  if (detection.horario !== "indefinido") {
+    if (detection.horario.endsWith("h")) {
+      const hora = parseInt(detection.horario);
+      if (!isNaN(hora) && hora >= 0 && hora <= 23) {
+        data.setHours(hora, 0, 0, 0);
+      }
+    } else {
+      switch (detection.horario) {
+        case "manha":
+          data.setHours(9, 0, 0, 0);
+          break;
+        case "tarde":
+          data.setHours(14, 0, 0, 0);
+          break;
+        case "noite":
+          data.setHours(19, 30, 0, 0);
+          break;
+      }
+    }
+  } else {
+    if (data.toDateString() !== agora.toDateString()) {
+      data.setHours(10, 0, 0, 0);
+    }
+  }
+
+  const startHour = typeof BUSINESS_START_HOUR === "number" ? BUSINESS_START_HOUR : 8;
+  const endHour = typeof BUSINESS_END_HOUR === "number" ? BUSINESS_END_HOUR : 20;
+
+  if (data.getHours() < startHour) {
+    data.setHours(startHour, 0, 0, 0);
+  }
+  if (data.getHours() >= endHour) {
+    data.setDate(data.getDate() + 1);
+    data.setHours(startHour, 0, 0, 0);
+  }
+
+  const minimoFuturo = new Date(agora.getTime() + 5 * 60 * 1000);
+  if (data < minimoFuturo) {
+    return minimoFuturo;
+  }
+
+  return data;
+}
+
+function advanceToWeekday(date, targetDay) {
+  const currentDay = date.getDay();
+  let daysToAdd = (targetDay - currentDay + 7) % 7;
+  if (daysToAdd === 0) daysToAdd = 7;
+  date.setDate(date.getDate() + daysToAdd);
+}
+
+function formatScheduleConfirmationMessage(detection, scheduledDate, leadName) {
+  const nome = leadName ? `${leadName}, ` : "";
+
+  const diaSemana = scheduledDate.toLocaleDateString("pt-BR", { weekday: "long" });
+  const dataFormatada = scheduledDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const horaFormatada = scheduledDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  return `${nome}anotado! ✅ Vou retomar nosso contato ${diaSemana} (${dataFormatada}) às ${horaFormatada} como combinado. Qualquer coisa antes disso, é só me chamar! 😊`;
+}
+
+/* =========================
+   AGENDAR RECONTATO + PAUSAR CADÊNCIA
+========================= */
+
+async function scheduleClientCallback(from, lead, detection) {
+  try {
+    await connectMongo();
+
+    // Se a detecção trouxe uma data já calculada pelo classificador GPT
+    // (scheduledDateOverride), usa ela. Senão, calcula por extração de texto.
+    let scheduledDate;
+    if (detection.scheduledDateOverride instanceof Date && !isNaN(detection.scheduledDateOverride.getTime())) {
+      scheduledDate = detection.scheduledDateOverride;
+      console.log("📅 scheduleClientCallback usando data do classificador GPT:", {
+        user: from,
+        scheduledDate: scheduledDate.toISOString()
+      });
+    } else {
+      scheduledDate = computeScheduledCallbackDate(detection);
+    }
+
+    const nome = getFirstName(lead?.nomeWhatsApp || lead?.nome || "");
+
+    // 1) Pausar cadência
+    clearTimers(from);
+    await saveLeadProfile(from, {
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null,
+      cadenciaPausadaPorCliente: true,
+      cadenciaPausadaEm: new Date(),
+      cadenciaPausadaMotivo: detection.motivacao || "solicitacao_prazo",
+      agendamentoRecontato: {
+        dataAgendada: scheduledDate,
+        periodo: detection.periodo,
+        horario: detection.horario,
+        mensagemOriginal: detection.originalText
+      }
+    });
+
+    // 2) Criar documento de agendamento
+    const agendamento = {
+      user: from,
+      lead_id: lead?._id || null,
+      nome: nome || "",
+      originalText: detection.originalText || "",
+      detection: {
+        periodo: detection.periodo,
+        horario: detection.horario,
+        motivacao: detection.motivacao,
+        patternMatched: detection.patternMatched
+      },
+      scheduledDate: scheduledDate,
+      status: "pendente",
+      tentativas: 0,
+      maxTentativas: 3,
+      createdAt: new Date(),
+      executedAt: null,
+      cancelledAt: null
+    };
+
+    await db.collection("scheduled_callbacks").insertOne(agendamento);
+
+    // 3) Enviar confirmação ao lead
+    const confirmationMsg = formatScheduleConfirmationMessage(
+      detection,
+      scheduledDate,
+      nome
+    );
+
+    await sendWhatsAppMessage(from, confirmationMsg);
+
+    // 4) Salvar confirmação no histórico
+    const history = await loadConversation(from);
+    history.push({
+      role: "user",
+      content: detection.originalText,
+      createdAt: new Date(),
+      origem: "lead"
+    });
+    history.push({
+      role: "assistant",
+      content: confirmationMsg,
+      createdAt: new Date(),
+      origem: "agendamento_confirmacao"
+    });
+    await saveConversation(from, history);
+
+    // 5) Audit
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("agendamento_recontato", "medium", from, {
+        evento: "recontato_agendado",
+        periodo: detection.periodo,
+        horario: detection.horario,
+        motivacao: detection.motivacao,
+        scheduledDate: scheduledDate.toISOString(),
+        mensagemOriginal: (detection.originalText || "").slice(0, 200)
+      });
+    }
+
+    console.log("📅 Recontato agendado com sucesso:", {
+      user: from,
+      nome,
+      scheduledDate: scheduledDate.toISOString(),
+      periodo: detection.periodo,
+      horario: detection.horario,
+      motivacao: detection.motivacao
+    });
+
+    return { success: true, scheduledDate, agendamento };
+
+  } catch (error) {
+    console.error("❌ Erro ao agendar recontato:", {
+      user: from,
+      error: error.message
+    });
+
+    return { success: false, error: error.message };
+  }
+}
+
+/* =========================
+   EXECUTAR RECONTATO AGENDADO
+   Chamada pelo cron job (Passo 5).
+========================= */
+
+async function executeScheduledCallback(agendamento) {
+  const from = agendamento.user;
+
+  try {
+    await connectMongo();
+
+    const lead = await loadLeadProfile(from);
+
+    // Se lead encerrado, cancelar
+    if (shouldStopBotByLifecycle(lead)) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_encerrado" } }
+      );
+      console.log("🔕 Recontato cancelado: lead em estado terminal.", { user: from });
+      return false;
+    }
+
+    // Se humano assumiu, cancelar
+    if (isHumanAssumedLead(lead || {})) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "humano_assumiu" } }
+      );
+      console.log("🔕 Recontato cancelado: humano assumiu.", { user: from });
+      return false;
+    }
+
+    // Se cadência não está mais pausada (lead já respondeu), cancelar
+    if (lead?.cadenciaPausadaPorCliente !== true) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_ja_respondeu" } }
+      );
+      console.log("🔕 Recontato cancelado: lead já retomou conversa.", { user: from });
+      return false;
+    }
+
+    // Tudo ok — enviar mensagem de recontato
+    const candidatoNome = lead?.nomeWhatsApp || lead?.nome || "";
+    const nome = !isInvalidLooseNameCandidate(candidatoNome) ? getFirstName(candidatoNome) : "";
+    const mensagem = nome
+      ? `${nome}, tudo bem? 😊 Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`
+      : `Oi! 😊 Tudo bem? Como combinamos, estou retomando nosso contato. Você tem uns minutinhos agora?`;
+
+    await sendWhatsAppMessage(from, mensagem);
+
+    // Salvar no histórico
+    const history = await loadConversation(from);
+    history.push({
+      role: "assistant",
+      content: mensagem,
+      createdAt: new Date(),
+      origem: "recontato_agendado"
+    });
+    await saveConversation(from, history);
+
+    // Marcar como executado
+    await db.collection("scheduled_callbacks").updateOne(
+      { _id: agendamento._id },
+      { $set: { status: "executado", executedAt: new Date() } }
+    );
+
+    // Reativar cadência normal
+    await saveLeadProfile(from, {
+      cadenciaPausadaPorCliente: false,
+      cadenciaReativadaEm: new Date(),
+      agendamentoRecontato: null
+    });
+
+    // Agendar cadência normal caso lead não responda ao recontato
+    await scheduleLeadFollowups(from);
+
+    // Audit
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("agendamento_recontato", "medium", from, {
+        evento: "recontato_executado",
+        scheduledDate: agendamento.scheduledDate?.toISOString?.() || "",
+        executedAt: new Date().toISOString()
+      });
+    }
+
+    console.log("✅ Recontato agendado executado com sucesso:", {
+      user: from,
+      nome,
+      scheduledDate: agendamento.scheduledDate
+    });
+
+    return true;
+
+  } catch (error) {
+    console.error("❌ Erro ao executar recontato agendado:", {
+      user: from,
+      error: error.message
+    });
+
+    const tentativas = (agendamento.tentativas || 0) + 1;
+    if (tentativas >= (agendamento.maxTentativas || 3)) {
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { status: "falhado", tentativas, ultimoErro: error.message } }
+      );
+
+      // Reativar cadência mesmo com falha
+      await saveLeadProfile(from, {
+        cadenciaPausadaPorCliente: false,
+        cadenciaReativadaEm: new Date(),
+        agendamentoRecontato: null
+      });
+      await scheduleLeadFollowups(from);
+    } else {
+      // Reagendar para daqui 1 hora
+      const novaData = new Date(Date.now() + 60 * 60 * 1000);
+      await db.collection("scheduled_callbacks").updateOne(
+        { _id: agendamento._id },
+        { $set: { scheduledDate: novaData, tentativas, ultimoErro: error.message } }
+      );
+    }
+
+    return false;
+  }
 }
 
 function isBusinessTime() {
@@ -18951,9 +21075,17 @@ function getDelayUntilNextBusinessTime() {
   return Math.max(next.getTime() - now.getTime(), 0);
 }
 
+function buildFollowupGreetingPrefix(lead = {}) {
+  const candidato = lead?.nomeWhatsApp || lead?.nome || "";
+  if (isInvalidLooseNameCandidate(candidato)) {
+    return "Oi! 😊 ";
+  }
+  const nome = getFirstName(candidato);
+  return nome ? `${nome}, ` : "Oi! 😊 ";
+}
+
 function getSmartFollowupMessage(lead = {}, step = 1) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
   const faseFunil = lead.faseFunil || "";
@@ -19095,9 +21227,22 @@ function getSmartFollowupMessage(lead = {}, step = 1) {
   return `${prefixo}quer que eu te explique de forma mais direta?`;
 }
 
+function isHotLeadForHandoff(lead = {}) {
+  const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
+  return Boolean(
+    etapas.compromisso === true ||
+    etapas.investimento === true ||
+    etapas.responsabilidades === true ||
+    faseFunil === "compromisso" ||
+    faseFunil === "investimento" ||
+    faseFunil === "responsabilidades" ||
+    lead?.taxaAlinhada === true
+  );
+}
+
 function getFinalFollowupMessage(lead = {}) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const jaVirouParceiroConfirmado =
     lead?.dadosConfirmadosPeloLead === true ||
@@ -19151,6 +21296,14 @@ Se quiser seguir por um caminho mais leve agora, pode começar pelo Afiliados:
 https://minhaiqg.com.br/
 
 E se depois quiser retomar o Parceiro Homologado, é só me chamar por aqui.`;
+  }
+
+  if (isHotLeadForHandoff(lead)) {
+    return `${prefixo}vou encerrar por aqui 😊
+
+Estávamos avançando na conversa sobre o Parceiro Homologado IQG. Vou pedir para um atendente humano da nossa equipe assumir e continuar com você daqui.
+
+Qualquer coisa, é só me chamar por aqui.`;
   }
 
   return `${prefixo}vou encerrar por aqui por enquanto 😊
@@ -19242,32 +21395,351 @@ function isLeadInProtectedFollowupState(lead = {}) {
       "aguardando_valor_correcao_final"
     ].includes(faseQualificacao);
 
-  return isHumanOrFinal || isDataFlow;
+  const isCadenciaPausada = lead?.cadenciaPausadaPorCliente === true;
+
+  return isHumanOrFinal || isDataFlow || isCadenciaPausada;
 }
 
-function historyOrLeadIndicatesTaxExplained(lead = {}, historyText = "") {
+function historyOrLeadIndicatesTaxExplained(lead = {}, history = []) {
   const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
+  const faseQualificacao = lead?.faseQualificacao || "";
 
-  return Boolean(
+  if (
     etapas.investimento === true ||
+    etapas.compromisso === true ||
     lead?.taxaAlinhada === true ||
-    /\b(taxa de ades[aã]o|taxa|investimento|r\$ ?1\.990|1990|1\.990|10x de r\$ ?199|10x de 199)\b/i.test(historyText || "")
-  );
+    faseFunil === "investimento" ||
+    faseFunil === "compromisso" ||
+    faseQualificacao === "compromisso"
+  ) {
+    return true;
+  }
+
+  const sdrText = Array.isArray(history)
+    ? history
+        .slice(-25)
+        .filter(m => m?.role === "assistant")
+        .map(m => m?.content || "")
+        .join("\n")
+    : "";
+
+  return /(\btaxa de ades[aã]o\b|\bvalor da ades[aã]o\b|\bvalor do investimento\b|\bvalor da taxa\b|r\$\s*1[\.,]?990|\b1[\.,]?990\s*reais?\b|\b10\s*x\s*de\s*r?\$?\s*199\b|\b10\s*vezes\s*de\s*r?\$?\s*199\b)/i.test(sdrText);
 }
 
-function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, historyText = "") {
+function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, history = []) {
   const etapas = lead?.etapas || {};
+  const faseFunil = lead?.faseFunil || "";
 
-  return Boolean(
+  if (
     etapas.responsabilidades === true ||
     etapas.compromisso === true ||
-    /\b(respons[aá]vel|responsabilidades|guarda|conserva[cç][aã]o|vendas ativamente|relacionamento ativo|comunica[cç][aã]o correta|depende da sua atua[cç][aã]o)\b/i.test(historyText || "")
-  );
+    faseFunil === "responsabilidades" ||
+    faseFunil === "investimento" ||
+    faseFunil === "compromisso"
+  ) {
+    return true;
+  }
+
+  const sdrText = Array.isArray(history)
+    ? history
+        .slice(-25)
+        .filter(m => m?.role === "assistant")
+        .map(m => m?.content || "")
+        .join("\n")
+    : "";
+
+  return /(\bresponsabilidades do parceiro\b|\bguarda e conserva[cç][aã]o\b|\bvendas ativamente\b|\brelacionamento ativo\b|\bcomunica[cç][aã]o correta\b|\bdepende da sua atua[cç][aã]o\b)/i.test(sdrText);
+}
+
+/*
+  Gera mensagem de cadência usando os GPTs (Pré-SDR + SDR).
+  Em vez de texto hardcoded, os GPTs analisam o histórico completo
+  e geram uma mensagem contextual de reengajamento.
+*/
+async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
+  try {
+    const history = await loadConversation(from);
+    const auditTraceId = generateTraceId();
+
+    const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
+    const faseFunil = lead.faseFunil || "esclarecimento";
+    const etapas = lead.etapas || {};
+
+    // Montar contexto de cadência para o Pré-SDR
+    const contextoCadencia = [
+      `CONTEXTO DE CADÊNCIA AUTOMÁTICA (Step ${step} de 5):`,
+      `Esta NÃO é uma resposta a uma mensagem do lead.`,
+      `É uma mensagem de retomada/reengajamento porque o lead parou de responder.`,
+      `O lead está inativo. A SDR deve enviar UMA mensagem curta e consultiva para reengajar.`,
+      "",
+      "REGRAS DA CADÊNCIA:",
+      "- Mensagem CURTA (máximo 2-3 frases)",
+      "- Tom leve e consultivo, sem pressão",
+      "- NÃO repetir o que já foi dito no histórico",
+      "- NÃO falar de temas que ainda não foram abordados",
+      "- NÃO pedir dados pessoais (nome, CPF, telefone)",
+      "- Retomar a conversa de onde parou, baseado no histórico",
+      "- Se o lead já viu benefícios, perguntar sobre dúvidas dos benefícios",
+      "- Se o lead já viu estoque, perguntar se fez sentido o comodato",
+      "- Se o lead já viu responsabilidades, perguntar se ficou alguma dúvida",
+      "- Se a taxa já foi explicada, perguntar se faz sentido o investimento",
+      "- NÃO mencionar taxa se ela nunca foi explicada no histórico",
+      "- NÃO usar **negrito** nem listas numeradas",
+      "- Usar *negrito* (1 asterisco) se precisar destacar algo",
+      "",
+      `Step ${step}/5: ${step <= 2 ? "retomada leve" : step <= 4 ? "retomada consultiva" : "última tentativa — mencionar Afiliado como alternativa"}`,
+      step === 5 ? "ÚLTIMO FOLLOW-UP: mencionar brevemente o Programa de Afiliados como alternativa e incluir o link https://minhaiqg.com.br/ no final" : ""
+    ].filter(Boolean).join("\n");
+
+    // Rodar o Pré-SDR com contexto de cadência
+    const lastSdrText = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+
+    const preSdrResult = await runConsultantAssistant({
+      lead: lead,
+      history,
+      lastUserText: "[CADÊNCIA AUTOMÁTICA — lead inativo]",
+      lastSdrText,
+      backendStrategicGuidance: [{
+        tipo: "cadencia_automatica",
+        prioridade: "alta",
+        motivo: `Follow-up automático step ${step}/5. Lead está inativo.`,
+        orientacaoParaPreSdr: contextoCadencia
+      }],
+      auditTraceId
+    });
+
+    // Gerar a mensagem da SDR chamando a OpenAI diretamente.
+    // Usa o SYSTEM_PROMPT principal da SDR + a orientação do Pré-SDR.
+    const orientacaoPreSdr = [
+      "CONTEXTO: esta é uma mensagem de CADÊNCIA AUTOMÁTICA de reengajamento.",
+      "O lead parou de responder. Gere UMA mensagem curta de retomada.",
+      "",
+      contextoCadencia,
+      "",
+      "ORIENTAÇÃO DO CONSULTOR PRÉ-SDR:",
+      `Estratégia: ${preSdrResult?.estrategiaRecomendada || "manter_nutricao"}`,
+      `Próxima ação: ${preSdrResult?.proximaMelhorAcao || "-"}`,
+      `Abordagem: ${preSdrResult?.abordagemSugerida || "-"}`,
+      `Argumento principal: ${preSdrResult?.argumentoPrincipal || "-"}`,
+      `Cuidado principal: ${preSdrResult?.cuidadoPrincipal || "-"}`,
+      "",
+      "Responda SOMENTE com a mensagem final que será enviada ao lead no WhatsApp.",
+      "Sem aspas, sem prefixo, sem explicação. Apenas a mensagem."
+    ].join("\n");
+
+    const historyParaSdr = (Array.isArray(history) ? history : [])
+      .slice(-12)
+      .map(m => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: String(m.content || "")
+      }));
+
+    let mensagem = "";
+
+    try {
+      const sdrResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+          temperature: 0.5,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: orientacaoPreSdr },
+            ...historyParaSdr,
+            {
+              role: "user",
+              content: "[GERAR MENSAGEM DE CADÊNCIA — o lead está inativo, retome a conversa conforme as orientações acima]"
+            }
+          ]
+        })
+      });
+
+      const sdrData = await sdrResponse.json();
+      mensagem = sdrData?.choices?.[0]?.message?.content || "";
+    } catch (sdrError) {
+      console.error("Erro ao chamar SDR para cadência:", sdrError.message);
+      return null;
+    }
+    if (!mensagem || !String(mensagem).trim()) {
+      console.log("⚠️ GPTs não geraram mensagem de cadência. Usando fallback.", { user: from, step });
+      return null; // vai cair no fallback hardcoded
+    }
+
+    // Sanitizar para WhatsApp
+    const mensagemLimpa = sanitizeWhatsAppText(mensagem);
+
+    console.log("🤖 Cadência gerada via GPTs:", {
+      user: from,
+      step,
+      mensagem: mensagemLimpa.slice(0, 100)
+    });
+
+    return mensagemLimpa;
+  } catch (error) {
+    console.error("Erro ao gerar cadência via GPTs:", { user: from, step, error: error.message });
+    await auditSystemEvent("erro_sistema", "high", from, {
+      origem: "generateFollowupViaGPTs",
+      step: step,
+      erro: error.message
+    });
+    return null; // fallback para texto hardcoded
+  }
+}
+
+async function flagHotLeadForHumanHandoff(from) {
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: "Cadência encerrada (step 5) com lead em fase avançada — requer atendimento humano.",
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date()
+  });
+
+  console.log("🙋 Lead quente em encerramento de cadência — marcado para Janela 2:", { user: from });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("decisao_backend", "medium", from, {
+      evento: "lead_quente_movido_janela_2_step_5",
+      motivo: "Cadência encerrada com lead em fase avançada"
+    });
+  }
+}
+
+/*
+  Bug 5 — handoff humano quando regeneração não elimina críticos.
+
+  Distinto de flagHotLeadForHumanHandoff (que cobre encerramento de cadência
+  com lead em fase avançada): aqui o gatilho é "regeneração de resposta da
+  SDR falhou em eliminar violações críticas após N tentativas". O lead recebe
+  uma mensagem segura e cai na Janela 2 com motivo distinto para o dashboard
+  diferenciar os dois casos.
+*/
+async function flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes = []) {
+  const tipos = criticosRemanescentes.map(f => f.tipo).join(", ") || "desconhecido";
+
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: `Regeneração de resposta da SDR não eliminou violações críticas após 2 tentativas (${tipos}). Conversa precisa de atenção humana antes de seguir.`,
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date()
+  });
+
+  console.error("🚨 Lead marcado para Janela 2: regeneração falhou em eliminar críticos.", {
+    user: from,
+    criticosRemanescentes: tipos
+  });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("regeneracao_sdr_fallback_humano", "high", from, {
+      tentativas: 2,
+      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+    });
+  }
+}
+
+/*
+  Bug 8 — handoff para Janela 2 quando lead declara ser revendedor/lojista.
+
+  Análogo a flagHotLeadForHumanHandoff (encerramento de cadência com lead
+  quente) e flagLeadForRegenerationFailureHandoff (regeneração falhou).
+  Distinção no dashboard via motivo específico para o operador identificar
+  o caso e oferecer o caminho comercial correto (não Parceiro Homologado).
+*/
+async function flagLeadAsRevendedorLojista(from, contexto = {}) {
+  await saveLeadProfile(from, {
+    necessitaAtencaoHumanaDashboard: true,
+    motivoAtencaoHumanaDashboard: "Lead declarou ser lojista/revendedor/representante comercial — caminho comercial diferente do Programa Parceiro Homologado, exige atendimento humano da equipe IQG.",
+    prioridadeAtencaoHumanaDashboard: "alta",
+    atencaoHumanaDashboardEm: new Date(),
+    leadEhRevendedorLojista: true,
+    leadEhRevendedorLojistaEm: new Date()
+  });
+
+  console.log("🏪 Lead marcado como revendedor/lojista — Janela 2:", {
+    user: from,
+    origem: contexto?.origem || null,
+    motivoHeuristica: contexto?.motivoHeuristica || null,
+    trechoMatch: contexto?.trechoMatch || null
+  });
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("lead_declarou_revendedor_lojista", "medium", from, {
+      origem: contexto?.origem || null,
+      motivoHeuristica: contexto?.motivoHeuristica || null,
+      trechoMatch: contexto?.trechoMatch || null
+    });
+  }
+}
+
+const FOLLOWUP_STEP_MESSAGES = {
+  programa: {
+    1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
+    2: "um ponto do Programa que costuma fazer diferença: você começa com o lote de produtos da IQG em comodato, sem precisar comprar estoque. Quer que eu te explique como funciona?",
+    3: "uma dúvida que costuma aparecer nessa fase é se o Programa exige experiência prévia com vendas. Não exige — a IQG oferece treinamento e acompanhamento desde o começo. Posso te explicar melhor?",
+    4: "se o Programa fizer sentido pra você, o próximo passo é conhecer os benefícios que a IQG oferece a quem é Parceiro Homologado. Quer que eu te apresente?"
+  },
+  beneficios: {
+    1: "ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?",
+    2: "um ponto importante: o suporte da IQG é contínuo — você tem acompanhamento durante toda a sua atuação como Parceiro, não só no início. Quer saber mais sobre como funciona?",
+    3: "uma dúvida comum nessa fase é se vale a pena sem já ter uma carteira de clientes. O treinamento da IQG cobre justamente como construir isso do zero. Quer que eu te explique?",
+    4: "se os benefícios estão fazendo sentido pra você, o próximo passo é entender como funciona o lote de produtos em comodato. Quer que eu te explique?"
+  },
+  estoque: {
+    1: "ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?",
+    2: "sobre o comodato: você recebe o lote da IQG pra trabalhar sem desembolsar pra comprar estoque. Isso reduz bastante a barreira de começar. Como você vê esse modelo?",
+    3: "uma dúvida comum sobre o comodato é o que acontece se o produto não girar como esperado. A IQG faz acompanhamento e ajuda no ajuste da operação — você não fica sozinho com estoque parado. Quer entender melhor?",
+    4: "se o modelo de comodato fizer sentido pra você, o próximo passo é conhecer como funciona a atuação como Parceiro no dia a dia. Quer seguir?"
+  },
+  responsabilidades: {
+    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    2: "sobre as responsabilidades do Parceiro: a IQG estrutura cada etapa pra que você atue com clareza — mesmo quem nunca trabalhou nesse modelo consegue se adaptar. Como você vê esse formato?",
+    3: "uma dúvida frequente nessa etapa é como a rotina de Parceiro se encaixa no dia a dia. Posso te explicar como outros parceiros organizam isso na prática. Quer conversar sobre?",
+    4: "se a forma de atuação fizer sentido pra você, o próximo passo é falar sobre o investimento pra entrar no Programa. Quer que eu te apresente?"
+  },
+  taxaNaoAlinhada: {
+    1: "pensando no que conversamos sobre o investimento, faz sentido eu te ajudar a avaliar se o modelo de Parceiro Homologado se encaixa para você agora?",
+    2: "sobre o investimento que vimos: ele cobre o pacote completo — lote em comodato, treinamento, suporte contínuo e acompanhamento da IQG. Não é uma taxa solta, é a estrutura toda. Como você vê?",
+    3: "uma dúvida frequente nessa etapa é sobre a forma de pagamento. O investimento pode ser parcelado em até 10x, o que ajuda a caber no seu momento. Quer que eu te passe as condições?",
+    4: "se o investimento fizer sentido pra você, o próximo passo é a gente confirmar se faz sentido seguir adiante. Quer conversar sobre isso?"
+  },
+  compromisso: {
+    1: "pelo que conversamos, você já viu todos os pontos do Parceiro Homologado IQG. Como você se sente em relação a seguir adiante?",
+    2: "você já passou por todas as etapas — programa, benefícios, comodato, atuação e investimento. O que falta agora é só o passo final pra você entrar como Parceiro. Quer seguir?",
+    3: "é normal pensar bem antes do passo final. Se ficou algum ponto que ainda te segura, me conta — posso esclarecer pra você decidir com tranquilidade.",
+    4: "se você quiser seguir adiante, o próximo passo é o pré-cadastro pra entrar no Programa. Posso te orientar?"
+  },
+  taxaERespExplicadas: {
+    1: "pelo que conversamos, você já entendeu a estrutura do projeto. Quer seguir para o pré-cadastro do Parceiro Homologado?",
+    2: "como já passamos pelos principais pontos, o próximo passo é o pré-cadastro — rápido, serve pra alinhar seu perfil, e a equipe IQG segue contigo a partir dele. Posso encaminhar?",
+    3: "uma dúvida que costuma surgir aqui é se o pré-cadastro compromete em algo. Não compromete — é só uma etapa de avaliação de perfil. Quer seguir por aí?",
+    4: "se quiser dar o próximo passo agora, é simples: começamos pelo pré-cadastro. Posso te orientar?"
+  },
+  faltaResponsabilidades: {
+    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    2: "sobre a atuação como Parceiro Homologado: a IQG estrutura cada etapa pra que você atue com clareza, mesmo sem experiência prévia. Faz sentido pra você esse formato?",
+    3: "uma dúvida frequente sobre a atuação é como a rotina se encaixa no dia a dia. Posso te explicar como isso funciona na prática. Quer conversar sobre?",
+    4: "se quiser, posso te explicar agora como funciona a atuação como Parceiro — é o que falta pra gente seguir. Quer ver?"
+  },
+  fallbackNeutro: {
+    1: "ficou alguma dúvida sobre o que conversamos até aqui? 😊",
+    2: "um ponto do Programa Parceiro Homologado IQG que costuma fazer diferença pra quem está começando é o suporte e o treinamento da equipe — você não atua sozinho em nenhuma etapa. Faz sentido pra você?",
+    3: "se você ainda está avaliando, uma coisa que costuma ajudar a decidir é entender o passo a passo completo, do começo ao funcionamento. Quer que eu te apresente?",
+    4: "se quiser conhecer melhor o Parceiro Homologado IQG, é só me chamar — o caminho é guiado em cada passo. Posso continuar?"
+  }
+};
+
+function pickStepMessage(phase, step) {
+  const variants = FOLLOWUP_STEP_MESSAGES[phase];
+  if (!variants) return "";
+  return variants[step] || variants[1] || "";
 }
 
 function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
-  const nome = getFirstName(lead.nomeWhatsApp || lead.nome || "");
-  const prefixo = nome ? `${nome}, ` : "";
+  const prefixo = buildFollowupGreetingPrefix(lead);
 
   const rotaComercial = lead.rotaComercial || lead.origemConversao || "";
   const faseFunil = lead.faseFunil || "";
@@ -19275,13 +21747,6 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   const status = lead.status || "";
   const fase = faseFunil || faseQualificacao || status;
   const etapas = lead?.etapas || {};
-
-  const historyText = Array.isArray(history)
-    ? history
-        .slice(-25)
-        .map(m => `${m.role || ""}: ${m.content || ""}`)
-        .join("\n")
-    : "";
 
   const isAfiliado =
     rotaComercial === "afiliado" ||
@@ -19308,8 +21773,8 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
     return `${prefixo}se quiser, posso te ajudar a escolher o caminho mais adequado: Afiliado, Homologado ou os dois.`;
   }
 
-  const taxaFoiExplicada = historyOrLeadIndicatesTaxExplained(lead, historyText);
-  const responsabilidadesForamExplicadas = historyOrLeadIndicatesResponsibilitiesExplained(lead, historyText);
+  const taxaFoiExplicada = historyOrLeadIndicatesTaxExplained(lead, history);
+  const responsabilidadesForamExplicadas = historyOrLeadIndicatesResponsibilitiesExplained(lead, history);
 
   /*
     Regra 1:
@@ -19326,46 +21791,64 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
     Isso corrige o follow-up contaminado.
   */
   if (!taxaFoiExplicada) {
+    if (faseFunil === "responsabilidades" || etapas.responsabilidades === true) {
+      return `${prefixo}${pickStepMessage("responsabilidades", step)}`;
+    }
+
     if (faseFunil === "estoque" || etapas.estoque === true) {
-      return `${prefixo}ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?`;
+      return `${prefixo}${pickStepMessage("estoque", step)}`;
     }
 
-    if (etapas.beneficios === true) {
-      return `${prefixo}ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?`;
+    if (faseFunil === "beneficios" || etapas.beneficios === true) {
+      return `${prefixo}${pickStepMessage("beneficios", step)}`;
     }
 
-    if (etapas.programa === true) {
-      return `${prefixo}ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?`;
+    if (faseFunil === "esclarecimento" || faseFunil === "inicio" || etapas.programa === true) {
+      return `${prefixo}${pickStepMessage("programa", step)}`;
     }
 
-    return `${prefixo}vi que você demonstrou interesse no Programa Parceiro Homologado IQG. Quer que eu te explique de forma simples como funciona?`;
+    return `${prefixo}${pickStepMessage("fallbackNeutro", step)}`;
   }
 
   /*
-    Regra 3:
+    Regra 3 — Compromisso:
+    Lead já confirmou compromisso de atuação (etapas.compromisso === true).
+    Tem precedência sobre a antiga Regra 3 (Taxa não alinhada): se chegou
+    em compromisso, recebe mensagem própria da fase mesmo em estados
+    limítrofes onde taxaAlinhada !== true por inconsistência.
+    A Regra 1 (canStartDataCollection) já filtrou antes os leads "completos"
+    prontos para coleta — aqui ficam os leads em compromisso com algum
+    bloqueio de avanço.
+  */
+  if (etapas.compromisso === true) {
+    return `${prefixo}${pickStepMessage("compromisso", step)}`;
+  }
+
+  /*
+    Regra 4 (antiga Regra 3):
     Se a taxa foi explicada, mas ainda não foi aceita,
     retomar de forma consultiva, sem repetir o texto inteiro.
   */
   if (taxaFoiExplicada && lead?.taxaAlinhada !== true) {
-    return `${prefixo}pensando no que conversamos sobre o investimento, faz sentido eu te ajudar a avaliar se o modelo de Parceiro Homologado se encaixa para você agora?`;
+    return `${prefixo}${pickStepMessage("taxaNaoAlinhada", step)}`;
   }
 
   /*
-    Regra 4:
+    Regra 5 (antiga Regra 4):
     Se taxa e responsabilidades já foram explicadas,
-    chamar para pré-análise, sem repetir tudo.
+    chamar para pré-cadastro, sem repetir tudo.
   */
   if (taxaFoiExplicada && responsabilidadesForamExplicadas && lead?.interesseReal !== true) {
-    return `${prefixo}pelo que conversamos, você já entendeu a estrutura do projeto. Quer seguir para a pré-análise do Parceiro Homologado?`;
+    return `${prefixo}${pickStepMessage("taxaERespExplicadas", step)}`;
   }
 
   /*
-    Regra 5:
+    Regra 6 (antiga Regra 5):
     Se ainda faltar responsabilidade de verdade, perguntar curto.
     Mas sem textão.
   */
   if (!responsabilidadesForamExplicadas) {
-    return `${prefixo}ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?`;
+    return `${prefixo}${pickStepMessage("faltaResponsabilidades", step)}`;
   }
 
   return `${prefixo}quer seguir com o próximo passo para avaliarmos seu pré-cadastro como Parceiro Homologado IQG?`;
@@ -19417,27 +21900,120 @@ async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {
   }
 }
 
+/*
+  ===========================================================
+  sendAutomaticFollowupIfStillValid (V2 — LOCK + AUDIT)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Função que efetivamente verifica + envia + audita o follow-up.
+
+  Chamada por DOIS lugares:
+    1. Cron job (runFollowupCronTick) — modelo novo, robusto.
+    2. setTimeout antigo (compatibilidade, caso sobre algum em RAM).
+
+  Mudanças desta versão:
+    - Aceita parâmetro adicional 'dbVersion' (vindo do cron) para
+      checar se o follow-up no banco ainda é válido.
+    - Persiste no banco o avanço pro próximo step OU encerramento.
+    - Registra recordAuditEvent toda vez que dispara (sucesso ou
+      cancelamento) — agora aparece na tela de Auditoria.
+    - Mantém todas as proteções anti-disparo-duplo existentes.
+*/
 async function sendAutomaticFollowupIfStillValid({
   from,
   followup,
-  scheduleVersion
+  scheduleVersion,
+  dbVersion = null
 } = {}) {
   const currentState = getState(from);
 
-  if (currentState.closed) return false;
+  /*
+    Trace único para esse disparo. Vai aparecer na Auditoria.
+  */
+  const followupTraceId = `followup_${from}_${Date.now()}`;
+  const audit_component_followup = (typeof AUDIT_COMPONENTS === "object" && AUDIT_COMPONENTS?.BACKEND_FOLLOWUP)
+    ? AUDIT_COMPONENTS.BACKEND_FOLLOWUP
+    : "backend_followup";
 
-  if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
-    console.log("🔕 Follow-up cancelado: versão antiga do timer.", {
+  /*
+    Helper local pra logar follow-up cancelado/sucesso na auditoria.
+    Tem try/catch interno pra nunca derrubar o disparo se o audit falhar.
+  */
+  const auditFollowupEvent = async (eventType, severity, payload) => {
+    try {
+      if (typeof recordAuditEvent === "function") {
+        await recordAuditEvent({
+          traceId: followupTraceId,
+          component: audit_component_followup,
+          eventType,
+          severity,
+          userPhone: from,
+          payload: payload || {}
+        });
+      }
+    } catch (auditError) {
+      console.error("Erro ao auditar follow-up (ignorado):", auditError.message);
+    }
+  };
+
+  /*
+    Trava 1: lead encerrado em RAM (setTimeout antigo).
+  */
+  if (currentState.closed) {
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "state_closed_in_memory",
+      step: followup?.step || null
+    });
+    return false;
+  }
+
+  /*
+    Trava 2: versão do timer em RAM antiga (setTimeout antigo).
+    Só aplica se scheduleVersion foi passado (vindo do setTimeout).
+  */
+  if (typeof scheduleVersion === "number" &&
+      Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
+    console.log("🔕 Follow-up cancelado: versão antiga do timer (RAM).", {
       user: from,
       scheduleVersion,
       currentVersion: currentState.followupVersion
     });
-
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "ram_version_mismatch",
+      step: followup?.step || null,
+      scheduleVersion,
+      currentVersion: currentState.followupVersion
+    });
     return false;
   }
 
   const latestLead = await loadLeadProfile(from);
 
+  /*
+    Trava 3: versão do banco antiga (cron novo).
+    Se o lead respondeu uma nova mensagem enquanto o cron estava
+    rodando, a versão no banco subiu — esse disparo é obsoleto.
+  */
+  if (typeof dbVersion === "number" &&
+      Number(latestLead?.followupVersionDb || 0) !== Number(dbVersion || 0)) {
+    console.log("🔕 Follow-up cancelado: versão antiga no banco.", {
+      user: from,
+      dbVersionDoCron: dbVersion,
+      dbVersionAtualBanco: latestLead?.followupVersionDb
+    });
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "db_version_mismatch",
+      step: followup?.step || null,
+      dbVersionDoCron: dbVersion,
+      dbVersionAtualBanco: latestLead?.followupVersionDb
+    });
+    return false;
+  }
+
+  /*
+    Trava 4: lead em estado protegido/finalizado/coleta/humano.
+  */
   if (shouldStopBotByLifecycle(latestLead) || isLeadInProtectedFollowupState(latestLead)) {
     currentState.closed = shouldStopBotByLifecycle(latestLead) ? true : currentState.closed;
     clearTimers(from);
@@ -19450,25 +22026,110 @@ async function sendAutomaticFollowupIfStillValid({
       faseFunil: latestLead?.faseFunil || "-"
     });
 
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "lead_protegido_ou_finalizado",
+      step: followup?.step || null,
+      status: latestLead?.status,
+      faseFunil: latestLead?.faseFunil,
+      faseQualificacao: latestLead?.faseQualificacao,
+      statusOperacional: latestLead?.statusOperacional
+    });
     return false;
   }
 
   const latestHistory = await loadConversation(from);
 
-  const messageToSend = followup.getMessage
-    ? followup.getMessage(latestLead, latestHistory)
-    : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  // Tentar gerar a mensagem via GPTs (contextual, baseada no histórico)
+  // Se falhar, cair no fallback hardcoded
+  let messageToSend = await generateFollowupViaGPTs(
+    from,
+    latestLead,
+    followup.step || 1
+  );
 
+  // Fallback: se GPTs falharam, usar mensagem hardcoded
+  if (!messageToSend) {
+    messageToSend = followup.getMessage
+      ? followup.getMessage(latestLead, latestHistory)
+      : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  }
+
+  /*
+    Trava 5: mensagem vazia (não deveria acontecer, mas protege).
+  */
   if (!messageToSend || !String(messageToSend).trim()) {
     console.log("🔕 Follow-up cancelado: mensagem vazia.", {
       user: from,
       step: followup.step || null
     });
-
+    await auditFollowupEvent("followup_cancelled", "low", {
+      motivo: "mensagem_vazia",
+      step: followup?.step || null
+    });
     return false;
   }
 
-  await sendWhatsAppMessage(from, messageToSend);
+  // === INSTRUMENTAÇÃO TEMPORÁRIA — bug cadência madrugada ===
+  // TODO: remover após confirmar que disparos fora de expediente não
+  // acontecem mais em produção. Data alvo de remoção: ~03/06/2026
+  // (2 semanas após deploy do hotfix).
+  const horaUtcDisparo = new Date().toISOString();
+  const horaBrDisparo = getBrazilNow().toISOString();
+  const dentroExpediente = isBusinessTime();
+
+  console.log("🔍 [HOTFIX-CADENCIA] Disparo de follow-up:", {
+    user: from,
+    followupStep: latestLead?.followupStep,
+    horaUtc: horaUtcDisparo,
+    horaBr: horaBrDisparo,
+    dentroExpediente,
+    proximoFollowupEmSalvo: latestLead?.proximoFollowupEm,
+    liberadoHumanoEm: latestLead?.liberadoDoAtendimentoHumanoEm || null
+  });
+
+  if (!dentroExpediente) {
+    console.error("🚨 [HOTFIX-CADENCIA] DISPARO FORA DO EXPEDIENTE DETECTADO:", {
+      user: from,
+      followupStep: latestLead?.followupStep,
+      horaBr: horaBrDisparo,
+      proximoFollowupEmSalvo: latestLead?.proximoFollowupEm
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("disparo_fora_expediente_detectado", "high", from, {
+        followupStep: latestLead?.followupStep,
+        horaBr: horaBrDisparo,
+        proximoFollowupEmSalvo: latestLead?.proximoFollowupEm,
+        liberadoHumanoEm: latestLead?.liberadoDoAtendimentoHumanoEm || null
+      });
+    }
+  }
+  // === FIM INSTRUMENTAÇÃO TEMPORÁRIA ===
+
+  /*
+    Envia a mensagem.
+    A partir daqui, qualquer erro é grave (lead pode receber e o banco
+    não saber). Por isso loga audit em sucesso/falha.
+  */
+  try {
+    await sendWhatsAppMessage(from, messageToSend);
+  } catch (sendError) {
+    console.error("Erro ao enviar follow-up no WhatsApp:", sendError.message);
+    await auditFollowupEvent("followup_failed", "high", {
+      motivo: "whatsapp_send_failed",
+      step: followup?.step || null,
+      error: sendError.message
+    });
+    return false;
+  }
+
+  if ((followup?.step || 0) === 5 && isHotLeadForHandoff(latestLead)) {
+    try {
+      await flagHotLeadForHumanHandoff(from);
+    } catch (handoffError) {
+      console.error("Erro ao marcar lead quente para Janela 2 no step 5:", handoffError.message);
+    }
+  }
 
   await saveAutomaticFollowupToHistory(from, messageToSend, {
     step: followup.step || null,
@@ -19483,122 +22144,909 @@ async function sendAutomaticFollowupIfStillValid({
     faseQualificacao: latestLead?.faseQualificacao || "-"
   });
 
-  if (followup.closeAfter) {
-    currentState.closed = true;
-    clearTimers(from);
+   await auditSystemEvent("envio_followup", "low", from, {
+    step: followup.step || null,
+    faseFunil: latestLead?.faseFunil || "-",
+    faseQualificacao: latestLead?.faseQualificacao || "-",
+    mensagem: String(messageToSend || "").slice(0, 300)
+  });
+
+  await auditFollowupEvent("followup_sent", "low", {
+    step: followup.step || null,
+    closeAfter: followup.closeAfter === true,
+    respostaFinalSdr: messageToSend,
+    faseFunil: latestLead?.faseFunil,
+    faseQualificacao: latestLead?.faseQualificacao,
+    status: latestLead?.status
+  });
+
+  /*
+    Atualizar o banco para o PRÓXIMO step ou ENCERRAR se foi o último.
+  */
+  try {
+    const currentStep = followup.step || 1;
+    const nextStepIndex = currentStep; // arrays são 0-indexed, currentStep+1 - 1 = currentStep
+    const nextConfig = FOLLOWUP_CONFIG[nextStepIndex] || null;
+
+    if (followup.closeAfter || !nextConfig) {
+      // Foi o último — marca como perdido (cadência completa sem resposta).
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null,
+        status: "perdido",
+        faseQualificacao: "perdido",
+        statusOperacional: "perdido_cadencia_completa",
+        motivoPerda: "cadencia_completa_sem_resposta",
+        encerradoPor: "ia", origemEncerramento: "ia_cadencia_completa",
+        perdidoEm: new Date(),
+        ultimoFollowupEm: new Date()
+      });
+       
+      currentState.closed = true;
+      clearTimers(from);
+
+      console.log("🏁 Follow-up final disparado — lead encerrado:", {
+        user: from,
+        step: currentStep
+      });
+await auditSystemEvent("ciclo_followup", "medium", from, {
+        evento: "cadencia_completa_lead_perdido",
+        stepFinal: currentStep,
+        motivo: "cadencia_completa_sem_resposta"
+      });
+       
+    } else {
+      // Avança pro próximo step.
+      const nextDate = computeNextFollowupDate(nextConfig);
+      await saveLeadProfile(from, {
+        proximoFollowupEm: nextDate,
+        followupStep: nextConfig.step,
+        followupLockEm: null,
+        ultimoFollowupEm: new Date()
+      });
+
+      console.log("⏭️ Avançou para próximo step de follow-up:", {
+        user: from,
+        proximoStep: nextConfig.step,
+        proximoFollowupEm: nextDate.toISOString()
+      });
+await auditSystemEvent("ciclo_followup", "low", from, {
+        evento: "step_avancado",
+        stepAnterior: currentStep,
+        proximoStep: nextConfig.step,
+        proximoFollowupEm: nextDate.toISOString()
+      });
+       
+    }
+  } catch (advanceError) {
+    console.error("Erro ao avançar follow-up para próximo step:", advanceError.message);
+    // Não bloqueia — o follow-up atual já foi enviado.
   }
 
   return true;
 }
 
-function scheduleLeadFollowups(from) {
-  const state = getState(from);
+/*
+  ===========================================================
+  CRON JOB DE FOLLOW-UPS (V2)
+  ===========================================================
+  Criado em 13/05/2026.
 
-  if (state.closed) return;
+  Substitui o modelo antigo de setTimeout em RAM (que era perdido
+  a cada deploy do Render). Agora um interval roda a cada 60 segundos,
+  varre o banco procurando leads com follow-up vencido e dispara.
 
-  clearTimers(from);
+  Como evita disparo duplo:
+    - findOneAndUpdate atômico pega o lead E seta followupLockEm
+      em uma operação só. Outro tick que tente pegar o mesmo lead
+      vai falhar no filter (porque followupLockEm já está setado).
 
-  const scheduleVersion = Number(state.followupVersion || 0);
+  Como recupera de falhas:
+    - Se o cron falhar em disparar (ex: WhatsApp fora do ar),
+      o lock fica vazio depois de 5 minutos e outro tick tenta.
 
-  state.inactivityFollowupCount = 0;
-  state.followupTimers = [];
-  state.followupScheduledAtMs = Date.now();
+  Como evita rodar duas instâncias paralelas:
+    - Variável global cronEmExecucao impede que um tick comece
+      antes do anterior terminar.
+*/
 
-  const followups = [
-    /*
-      PRODUÇÃO IQG:
-      - Follow-up de 6 minutos removido.
-      - Follow-up de 6 horas removido.
-      - Retomada começa em 30 minutos.
-      - Todos os follow-ups recebem histórico real.
-    */
-    {
-      step: 1,
-      delay: 30 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 1, history)
-    },
-    {
-      step: 2,
-      delay: 12 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 2, history),
-      businessOnly: true
-    },
-    {
-      step: 3,
-      delay: 18 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 3, history),
-      businessOnly: true
-    },
-    {
-      step: 4,
-      delay: 24 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getSafeStageFollowupMessage(lead, 4, history),
-      businessOnly: true
-    },
-    {
-      step: 5,
-      delay: 30 * 60 * 60 * 1000,
-      getMessage: (lead, history) => getFinalFollowupMessage(lead, history),
-      businessOnly: true,
-      closeAfter: true
-    }
-  ];
+let followupCronEmExecucao = false;
 
-  for (const followup of followups) {
-    const timer = setTimeout(async () => {
-      try {
-        const currentState = getState(from);
-
-        if (currentState.closed) return;
-
-        if (Number(currentState.followupVersion || 0) !== Number(scheduleVersion || 0)) {
-          console.log("🔕 Follow-up ignorado antes de rodar: timer antigo.", {
-            user: from,
-            step: followup.step,
-            scheduleVersion,
-            currentVersion: currentState.followupVersion
-          });
-
-          return;
-        }
-
-        if (followup.businessOnly && !isBusinessTime()) {
-          const nextBusinessDelay = getDelayUntilNextBusinessTime();
-
-          const businessTimer = setTimeout(async () => {
-            try {
-              await sendAutomaticFollowupIfStillValid({
-                from,
-                followup,
-                scheduleVersion
-              });
-            } catch (error) {
-              console.error("Erro no follow-up em horário comercial:", error);
-            }
-          }, nextBusinessDelay);
-
-          currentState.followupTimers.push(businessTimer);
-          return;
-        }
-
-        await sendAutomaticFollowupIfStillValid({
-          from,
-          followup,
-          scheduleVersion
-        });
-      } catch (error) {
-        console.error("Erro no follow-up:", error);
-      }
-    }, followup.delay);
-
-    state.followupTimers.push(timer);
+async function runFollowupCronTick() {
+  if (followupCronEmExecucao) {
+    // Tick anterior ainda rodando — ignora este pra evitar concorrência.
+    return;
   }
 
-  console.log("⏱️ Follow-ups agendados com versão segura:", {
-    user: from,
-    scheduleVersion,
-    totalTimers: followups.length
+  followupCronEmExecucao = true;
+
+  const cronStartedAt = Date.now();
+  let totalDisparados = 0;
+  let totalIgnorados = 0;
+  let totalErro = 0;
+
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+    const lockExpiradoEm = new Date(agora.getTime() - 5 * 60 * 1000); // locks com mais de 5min são considerados travados
+
+    /*
+      Filtro: leads cujo próximo follow-up está vencido E
+      que não estão travados por outro tick (ou cujo lock é antigo).
+    */
+    const filtro = {
+      proximoFollowupEm: { $ne: null, $lte: agora },
+      followupStep: { $gte: 1, $lte: 5 },
+      cadenciaPausadaPorCliente: { $ne: true },
+      $or: [
+        { followupLockEm: null },
+        { followupLockEm: { $exists: false } },
+        { followupLockEm: { $lte: lockExpiradoEm } }
+      ]
+    };
+
+    /*
+      Busca todos os leads candidatos (até 50 por tick pra não sobrecarregar).
+      Cada lead será pego com lock atômico individual.
+    */
+    const candidatos = await db.collection("leads")
+      .find(filtro)
+      .limit(50)
+      .toArray();
+
+    if (candidatos.length === 0) {
+      return; // nada a fazer
+    }
+
+    console.log(`⏱️ Cron de follow-up: ${candidatos.length} candidato(s) encontrado(s)`);
+
+    for (const candidato of candidatos) {
+      const from = candidato.user || candidato.telefoneWhatsApp || candidato.telefone;
+
+      if (!from) {
+        totalIgnorados++;
+        continue;
+      }
+
+      try {
+        /*
+          Tenta pegar o lock de forma atômica.
+          findOneAndUpdate garante que só UM tick consegue setar o lock.
+          O filter inclui novamente o critério de proximoFollowupEm e lock
+          pra cobrir a janela entre o find() acima e o update agora.
+        */
+        const novoLock = new Date();
+        const lockResult = await db.collection("leads").findOneAndUpdate(
+          {
+            user: candidato.user,
+            proximoFollowupEm: { $ne: null, $lte: agora },
+            followupStep: { $gte: 1, $lte: 5 },
+            cadenciaPausadaPorCliente: { $ne: true },
+            $or: [
+              { followupLockEm: null },
+              { followupLockEm: { $exists: false } },
+              { followupLockEm: { $lte: lockExpiradoEm } }
+            ]
+          },
+          {
+            $set: { followupLockEm: novoLock }
+          },
+          {
+            returnDocument: "after"
+          }
+        );
+
+        const lead = lockResult?.value || lockResult; // compatibilidade com versões do driver
+
+        if (!lead) {
+          // Outro tick pegou primeiro — ignora.
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          BLINDAGEM CONTRA DISPARO DUPLICADO (Opção B):
+          Logo após pegar o lock, empurra o proximoFollowupEm para
+          frente (15 min). Assim, se este tick demorar mais que os
+          5 min do lock (envio via GPT + WhatsApp), e o lock expirar,
+          outro tick NÃO pega este lead — porque o proximoFollowupEm
+          já não está vencido.
+
+          O sendAutomaticFollowupIfStillValid mais abaixo continua
+          avançando o step normalmente; ele vai recalcular o
+          proximoFollowupEm correto do próximo step. Este empurrão
+          é só uma janela de proteção temporária.
+        */
+        const protecaoProximoFollowup = new Date(Date.now() + 15 * 60 * 1000);
+        await db.collection("leads").updateOne(
+          { user: candidato.user, followupLockEm: novoLock },
+          { $set: { proximoFollowupEm: protecaoProximoFollowup } }
+        );
+
+        /*
+          Encontrado a configuração do step atual.
+        */
+        const step = Number(lead.followupStep || 1);
+         
+        const stepIndex = step - 1; // arrays são 0-indexed
+        const config = FOLLOWUP_CONFIG[stepIndex];
+
+        if (!config) {
+          console.warn(`⚠️ Step inválido no banco: ${step} para ${from}. Limpando.`);
+          await saveLeadProfile(from, {
+            proximoFollowupEm: null,
+            followupStep: 0,
+            followupLockEm: null
+          });
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          Monta o objeto followup compatível com sendAutomaticFollowupIfStillValid.
+          getMessage é a função que cria o texto baseado na fase do lead.
+        */
+        const followup = {
+          step: config.step,
+          businessOnly: config.businessOnly,
+          closeAfter: config.closeAfter,
+          getMessage: (leadObj, history) => {
+            if (config.step === 5) {
+              return getFinalFollowupMessage(leadObj, history);
+            }
+            return getSafeStageFollowupMessage(leadObj, config.step, history);
+          }
+        };
+
+        /*
+          Verifica businessOnly aqui também (defesa em profundidade).
+          Se for businessOnly e estamos fora do comercial, reagenda
+          pra próximo horário comercial e libera o lock.
+        */
+        if (config.businessOnly && typeof isBusinessTime === "function" && !isBusinessTime()) {
+          const nextDate = computeNextFollowupDate(config);
+          await saveLeadProfile(from, {
+            proximoFollowupEm: nextDate,
+            followupLockEm: null
+          });
+          console.log(`🕐 Follow-up step ${config.step} reagendado para horário comercial:`, {
+            user: from,
+            proximoFollowupEm: nextDate.toISOString()
+          });
+          totalIgnorados++;
+          continue;
+        }
+
+        /*
+          Dispara o follow-up.
+          A função sendAutomaticFollowupIfStillValid faz todas as travas
+          (lifecycle, versão de banco, mensagem vazia, etc) e já avança
+          o step ou encerra dentro dela.
+        */
+        const sucesso = await sendAutomaticFollowupIfStillValid({
+          from,
+          followup,
+          dbVersion: Number(lead.followupVersionDb || 0)
+        });
+
+        if (sucesso) {
+          totalDisparados++;
+        } else {
+          totalIgnorados++;
+          /*
+            Se sendAutomaticFollowupIfStillValid retornou false (cancelou),
+            a função interna já cuidou de limpar/atualizar o banco.
+            Aqui só garantimos que o lock seja liberado caso ele tenha
+            ficado pendurado.
+          */
+          await db.collection("leads").updateOne(
+            { user: candidato.user, followupLockEm: novoLock },
+            { $set: { followupLockEm: null } }
+          );
+        }
+      } catch (leadError) {
+        totalErro++;
+        console.error(`Erro ao processar follow-up de ${from}:`, leadError.message);
+        /*
+          Libera o lock pra próxima tentativa daqui a 60s.
+        */
+        try {
+          await db.collection("leads").updateOne(
+            { user: candidato.user },
+            { $set: { followupLockEm: null } }
+          );
+        } catch (_) {
+          // ignora
+        }
+      }
+    }
+
+    const duracao = Date.now() - cronStartedAt;
+    console.log(`✅ Cron de follow-up concluído em ${duracao}ms:`, {
+      candidatos: candidatos.length,
+      disparados: totalDisparados,
+      ignorados: totalIgnorados,
+      erros: totalErro
+    });
+  } catch (cronError) {
+    console.error("❌ Erro fatal no cron de follow-up:", cronError.message);
+  } finally {
+    followupCronEmExecucao = false;
+  }
+}
+
+/*
+  Liga o cron pra rodar a cada 60 segundos.
+  Espera 30 segundos no boot pra dar tempo do app subir tranquilo.
+*/
+
+/*
+  ===========================================================
+  BOOTSTRAP DE CADÊNCIA — LEADS EXISTENTES SEM FOLLOW-UP
+  ===========================================================
+  Roda UMA VEZ no boot do servidor.
+  Varre o banco procurando leads que:
+  - Estão ativos (não enviados ao CRM, não perdidos, não afiliados já encerrados)
+  - Não têm proximoFollowupEm agendado
+  - Última interação foi há mais de 30 minutos e menos de 7 dias
+  
+  Para cada lead encontrado, agenda o step 1 de follow-up.
+  O cron regular cuida do resto.
+*/
+async function bootstrapFollowupsParaLeadsExistentes() {
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+    const limite30min = new Date(agora.getTime() - 30 * 60 * 1000);
+    const limite7dias = new Date(agora.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const leadsInativos = await db.collection("leads").find({
+      // Não tem follow-up agendado
+      $or: [
+        { proximoFollowupEm: null },
+        { proximoFollowupEm: { $exists: false } }
+      ],
+      // Não está em estado terminal
+      status: { $nin: ["enviado_crm", "em_atendimento", "fechado", "perdido"] },
+      statusOperacional: { $nin: ["enviado_crm", "em_atendimento", "encerrado_followup"] },
+      // Não é afiliado que já recebeu instruções
+      afiliadoInstrucoesEnviadas: { $ne: true },
+      // Tem pelo menos uma interação
+      updatedAt: { $gte: limite7dias, $lte: limite30min },
+      // Tem telefone
+      user: { $exists: true, $ne: "" },
+      // Bot não bloqueado por humano
+      botBloqueadoPorHumano: { $ne: true }
+    }).toArray();
+
+    if (leadsInativos.length === 0) {
+      console.log("🔍 Bootstrap: nenhum lead inativo para agendar follow-up.");
+      return;
+    }
+
+    console.log(`🔍 Bootstrap: ${leadsInativos.length} lead(s) inativo(s) encontrado(s). Agendando follow-ups...`);
+
+    let agendados = 0;
+
+    for (const lead of leadsInativos) {
+      const from = lead.user || lead.telefoneWhatsApp || lead.telefone;
+      if (!from) continue;
+
+      // Verificar se não deve parar o bot
+      if (shouldStopBotByLifecycle(lead) || isLeadInProtectedFollowupState(lead)) {
+        continue;
+      }
+
+      // Calcular qual step agendar baseado no tempo de inatividade
+      const lastActivity = lead.updatedAt ? new Date(lead.updatedAt).getTime() : 0;
+      const horasInativo = (agora.getTime() - lastActivity) / (1000 * 60 * 60);
+
+      // Se inativo há mais de 30h, vai direto pro step 5 (final com Afiliado)
+      // Se inativo há mais de 24h, step 4
+      // Se inativo há mais de 18h, step 3
+      // Se inativo há mais de 12h, step 2
+      // Senão, step 1
+      let stepInicial;
+      if (horasInativo >= 30) {
+        stepInicial = 5;
+      } else if (horasInativo >= 24) {
+        stepInicial = 4;
+      } else if (horasInativo >= 18) {
+        stepInicial = 3;
+      } else if (horasInativo >= 12) {
+        stepInicial = 2;
+      } else {
+        stepInicial = 1;
+      }
+
+      const config = FOLLOWUP_CONFIG[stepInicial - 1];
+      if (!config) continue;
+
+      // Agendar para daqui 2-5 minutos (espaçar para não mandar tudo de uma vez)
+      const delayAleatorio = (2 + Math.random() * 3) * 60 * 1000;
+      const proximoFollowupEm = new Date(agora.getTime() + delayAleatorio);
+
+      /*
+        Bug D — bootstrap rodando fora do expediente.
+        Se o servidor reinicia de madrugada, o bootstrap roda às 02h e
+        agenda step 1 (businessOnly=false) pra 02h05 — disparo na madrugada.
+        Mesma classe do Bug B (Step 1 fora do expediente). Aqui aplicamos
+        a mesma trava: se estamos fora do horário comercial, forçamos
+        businessOnly=true e o adjustToBusinessBR posterga pra próxima
+        abertura comercial.
+      */
+      const dataAjustada = isBusinessTime()
+        ? (config.businessOnly
+            ? computeNextFollowupDate({ ...config, delayMs: delayAleatorio })
+            : proximoFollowupEm)
+        : computeNextFollowupDate({ ...config, businessOnly: true, delayMs: delayAleatorio });
+
+      const novaVersao = Number(lead.followupVersionDb || 0) + 1;
+
+      await db.collection("leads").updateOne(
+        { user: from },
+        {
+          $set: {
+            proximoFollowupEm: dataAjustada,
+            followupStep: stepInicial,
+            followupLockEm: null,
+            followupVersionDb: novaVersao,
+            followupBootstrapEm: agora,
+            followupBootstrapStep: stepInicial,
+            followupBootstrapHorasInativo: Math.round(horasInativo)
+          }
+        }
+      );
+
+      agendados++;
+    }
+
+    console.log(`✅ Bootstrap concluído: ${agendados} follow-ups agendados de ${leadsInativos.length} candidatos.`);
+await auditSystemEvent("ciclo_followup", "low", null, {
+      evento: "bootstrap_executado",
+      candidatos: leadsInativos.length,
+      agendados: agendados
+    });
+  
+ } catch (error) {
+    console.error("❌ Erro no bootstrap de follow-ups:", error.message);
+  }
+}
+
+/*
+  ===========================================================
+  BACKFILL — CLASSIFICAÇÃO DE PERDIMENTO DOS LEADS ANTIGOS
+  ===========================================================
+  Roda UMA VEZ no boot. Leads perdidos ANTES da correção 46
+  não têm o campo "encerradoPor". Este backfill infere a origem:
+
+  - statusOperacional "perdido_auto" ou "perdido_cadencia_completa"
+    → foi a IA (esses sufixos a IA já gravava antes)
+  - statusOperacional "perdido" sem sufixo
+    → provavelmente foi o humano pelo dashboard
+
+  É uma inferência, não certeza absoluta. Marca "inferido: true"
+  para deixar claro que não foi registrado em tempo real.
+*/
+async function backfillClassificacaoPerdimento() {
+  try {
+    await connectMongo();
+
+    const perdidosSemClassificacao = await db.collection("leads").find({
+      status: "perdido",
+      $or: [
+        { encerradoPor: null },
+        { encerradoPor: { $exists: false } }
+      ]
+    }).toArray();
+
+    if (perdidosSemClassificacao.length === 0) {
+      console.log("🔍 Backfill perdimento: nenhum lead antigo para classificar.");
+      return;
+    }
+
+    let classificadosIA = 0;
+    let classificadosHumano = 0;
+
+    for (const lead of perdidosSemClassificacao) {
+      const statusOp = String(lead.statusOperacional || "");
+      const from = lead.user;
+      if (!from) continue;
+
+      let encerradoPor;
+      let origemEncerramento;
+
+      if (statusOp === "perdido_auto" || statusOp === "perdido_cadencia_completa") {
+        encerradoPor = "ia";
+        origemEncerramento = statusOp === "perdido_cadencia_completa"
+          ? "ia_cadencia_completa"
+          : "ia_auto_perda";
+        classificadosIA++;
+      } else {
+        encerradoPor = "humano";
+        origemEncerramento = "humano";
+        classificadosHumano++;
+      }
+
+      await db.collection("leads").updateOne(
+        { user: from },
+        {
+          $set: {
+            encerradoPor: encerradoPor,
+            origemEncerramento: origemEncerramento,
+            classificacaoPerdimentoInferida: true
+          }
+        }
+      );
+    }
+
+    console.log(`✅ Backfill perdimento concluído: ${perdidosSemClassificacao.length} lead(s) classificado(s).`, {
+      ia: classificadosIA,
+      humano: classificadosHumano
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("evento_geral", "low", null, {
+        evento: "backfill_classificacao_perdimento",
+        total: perdidosSemClassificacao.length,
+        classificadosIA: classificadosIA,
+        classificadosHumano: classificadosHumano
+      });
+    }
+  } catch (error) {
+    console.error("❌ Erro no backfill de classificação de perdimento:", error.message);
+  }
+}
+
+/* =========================
+   CRON JOB DE RECONTATOS AGENDADOS
+   Roda a cada 60 segundos, verifica recontatos pendentes e executa.
+========================= */
+
+let scheduledCallbackCronEmExecucao = false;
+
+async function runScheduledCallbackCronTick() {
+  if (scheduledCallbackCronEmExecucao) return;
+  scheduledCallbackCronEmExecucao = true;
+
+  try {
+    await connectMongo();
+
+    const agora = new Date();
+
+    const pendentes = await db.collection("scheduled_callbacks")
+      .find({
+        status: "pendente",
+        scheduledDate: { $lte: agora }
+      })
+      .limit(20)
+      .toArray();
+
+    if (pendentes.length === 0) return;
+
+    console.log(`📅 Cron de recontatos: ${pendentes.length} agendamento(s) pendente(s)`);
+
+    let executados = 0;
+    let cancelados = 0;
+    let erros = 0;
+
+    for (const agendamento of pendentes) {
+      try {
+        const sucesso = await executeScheduledCallback(agendamento);
+        if (sucesso) {
+          executados++;
+        } else {
+          cancelados++;
+        }
+      } catch (error) {
+        erros++;
+        console.error("Erro ao processar recontato agendado:", {
+          user: agendamento.user,
+          error: error.message
+        });
+      }
+    }
+
+    if (executados > 0 || cancelados > 0 || erros > 0) {
+      console.log("✅ Cron de recontatos concluído:", {
+        executados,
+        cancelados,
+        erros,
+        total: pendentes.length
+      });
+    }
+
+  } catch (error) {
+    console.error("❌ Erro fatal no cron de recontatos:", error.message);
+  } finally {
+    scheduledCallbackCronEmExecucao = false;
+  }
+}
+
+setTimeout(async () => {
+  // Backfill da classificação de perdimento dos leads antigos
+  await backfillClassificacaoPerdimento();
+
+  // Primeiro roda o bootstrap para leads existentes sem follow-up
+  await bootstrapFollowupsParaLeadsExistentes();
+  console.log("🚀 Iniciando cron de follow-ups (intervalo: 60s)");
+
+console.log("📅 Iniciando cron de recontatos agendados (intervalo: 60s)");
+  runScheduledCallbackCronTick().catch(error => {
+    console.error("Erro no primeiro tick do cron de recontatos:", error.message);
   });
+   
+  runFollowupCronTick().catch(error => {
+    console.error("Erro no primeiro tick do cron:", error.message);
+  });
+
+  setInterval(() => {
+    runFollowupCronTick().catch(error => {
+      console.error("Erro no tick periódico do cron:", error.message);
+    });
+  }, 60 * 1000);
+
+setInterval(() => {
+    runScheduledCallbackCronTick().catch(error => {
+      console.error("Erro no tick periódico do cron de recontatos:", error.message);
+    });
+  }, 60 * 1000);
+   
+}, 30 * 1000);
+
+/*
+  ===========================================================
+  scheduleLeadFollowups (PERSISTÊNCIA EM BANCO — V2)
+  ===========================================================
+  Refatorado em 13/05/2026.
+
+  Modelo antigo: setTimeout em RAM. Quando Render reiniciava (deploys),
+  todos os timers eram perdidos. Resultado: zero follow-ups disparavam.
+
+  Modelo novo: salva no banco a próxima data de disparo. Um cron job
+  (runFollowupCronTick) varre o banco a cada 60 segundos e dispara o
+  que estiver vencido. Resiliente a reinicializações.
+
+  Campos persistidos no lead:
+    - proximoFollowupEm:  Date — quando o próximo follow-up deve disparar
+    - followupStep:       Number — qual etapa atual (1 a 5)
+    - followupLockEm:     Date — lock que evita disparo duplo
+    - followupVersionDb:  Number — versão de segurança (substitui state.followupVersion)
+*/
+
+/*
+  Configuração dos follow-ups.
+  Mantida idêntica ao modelo anterior pra preservar a lógica de cadência.
+
+  - step 1: 30 minutos depois (qualquer horário)
+  - step 2: 12 horas (só em horário comercial)
+  - step 3: 18 horas (só em horário comercial)
+  - step 4: 24 horas (só em horário comercial)
+  - step 5: 30 horas (só em horário comercial, encerra conversa)
+*/
+const FOLLOWUP_CONFIG = [
+  { step: 1, delayMs: 30 * 60 * 1000,                businessOnly: false, closeAfter: false },
+  { step: 2, delayMs: 12 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 3, delayMs: 18 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 4, delayMs: 24 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
+  { step: 5, delayMs: 30 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: true  }
+];
+
+/*
+  Calcula a próxima data de disparo do follow-up considerando businessOnly.
+
+  - Se businessOnly = false, retorna agora + delayMs.
+  - Se businessOnly = true e for horário comercial, retorna agora + delayMs.
+  - Se businessOnly = true e for fora do comercial, ajusta para o próximo
+    horário comercial após o delay.
+*/
+function computeNextFollowupDate(config) {
+  const base = Date.now() + config.delayMs;
+  const candidateDate = new Date(base);
+
+  if (!config.businessOnly) {
+    return candidateDate;
+  }
+
+  return adjustToBusinessBR(candidateDate);
+}
+
+/*
+  Bug A — ajuste para próximo horário comercial em fuso BR.
+
+  Por que esta função existe:
+  A versão anterior usava date.getHours()/getDay()/setHours()/setDate() direto,
+  que operam no timezone do servidor. Em Render padrão (UTC), getHours()
+  retorna hora UTC e setHours(8) deixava o horário em "8h UTC = 5h BR" —
+  fora do expediente real.
+
+  Estratégia robusta ao timezone do servidor:
+  - Sempre trabalhamos com timestamp absoluto (ms desde epoch).
+  - Para "ver em BR", criamos um Date virtual com ts + BUSINESS_TIMEZONE_OFFSET
+    em ms e lemos com getUTC* (que ignora o timezone do servidor).
+  - Para "construir um horário BR específico", usamos Date.UTC(...) e
+    subtraímos o offset para obter o timestamp UTC absoluto correspondente.
+
+  Validação mental (cenário Paulo):
+    Step 2 calculado às 13:45 BR (= 16:45 UTC). +12h delay = 04:45 UTC do dia
+    seguinte = 01:45 BR. A função deve devolver 20/05 08:00 BR (= 11:00 UTC).
+
+    ts = 20/05 04:45 UTC
+    brVista = new Date(ts + offsetMs) → getUTCHours()=1
+    dow=3 (quarta), isBusinessDay=true, hour=1 < 8 → setar startHour no mesmo dia BR
+    targetBr = Date.UTC(2026, 4, 20, 8, 0) - offsetMs = 20/05 11:00 UTC = 20/05 08:00 BR ✓
+*/
+function adjustToBusinessBR(date) {
+  const offsetMs = BUSINESS_TIMEZONE_OFFSET * 60 * 60 * 1000;
+  const startHour = typeof BUSINESS_START_HOUR === "number" ? BUSINESS_START_HOUR : 8;
+  const endHour = typeof BUSINESS_END_HOUR === "number" ? BUSINESS_END_HOUR : 18;
+
+  let ts = date.getTime();
+  let safety = 0;
+
+  while (safety < 14) {
+    // "Vista BR": Date virtual cujo getUTC* retorna a hora/dia em BR.
+    const brVista = new Date(ts + offsetMs);
+    const dow = brVista.getUTCDay();
+    const hour = brVista.getUTCHours();
+    const isBusinessDay = dow >= 1 && dow <= 5;
+    const isBusinessHour = hour >= startHour && hour < endHour;
+
+    if (isBusinessDay && isBusinessHour) {
+      return new Date(ts);
+    }
+
+    if (isBusinessDay && hour < startHour) {
+      // Mesmo dia BR, antes do expediente — set hora BR para startHour.
+      const targetBrTs = Date.UTC(
+        brVista.getUTCFullYear(),
+        brVista.getUTCMonth(),
+        brVista.getUTCDate(),
+        startHour, 0, 0, 0
+      ) - offsetMs;
+      ts = targetBrTs;
+      continue;
+    }
+
+    // Fim de semana ou já passou do expediente — pula pro próximo dia BR às startHour.
+    const nextDayBrTs = Date.UTC(
+      brVista.getUTCFullYear(),
+      brVista.getUTCMonth(),
+      brVista.getUTCDate() + 1,
+      startHour, 0, 0, 0
+    ) - offsetMs;
+    ts = nextDayBrTs;
+    safety++;
+  }
+
+  return new Date(ts);
+}
+
+/*
+  Agenda o PRÓXIMO follow-up de um lead, salvando no banco.
+
+  Chamado depois da SDR responder o lead. Não usa setTimeout —
+  só persiste no Mongo. O cron faz o disparo no tempo certo.
+
+  Idempotente: pode ser chamado várias vezes seguidas; sempre
+  reagenda o step 1 com 30 minutos a partir de agora.
+*/
+async function scheduleLeadFollowups(from) {
+  if (!from) return;
+
+  try {
+    const lead = await loadLeadProfile(from);
+
+    /*
+      Não agenda se o lead já está em estado terminal ou em estado
+      protegido (humano, CRM, perdido, etc).
+    */
+    if (shouldStopBotByLifecycle(lead) || isLeadInProtectedFollowupState(lead)) {
+      // Limpa qualquer follow-up pendente desse lead.
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null
+      });
+
+      console.log("🔕 Follow-up não agendado: lead em estado protegido/finalizado.", {
+        user: from,
+        status: lead?.status || "-",
+        faseFunil: lead?.faseFunil || "-"
+      });
+
+      return;
+    }
+
+    /*
+      Esta função é chamada depois que a SDR responde o lead.
+      Há dois cenários distintos:
+
+      CENÁRIO A — O lead já estava numa cadência (followupStep >= 1)
+      e respondeu. Significa que o follow-up funcionou: o lead voltou
+      a conversar. A cadência deve ser CANCELADA, não resetada.
+      O fluxo normal de conversa assume. Se o lead ficar inativo de
+      novo, uma nova cadência será agendada do zero.
+
+      CENÁRIO B — O lead está em conversa ativa normal, sem cadência
+      pendente (followupStep = 0 ou sem proximoFollowupEm). Aqui sim
+      agendamos o step 1, porque a cadência ainda não existe — é só
+      a rede de segurança caso o lead pare de responder.
+
+      Isso elimina o bug de regressão de step ([1,2,1]) que acontecia
+      quando o lead respondia a mensagem de cadência e o sistema
+      resetava o contador para 1.
+    */
+    const stepAtual = Number(lead?.followupStep || 0);
+    const temCadenciaPendente =
+      stepAtual >= 1 && lead?.proximoFollowupEm != null;
+
+    const novaVersao = Number(lead?.followupVersionDb || 0) + 1;
+
+    // CENÁRIO A — lead respondeu durante uma cadência ativa: CANCELA
+    if (temCadenciaPendente) {
+      await saveLeadProfile(from, {
+        proximoFollowupEm: null,
+        followupStep: 0,
+        followupLockEm: null,
+        followupVersionDb: novaVersao,
+        followupCanceladoEm: new Date(),
+        followupCanceladoMotivo: "lead_respondeu_durante_cadencia"
+      });
+
+      console.log("✅ Cadência cancelada: lead respondeu e voltou a conversar.", {
+        user: from,
+        stepQueEstava: stepAtual,
+        versao: novaVersao
+      });
+
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("ciclo_followup", "low", from, {
+          evento: "cadencia_cancelada",
+          motivo: "lead_respondeu_durante_cadencia",
+          stepQueEstava: stepAtual
+        });
+      }
+
+      return;
+    }
+
+    // CENÁRIO B — sem cadência pendente: agenda o step 1 como rede de segurança.
+    //
+    // Bug B — step 1 tem businessOnly=false (responde rápido enquanto lead está
+    // quente), o que faz sentido SÓ dentro do expediente. Se a SDR respondeu
+    // fora do expediente (ex: lead que mandou msg às 22h e o sistema atendeu),
+    // o +30min agendaria pra 22:30 BR — disparo fora de hora. Aqui tratamos
+    // o caso: se já estamos fora do expediente, reagenda como businessOnly
+    // pra cair na próxima abertura comercial.
+    const firstStep = FOLLOWUP_CONFIG[0];
+    const nextDate = isBusinessTime()
+      ? computeNextFollowupDate(firstStep)
+      : computeNextFollowupDate({ ...firstStep, businessOnly: true });
+
+    await saveLeadProfile(from, {
+      proximoFollowupEm: nextDate,
+      followupStep: 1,
+      followupLockEm: null,
+      followupVersionDb: novaVersao,
+      followupAgendadoEm: new Date()
+    });
+
+    console.log("⏱️ Follow-up step 1 agendado (rede de segurança):", {
+      user: from,
+      proximoFollowupEm: nextDate.toISOString(),
+      versao: novaVersao
+    });
+     
+  } catch (error) {
+    console.error("Erro ao agendar follow-up no banco:", {
+      user: from,
+      error: error.message
+    });
+  }
 }
 
 app.get("/webhook", (req, res) => {
@@ -19700,6 +23148,29 @@ console.log("🔕 Follow-ups antigos cancelados por nova mensagem do lead:", {
   ultimaMensagemLeadPreview: mensagemPreviewAntesTexto,
   novaFollowupVersion: getState(from).followupVersion
 });
+
+     // 📅 Cancelar recontatos agendados se o lead voltou a conversar
+(async () => {
+  try {
+    const cancelResult = await db.collection("scheduled_callbacks").updateMany(
+      { user: from, status: "pendente" },
+      { $set: { status: "cancelado", cancelledAt: new Date(), motivoCancelamento: "lead_mandou_mensagem" } }
+    );
+    if (cancelResult.modifiedCount > 0) {
+      console.log("📅 Recontato(s) agendado(s) cancelado(s) — lead voltou a conversar:", {
+        user: from,
+        cancelados: cancelResult.modifiedCount
+      });
+      await saveLeadProfile(from, {
+        cadenciaPausadaPorCliente: false,
+        cadenciaReativadaEm: new Date(),
+        agendamentoRecontato: null
+      });
+    }
+  } catch (cancelError) {
+    console.error("Erro ao cancelar recontatos agendados:", { user: from, error: cancelError.message });
+  }
+})();
 
 const leadJaEstaPosCrm = isPostCrmLead(leadBeforeProcessing || {});
 
@@ -19824,6 +23295,41 @@ if (isLikelyAutoReplyMessage(text)) {
 
   return;
 }
+
+// 📅 DETECÇÃO DE SOLICITAÇÃO DE PRAZO/HORÁRIO
+// Se o lead pediu para ser contactado depois, pausa cadência e agenda recontato.
+// Roda ANTES do buffer porque a intenção de agendamento precisa ser tratada imediatamente.
+{
+  const scheduleDetection = detectScheduleRequest(text || message.text?.body || "");
+
+  if (scheduleDetection.detected) {
+    console.log("📅 Solicitação de prazo/horário detectada:", {
+      user: from,
+      periodo: scheduleDetection.periodo,
+      horario: scheduleDetection.horario,
+      motivacao: scheduleDetection.motivacao,
+      texto: (text || message.text?.body || "").slice(0, 100)
+    });
+
+    const leadParaAgendamento = await loadLeadProfile(from);
+
+    if (leadParaAgendamento) {
+      const resultado = await scheduleClientCallback(from, leadParaAgendamento, scheduleDetection);
+
+      if (resultado.success) {
+        console.log("✅ Recontato agendado. Webhook encerrado (não processa como mensagem normal):", {
+          user: from,
+          scheduledDate: resultado.scheduledDate?.toISOString?.() || ""
+        });
+
+        markMessageIdsAsProcessed([messageId].filter(Boolean));
+        return;
+      }
+    }
+
+    console.log("⚠️ Falha ao agendar recontato. Seguindo fluxo normal.", { user: from });
+  }
+}
      
 // 🔥 AGORA TEXTO E ÁUDIO PASSAM PELO MESMO BUFFER
 // Isso evita respostas duplicadas quando o lead manda várias mensagens ou vários áudios seguidos.
@@ -19903,6 +23409,74 @@ if (noMeansNoDoubt) {
 let backendStrategicGuidance = [];
 let dataFlowQuestionAlreadyGuided = false;
 
+// ANTI-REPETIÇÃO: usa o ESTADO PERSISTENTE do lead (etapas concluídas)
+  // como fonte principal — não esquece, mesmo em conversas longas.
+  // Combina com a varredura das últimas respostas para cobrir os dois casos.
+  {
+    const etapasLead = currentLead?.etapas || {};
+    const temasJaAbordados = [];
+
+    // Fonte 1: etapas registradas no estado do lead (permanente)
+    if (etapasLead.programa === true) {
+      temasJaAbordados.push("explicação do programa");
+    }
+    if (etapasLead.beneficios === true) {
+      temasJaAbordados.push("benefícios e suporte");
+    }
+    if (etapasLead.estoque === true) {
+      temasJaAbordados.push("estoque em comodato");
+    }
+    if (etapasLead.responsabilidades === true) {
+      temasJaAbordados.push("responsabilidades");
+    }
+    if (etapasLead.investimento === true || etapasLead.taxaPerguntada === true) {
+      temasJaAbordados.push("taxa/investimento R$ 1.990");
+    }
+
+    // Fonte 2: varredura das últimas 5 respostas (cobre temas sem etapa formal)
+    const ultimasRespostasSdr = (Array.isArray(history) ? history : [])
+      .filter(m => m.role === "assistant")
+      .slice(-5)
+      .map(m => m.content || "");
+    const textoUltimasRespostas = ultimasRespostasSdr.join(" ").toLowerCase();
+
+    if (/afiliado|divulgar por link|minhaiqg\.com/i.test(textoUltimasRespostas) &&
+        !temasJaAbordados.includes("programa de afiliados")) {
+      temasJaAbordados.push("programa de afiliados");
+    }
+
+    if (temasJaAbordados.length > 0) {
+      // Identifica qual é o próximo tema pendente, na ordem do funil
+      const ordemFunil = [
+        { etapa: "programa", label: "explicação do programa" },
+        { etapa: "beneficios", label: "benefícios e suporte" },
+        { etapa: "estoque", label: "estoque em comodato" },
+        { etapa: "responsabilidades", label: "responsabilidades" },
+        { etapa: "investimento", label: "taxa/investimento R$ 1.990" }
+      ];
+      const proximoTemaPendente = ordemFunil.find(
+        item => etapasLead[item.etapa] !== true
+      );
+
+      const orientacaoProximo = proximoTemaPendente
+        ? `O PRÓXIMO tema a abordar é: ${proximoTemaPendente.label}. Conduza para ele.`
+        : "Todas as etapas foram concluídas. Conduza para a coleta de dados (se a taxa foi aceita) ou aguarde a decisão do lead sobre o investimento.";
+
+      backendStrategicGuidance.push({
+        tipo: "anti_repeticao",
+        prioridade: "alta",
+        motivo: "Evitar repetição de conteúdo já explicado (baseado no estado do lead).",
+        orientacaoParaPreSdr: [
+          "ATENÇÃO — ANTI-REPETIÇÃO (CRÍTICO):",
+          `Os seguintes temas JÁ FORAM explicados a este lead e NÃO devem ser repetidos: ${temasJaAbordados.join(", ")}.`,
+          "Mesmo que o lead tenha ficado horas sem responder, esses temas continuam explicados.",
+          "Se o lead confirmar com 'Sim', 'Ok', 'Entendi', 'vamos', a SDR deve AVANÇAR — nunca repetir.",
+          orientacaoProximo,
+          "Mensagens curtas e diretas. Não reexplique o que o lead já ouviu."
+        ].join("\n")
+      });
+    }
+  }     
      const homologadoIndicationBenefitGuidance =
   buildHomologadoIndicationBenefitGuidance({
     lead: currentLead || {},
@@ -20117,6 +23691,97 @@ const podeTratarCorrecaoDadosAgora =
 const explicitCorrection = podeTratarCorrecaoDadosAgora
   ? extractExplicitCorrection(text)
   : {};
+
+/*
+  RECUPERAÇÃO AUTOMÁTICA DE DADOS DO HISTÓRICO.
+  Antes de tentar coletar/pedir dados, verifica: o lead está em coleta,
+  com campos obrigatórios vazios, mas já tem histórico de conversa?
+  Se sim, varre o histórico com o GPT para ver se os dados já foram
+  informados e confirmados antes. Se foram, preenche o perfil — assim
+  o sistema não pede de novo algo que o lead já passou.
+  Roda no máximo uma vez por lead (flag dadosRecuperadosDoHistorico).
+*/
+{
+  const fasesColetaParaRecuperacao = [
+    "coletando_dados", "dados_parciais", "aguardando_dados",
+    "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+    "corrigir_dado", "qualificando"
+  ];
+
+  const leadEmColetaParaRecuperacao =
+    fasesColetaParaRecuperacao.includes(currentLead?.faseQualificacao) ||
+    fasesColetaParaRecuperacao.includes(currentLead?.status) ||
+    currentLead?.faseFunil === "coleta_dados";
+
+  const camposObrigatoriosVazios = ["nome", "cpf", "telefone", "cidade", "estado"]
+    .filter(campo => !String(currentLead?.[campo] || "").trim());
+
+  const temHistoricoSuficiente = Array.isArray(history) && history.length >= 4;
+
+  const jaTentouRecuperar = currentLead?.dadosRecuperadosDoHistorico === true;
+
+  if (
+    leadEmColetaParaRecuperacao &&
+    camposObrigatoriosVazios.length > 0 &&
+    temHistoricoSuficiente &&
+    !jaTentouRecuperar
+  ) {
+    console.log("🔎 Verificando histórico para recuperar dados cadastrais já confirmados:", {
+      user: from,
+      camposVazios: camposObrigatoriosVazios,
+      tamanhoHistorico: history.length
+    });
+
+    const dadosDoHistorico = await recuperarDadosCadastraisDoHistorico({
+      history,
+      lead: currentLead || {}
+    });
+
+    if (dadosDoHistorico.encontrou) {
+      // Monta só os campos que estavam vazios E foram encontrados no histórico
+      const camposParaPreencher = {};
+      for (const campo of ["nome", "cpf", "telefone", "cidade", "estado"]) {
+        const valorAtual = String(currentLead?.[campo] || "").trim();
+        const valorHistorico = String(dadosDoHistorico[campo] || "").trim();
+        if (!valorAtual && valorHistorico) {
+          camposParaPreencher[campo] = valorHistorico;
+        }
+      }
+
+      if (Object.keys(camposParaPreencher).length > 0) {
+        await saveLeadProfile(from, {
+          ...camposParaPreencher,
+          dadosRecuperadosDoHistorico: true,
+          dadosRecuperadosDoHistoricoEm: new Date()
+        });
+        currentLead = await loadLeadProfile(from);
+
+        console.log("✅ Dados recuperados do histórico e preenchidos no perfil:", {
+          user: from,
+          camposPreenchidos: Object.keys(camposParaPreencher)
+        });
+
+        if (typeof auditSystemEvent === "function") {
+          await auditSystemEvent("decisao_backend", "medium", from, {
+            evento: "dados_recuperados_do_historico",
+            camposPreenchidos: Object.keys(camposParaPreencher)
+          });
+        }
+      } else {
+        // Encontrou no histórico mas o perfil já tinha tudo — só marca para não repetir
+        await saveLeadProfile(from, { dadosRecuperadosDoHistorico: true });
+        currentLead = await loadLeadProfile(from);
+      }
+    } else {
+      // Não achou nada no histórico — marca para não ficar varrendo a cada mensagem
+      await saveLeadProfile(from, { dadosRecuperadosDoHistorico: true });
+      currentLead = await loadLeadProfile(from);
+      console.log("🔎 Histórico verificado — nenhum dado cadastral confirmado encontrado:", {
+        user: from
+      });
+    }
+  }
+}
      
 const fasesQuePermitemExtracao = [
   "coletando_dados",
@@ -20686,7 +24351,8 @@ if (
   podeExtrairDadosPessoais &&
   pendingFields.length > 0 &&
   !currentLead?.aguardandoConfirmacaoCampo &&
-  !isOnlyConfirmationText
+  !isOnlyConfirmationText &&
+  !dataFlowQuestionAlreadyGuided
 ) {
    
   const field = pendingFields[0];
@@ -21286,17 +24952,73 @@ if (
 
 let semanticIntent = null;
 
-if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
-  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (sem interrupção comercial):", {
+// Mesmo durante coleta, verificar hostilidade explícita no texto
+// para não continuar coletando dados de um lead que quer parar
+if (estaEmColetaOuConfirmacao && isLeadHostileOrRequestingStop(text, null)) {
+  const motivoAutoPerda = detectAutoLossReason(text, currentLead, null);
+  if (motivoAutoPerda) {
+    const nome = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+    const prefixo = nome ? `${nome}, ` : "";
+    const jaRecebeuAfiliado = currentLead?.afiliadoInstrucoesEnviadas === true || currentLead?.rotaComercial === "afiliado";
+    const mensagemFinal = jaRecebeuAfiliado
+      ? `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe mudar de ideia, o cadastro de Afiliado continua disponível em:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`
+      : `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe no futuro quiser uma alternativa mais simples, sem estoque e sem taxa, existe o Programa de Afiliados IQG.\n\nO cadastro é por aqui:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+
+    await sendWhatsAppMessage(from, mensagemFinal);
+    await saveLeadProfile(from, {
+      status: "perdido", faseQualificacao: "perdido", statusOperacional: "perdido_auto",
+      motivoPerda: motivoAutoPerda, mensagemQueGeroupPerda: text, perdidoEm: new Date(),
+      encerradoPor: "ia", origemEncerramento: "ia_auto_perda",
+      proximoFollowupEm: null, followupStep: 0, followupLockEm: null
+    });
+    const state = getState(from);
+    state.closed = true;
+    clearTimers(from);
+    console.log("🚫 Lead marcado como PERDIDO durante coleta:", { user: from, motivo: motivoAutoPerda });
+await auditSystemEvent("auto_perda", "medium", from, {
+      motivo: motivoAutoPerda,
+      contexto: "durante_coleta_dados",
+      mensagemLead: String(text || "").slice(0, 300)
+    });
+     
+    if (messageId) { markMessageAsProcessed(messageId); }
+    return res.sendStatus(200);
+  }
+}
+     
+/*
+  Antes de pular os GPTs na coleta, verifica se a mensagem do lead
+  realmente parece um dado cadastral. Se ela parece um pedido de
+  humano, uma pergunta ou uma reclamação, os GPTs DEVEM rodar —
+  senão o lead fica preso na coleta sem conseguir ser ouvido.
+*/
+const textoColeta = String(text || "").toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+// Mensagem parece pedido de humano / interrupção (não é dado cadastral)
+const pareceInterrupcaoNaColeta =
+  /\b(atendente|humano|pessoa|consultor|vendedor|representante|alguem|gerente|supervisor)\b/.test(textoColeta) ||
+  /\b(ja.*(passei|enviei|mandei|forneci|dei).*(dado|cadastro|cpf|nome))\b/.test(textoColeta) ||
+  /\b(voce.*ja.*tem|vcs.*ja.*tem|ja.*tenho.*cadastro|ja.*fiz.*cadastro|ja.*sou.*cadastrado)\b/.test(textoColeta) ||
+  /\b(nao.*quero|nao.*vou|para.*com|cancela|desisto|reclam)\b/.test(textoColeta) ||
+  /\?\s*$/.test(String(text || "").trim());
+
+const devePularGptsNaColeta =
+  estaEmColetaOuConfirmacao &&
+  !dataFlowQuestionAlreadyGuided &&
+  !pareceInterrupcaoNaColeta;
+
+if (devePularGptsNaColeta) {
+  console.log("🧠 Classificador semântico ignorado durante coleta/confirmação (mensagem tratada como dado cadastral):", {
     user: from,
     ultimaMensagemLead: text,
     statusAtual: currentLead?.status || "-",
     faseAtual: currentLead?.faseQualificacao || "-",
-    faseFunilAtual: currentLead?.faseFunil || "-",
-    motivo: "mensagem tratada como dado cadastral, não como intenção comercial"
+    faseFunilAtual: currentLead?.faseFunil || "-"
   });
 } else {
-  const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
+   
+   const lastSdrTextForClassifiers = [...history].reverse().find(m => m.role === "assistant")?.content || "";
 
   const [classifierResult, continuityResult] = await Promise.all([
     runLeadSemanticIntentClassifier({
@@ -21310,12 +25032,161 @@ if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
       lead: currentLead || {},
       history,
       lastUserText: text,
-      lastSdrText: lastSdrTextForClassifiers
+      lastSdrText: lastSdrTextForClassifiers,
+      traceId: auditTraceId
     })
   ]);
 
-  semanticIntent = classifierResult;
+ semanticIntent = classifierResult;
   var earlySemanticContinuity = continuityResult;
+
+  /*
+    Bug 6 — Detecção de mensagem truncada (combina heurística + classificador).
+    Quando flag dispara, força confidence=baixa, injeta intentOverride e
+    empilha orientação crítica para o Pré-SDR pedir esclarecimento em vez
+    de inferir o tema que faltou.
+  */
+  const truncamentoHeuristica = detectMessageTruncation(text);
+  const truncamentoClassifier = semanticIntent?.mensagemParecesTruncada === true;
+  const mensagemTruncada = truncamentoHeuristica.truncated || truncamentoClassifier;
+
+  if (mensagemTruncada) {
+    const origemTruncamento =
+      truncamentoHeuristica.truncated && truncamentoClassifier ? "both"
+      : truncamentoHeuristica.truncated ? "heuristic"
+      : "classifier";
+
+    semanticIntent = {
+      ...semanticIntent,
+      confidence: "baixa",
+      intentOverride: "pedir_esclarecimento_truncamento"
+    };
+
+    backendStrategicGuidance.unshift({
+      tipo: "mensagem_truncada",
+      prioridade: "critica",
+      origem: origemTruncamento,
+      motivoHeuristica: truncamentoHeuristica.motivo || null,
+      orientacao:
+        "Lead enviou mensagem possivelmente truncada/cortada. " +
+        "Peça esclarecimento gentil e curto, sem soar bot. " +
+        "NÃO inferir tema do que faltou. " +
+        "Tom sugerido: \"Hmm, parece que sua mensagem cortou no final — pode completar pra eu te entender direito? 😊\""
+    });
+
+    console.log("✂️ Mensagem do lead detectada como truncada:", {
+      user: from,
+      origem: origemTruncamento,
+      motivoHeuristica: truncamentoHeuristica.motivo || null,
+      mensagemPreview: String(text || "").slice(0, 100)
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("truncamento_detectado", "medium", from, {
+        origem: origemTruncamento,
+        motivoHeuristica: truncamentoHeuristica.motivo || null,
+        mensagemPreview: String(text || "").slice(0, 100)
+      });
+    }
+  }
+
+  /*
+    Bug 8 — Detecção de lead lojista/revendedor/representante (combina
+    heurística determinística + classificador semântico).
+
+    Quando qualquer dos dois sinais dispara, abortamos o flow comercial
+    do composer (que mandaria paredão de Parceiro Homologado) e enviamos
+    diretamente uma mensagem de handoff humano + marcamos Janela 2.
+    Esse caminho comercial é diferente do Parceiro Homologado e exige
+    equipe humana da IQG.
+
+    Padrão de early return cirúrgico, similar a isHumanAssumedLead
+    (linha 23085) mas com mensagem de handoff enviada ao lead.
+  */
+  const revendedorHeuristica = detectRevendedorOuLojistaPretendido(text);
+  const revendedorClassifier = semanticIntent?.leadDeclareSerRevendedorOuLojista === true;
+  const leadEhRevendedor = revendedorHeuristica.detected;
+
+  // FIX Bug 21: classifier sozinho (sem corroboração heurística) tem
+  // alta taxa de falso positivo. Loga como suspeita pra análise futura
+  // sem disparar handoff. Não retorna — segue fluxo normal SDR.
+  if (revendedorClassifier && !revendedorHeuristica.detected) {
+    try {
+      await auditSystemEvent(
+        "revendedor_classifier_descartado",
+        "low",
+        from,
+        {
+          textoAnalisado: String(text).slice(0, 300),
+          heuristicaCheckedPatterns: REVENDEDOR_LOJISTA_PATTERNS.length,
+          faseQualificacao: currentLead?.faseQualificacao || "desconhecida"
+        }
+      );
+    } catch (auditError) {
+      console.error("Erro ao registrar revendedor_classifier_descartado (ignorado):", auditError.message);
+    }
+  }
+
+  if (leadEhRevendedor) {
+    const origemRevendedor =
+      revendedorHeuristica.detected && revendedorClassifier ? "both"
+      : revendedorHeuristica.detected ? "heuristic"
+      : "classifier";
+
+    const mensagemHandoff = "Posso te ajudar com isso — esse caminho é diferente do Programa Parceiro Homologado e exige conversar direto com alguém da equipe comercial da IQG. Vou passar tua conversa pra um consultor humano continuar daqui.";
+
+    try {
+      await sendWhatsAppMessage(from, mensagemHandoff);
+    } catch (sendError) {
+      console.error("Erro ao enviar handoff revendedor/lojista no WhatsApp:", sendError.message);
+    }
+
+    // Salva resposta no histórico para continuidade
+    // FIX Bug 20-A: garantir que a mensagem do lead fique no histórico
+    // mesmo quando o handoff faz early-return.
+    history.push({
+      role: "user",
+      content: text,
+      createdAt: new Date(),
+      origem: "lead"
+    });
+    history.push({
+      role: "assistant",
+      content: mensagemHandoff,
+      createdAt: new Date(),
+      origem: "handoff_revendedor_lojista"
+    });
+    try {
+      await saveConversation(from, history);
+    } catch (saveErr) {
+      console.error("Erro ao salvar histórico do handoff revendedor (ignorado):", saveErr.message);
+    }
+
+    // Marca Janela 2 + audit estruturado
+    try {
+      await flagLeadAsRevendedorLojista(from, {
+        origem: origemRevendedor,
+        motivoHeuristica: revendedorHeuristica.motivo || null,
+        trechoMatch: revendedorHeuristica.trecho || null
+      });
+    } catch (flagErr) {
+      console.error("Erro ao marcar lead como revendedor (ignorado):", flagErr.message);
+    }
+
+    // Marca mensagens como processadas
+    if (Array.isArray(bufferedMessageIds) && bufferedMessageIds.length > 0) {
+      markMessageIdsAsProcessed(bufferedMessageIds);
+    }
+
+    console.log("🏪 Lead detectado como revendedor/lojista — handoff aplicado, abortando flow comercial:", {
+      user: from,
+      origem: origemRevendedor,
+      motivoHeuristica: revendedorHeuristica.motivo || null,
+      trechoMatch: revendedorHeuristica.trecho || null
+    });
+
+    return;
+  }
 
   console.log("🧠 Intenção semântica observada:", {
     user: from,
@@ -21326,7 +25197,175 @@ if (estaEmColetaOuConfirmacao && !dataFlowQuestionAlreadyGuided) {
     etapas: currentLead?.etapas || {},
     semanticIntent
   });
+
+  /*
+    Se o classificador semântico detectou que o lead pediu para falar
+    com um humano, persiste isso no lead para que a Janela 2 do
+    dashboard (Humano precisa assumir) consiga enxergar este lead.
+    O sistema detectava mas não gravava — a Janela 2 ficava cega.
+  */
+  if (semanticIntent?.humanRequest === true) {
+    await saveLeadProfile(from, {
+      leadPediuHumano: true,
+      solicitouAtendimentoHumano: true,
+      necessitaAtencaoHumanaDashboard: true,
+      motivoAtencaoHumanaDashboard: "Lead pediu para falar com um atendente humano.",
+      prioridadeAtencaoHumanaDashboard: "alta",
+      atencaoHumanaDashboardEm: new Date()
+    });
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🙋 Lead pediu atendimento humano — marcado para a Janela 2 do dashboard:", {
+      user: from,
+      mensagem: text
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("decisao_backend", "medium", from, {
+        evento: "lead_pediu_humano",
+        mensagemLead: String(text || "").slice(0, 300)
+      });
+    }
+  }
+/*
+    DETECÇÃO SEMÂNTICA DE AGENDAMENTO.
+    Se o classificador detectou que o lead quer conversar depois,
+    adiar, agendar, remarcar ou alterar horário, o backend cria
+    o recontato de verdade no banco (scheduled_callbacks) e o cron
+    de recontatos vai chamar o lead no horário combinado.
+    Substitui a antiga detecção por regex, que falhava com frases novas.
+  */
+  if (semanticIntent?.schedulingRequest === true) {
+    try {
+      // Extrai data/hora da mensagem reusando as funções já existentes
+      const normalizedScheduleText = String(text || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+
+      // Data calculada pelo classificador GPT (formato AAAA-MM-DD e HH:MM).
+      // Se o GPT devolveu uma data válida e futura, usamos ela diretamente.
+      // Caso contrário, caímos no cálculo antigo por extração de texto.
+      let dataAgendamentoFinal = null;
+
+      const gptDate = String(semanticIntent?.schedulingDate || "").trim();
+      const gptTime = String(semanticIntent?.schedulingTime || "").trim();
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(gptDate)) {
+        const horaValida = /^\d{1,2}:\d{2}$/.test(gptTime) ? gptTime : "09:00";
+        const [anoG, mesG, diaG] = gptDate.split("-").map(Number);
+        const [horaG, minG] = horaValida.split(":").map(Number);
+
+        const dataCandidata = new Date(anoG, mesG - 1, diaG, horaG, minG, 0, 0);
+        const agoraValidacao = new Date(
+          new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+        );
+
+        // Só aceita se for uma data válida e no futuro
+        if (!isNaN(dataCandidata.getTime()) && dataCandidata.getTime() > agoraValidacao.getTime()) {
+          dataAgendamentoFinal = dataCandidata;
+          console.log("📅 Data de agendamento usada do classificador GPT:", {
+            user: from,
+            schedulingDate: gptDate,
+            schedulingTime: horaValida,
+            dataFinal: dataCandidata.toISOString()
+          });
+        } else {
+          console.log("⚠️ Data do GPT inválida ou no passado. Usando fallback de extração:", {
+            user: from,
+            schedulingDate: gptDate,
+            schedulingTime: gptTime
+          });
+        }
+      }
+
+      const scheduleDetectionSemantica = {
+        detected: true,
+        periodo: extractRequestedPeriod(normalizedScheduleText),
+        horario: extractRequestedTime(normalizedScheduleText),
+        motivacao: extractMotivation(normalizedScheduleText),
+        scheduledDateOverride: dataAgendamentoFinal,
+        patternMatched: "deteccao_semantica_classificador",
+        originalText: String(text || "").slice(0, 200),
+        detectedAt: new Date()
+      };
+
+      console.log("📅 Solicitação de agendamento detectada (semântica):", {
+        user: from,
+        periodo: scheduleDetectionSemantica.periodo,
+        horario: scheduleDetectionSemantica.horario,
+        motivacao: scheduleDetectionSemantica.motivacao,
+        texto: String(text || "").slice(0, 100)
+      });
+
+      const leadParaAgendamentoSemantico = await loadLeadProfile(from);
+
+      if (leadParaAgendamentoSemantico) {
+        // Cancela qualquer recontato pendente anterior (lead pode estar remarcando)
+        await db.collection("scheduled_callbacks").updateMany(
+          { user: from, status: "pendente" },
+          {
+            $set: {
+              status: "cancelado",
+              cancelledAt: new Date(),
+              motivoCancelamento: "lead_remarcou"
+            }
+          }
+        );
+
+        const resultadoAgendamentoSemantico = await scheduleClientCallback(
+          from,
+          leadParaAgendamentoSemantico,
+          scheduleDetectionSemantica
+        );
+
+       if (resultadoAgendamentoSemantico.success) {
+          console.log("✅ Recontato agendado via detecção semântica:", {
+            user: from,
+            scheduledDate: resultadoAgendamentoSemantico.scheduledDate?.toISOString?.() || ""
+          });
+
+          /*
+            ORIENTAÇÃO DECISIVA DE AGENDAMENTO.
+            Quando o lead pede para agendar/conversar depois, várias outras
+            orientações do backend (Política do Turno, coleta liberada, etc)
+            podem mandar "iniciar coleta agora". Isso gera contradição e a SDR
+            improvisa. Esta orientação entra como prioridade máxima e diz
+            explicitamente ao Pré-SDR que a coleta fica suspensa neste turno.
+          */
+          backendStrategicGuidance.unshift({
+            tipo: "agendamento_decisivo",
+            prioridade: "critica",
+            motivo: "Lead pediu para conversar/ser contatado em outro momento. O recontato já foi agendado pelo backend.",
+            orientacaoParaPreSdr: [
+              "PRIORIDADE ABSOLUTA DESTE TURNO — O LEAD PEDIU PARA AGENDAR.",
+              "O recontato JÁ foi agendado pelo sistema. A única tarefa da SDR agora é confirmar o agendamento.",
+              "NÃO iniciar coleta de dados. NÃO pedir nome, CPF, telefone, cidade ou estado.",
+              "NÃO retomar pré-análise. NÃO repetir taxa, benefícios, estoque ou responsabilidades.",
+              "Todas as outras orientações sobre 'iniciar coleta' ou 'pedir dados' ficam SUSPENSAS até o recontato acontecer.",
+              "A resposta deve ser curta, cordial e em português: confirmar que a conversa fica para o horário combinado e se colocar à disposição.",
+              "Exemplo de tom: \"Combinado! Te chamo no horário que combinamos. Qualquer coisa antes disso, é só me chamar. 😊\""
+            ].join("\n")
+          });
+
+          // Sinaliza ao restante do fluxo que a coleta está suspensa neste turno
+          dataFlowQuestionAlreadyGuided = true;
+        } else {
+          console.log("⚠️ Falha ao agendar recontato (semântico). Seguindo fluxo normal.", {
+            user: from
+          });
+        }
+      }
+    } catch (erroAgendamentoSemantico) {
+      console.error("❌ Erro na detecção semântica de agendamento:", {
+        user: from,
+        erro: erroAgendamentoSemantico.message
+      });
+    }
+  }
+   
 }
+     
 const podeConfirmarInteresseRealAgora =
   canAskForRealInterest(currentLead || {}) &&
   canStartDataCollection({
@@ -21808,6 +25847,97 @@ if (
     currentLead = await loadLeadProfile(from);
 }
 
+     // 🚫 AUTO-PERDA: detecta leads que devem ser marcados como perdido
+  // Roda ANTES da recuperação comercial para interceptar casos extremos
+     
+  // Se semanticIntent ainda é null (coleta/confirmação), verificar hostilidade
+  // apenas pelo fallback mínimo da função (pedidos de remoção inequívocos)
+  // O classificador semântico roda depois e cobre os casos semânticos
+  const motivoAutoPerda = detectAutoLossReason(text, currentLead, semanticIntent);
+
+  if (motivoAutoPerda) {
+    const nome = getFirstName(currentLead?.nomeWhatsApp || currentLead?.nome || "");
+    const prefixo = nome ? `${nome}, ` : "";
+
+    const jaRecebeuAfiliado =
+      currentLead?.afiliadoInstrucoesEnviadas === true ||
+      currentLead?.rotaComercial === "afiliado" ||
+      currentLead?.faseQualificacao === "afiliado";
+
+    // Montar mensagem final
+    let mensagemFinal;
+
+    if (motivoAutoPerda === "despedida_apos_afiliado") {
+      // Despedida educada, sem repetir Afiliado (já recebeu)
+      mensagemFinal = `${prefixo}foi um prazer conversar com você! 😊\n\nSe precisar de algo no futuro, é só me chamar por aqui. Sucesso!`;
+    } else if (jaRecebeuAfiliado) {
+      // Já recebeu Afiliado, só despede
+      mensagemFinal = `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe mudar de ideia, o cadastro de Afiliado continua disponível em:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+    } else {
+      // Não recebeu Afiliado ainda — apresentar resumidamente antes de encerrar
+      mensagemFinal = `${prefixo}peço desculpas por qualquer incômodo. 😊\n\nSe no futuro quiser uma alternativa mais simples, sem estoque e sem taxa, existe o Programa de Afiliados IQG. Você divulga por link e ganha comissão sobre as vendas.\n\nO cadastro é por aqui:\nhttps://minhaiqg.com.br/\n\nDesejo sucesso!`;
+    }
+
+    // Enviar mensagem final
+    await sendWhatsAppMessage(from, mensagemFinal);
+
+    // Salvar como perdido
+    await saveLeadProfile(from, {
+      status: "perdido",
+      faseQualificacao: "perdido",
+      statusOperacional: "perdido_auto",
+      motivoPerda: motivoAutoPerda,
+      encerradoPor: "ia", origemEncerramento: "ia_auto_perda",
+      mensagemQueGeroupPerda: text,
+      perdidoEm: new Date(),
+      proximoFollowupEm: null,
+      followupStep: 0,
+      followupLockEm: null
+    });
+
+    // Salvar no histórico
+    await saveAutomaticFollowupToHistory(from, mensagemFinal, {
+      step: "auto_perda",
+      faseFunil: currentLead?.faseFunil || "",
+      faseQualificacao: "perdido"
+    });
+
+    // Limpar timers
+    const state = getState(from);
+    state.closed = true;
+    clearTimers(from);
+
+    console.log("🚫 Lead marcado como PERDIDO automaticamente:", {
+      user: from,
+      motivo: motivoAutoPerda,
+      mensagemLead: text,
+      jaRecebeuAfiliado
+    });
+     
+await auditSystemEvent("auto_perda", "medium", from, {
+      motivo: motivoAutoPerda,
+      mensagemLead: String(text || "").slice(0, 300),
+      jaRecebeuAfiliado: jaRecebeuAfiliado,
+      faseFunil: currentLead?.faseFunil || "-",
+      faseQualificacao: currentLead?.faseQualificacao || "-"
+    });
+     
+    if (messageId) {
+      markMessageAsProcessed(messageId);
+    }
+
+    await recordRequestCompleted({
+      traceId: auditTraceId,
+      userPhone: from,
+      mensagemLead: text,
+      respostaFinal: mensagemFinal,
+      currentLead: { ...(currentLead || {}), status: "perdido" },
+      extras: { tipoSaida: "auto_perda", motivo: motivoAutoPerda }
+    });
+
+    return res.sendStatus(200);
+  }
+
      // 🔥 RECUPERAÇÃO COMERCIAL ANTES DE QUALQUER CADASTRO
 // Se o lead esfriou, rejeitou, achou caro, quis deixar para depois
 // ou tentou encerrar antes do pré-cadastro, o backend não deixa virar perda.
@@ -21987,6 +26117,56 @@ if (
   !awaitingConfirmation &&
   !["enviado_crm", "em_atendimento", "fechado", "perdido"].includes(currentLead?.status)
 ) {
+
+// AUTO-PROMOÇÃO DE FASE: se o lead tem 3+ etapas concluídas no funil
+  // mas faseQualificacao ainda é "morno", promover para "qualificando"
+  // Isso evita que leads engajados fiquem presos em "morno" enquanto
+  // o Pré-SDR repete etapas já concluídas em vez de avançar
+  const etapasDoLead = currentLead?.etapas || {};
+  const etapasConcluidas = [
+    etapasDoLead.programa,
+    etapasDoLead.beneficios,
+    etapasDoLead.estoque,
+    etapasDoLead.responsabilidades
+  ].filter(Boolean).length;
+
+  if (
+    etapasConcluidas >= 3 &&
+    (currentLead?.faseQualificacao === "morno" || currentLead?.status === "morno") &&
+    !currentLead?.aguardandoConfirmacaoCampo &&
+    !currentLead?.aguardandoConfirmacao
+  ) {
+    await saveLeadProfile(from, {
+      faseQualificacao: "qualificando",
+      status: "qualificando"
+    });
+    currentLead = await loadLeadProfile(from);
+
+    console.log("📈 Lead promovido de morno para qualificando por progresso no funil:", {
+      user: from,
+      etapasConcluidas,
+      etapas: etapasDoLead
+    });
+
+     await auditSystemEvent("mudanca_fase", "low", from, {
+      de: "morno",
+      para: "qualificando",
+      motivo: "progresso_no_funil",
+      etapasConcluidas: etapasConcluidas,
+      etapas: etapasDoLead
+    });
+  }
+   
+if (currentLead?.faseQualificacao === "qualificando") {
+    leadStatusSeguro = "qualificando";
+  }
+   
+// Se o lead foi promovido para qualificando, forçar leadStatusSeguro
+  // para que o statusMap abaixo NÃO sobrescreva com "morno"
+  if (currentLead?.faseQualificacao === "qualificando") {
+    leadStatusSeguro = "qualificando";
+  }
+   
     const statusMap = {
     frio: "morno",
     morno: "morno",
@@ -22430,9 +26610,10 @@ if (semanticIntent?.mentionsOtherProductLine === true) {
   lead: currentLead || {},
   history,
   lastUserText: text,
-  lastSdrText: lastAssistantText
+  lastSdrText: lastAssistantText,
+  traceId: auditTraceId
 });
-
+   
 semanticContinuity = enforceSemanticContinuityHardLimits({
   semanticContinuity,
   lead: currentLead || {},
@@ -22561,6 +26742,15 @@ var taxPhaseDecision = classifyTaxPhaseDecision({
   lastUserText: text,
   lastSdrText: lastAssistantText
 });
+
+   if (taxPhaseDecision?.categoria && taxPhaseDecision.categoria !== "FORA_DA_FASE_TAXA") {
+  await auditSystemEvent("decisao_taxa", "low", from, {
+    categoria: taxPhaseDecision.categoria,
+    acao: taxPhaseDecision.acao,
+    motivo: taxPhaseDecision.motivo,
+    mensagemLead: String(text || "").slice(0, 300)
+  });
+}
 
 if (taxPhaseDecision?.acao && taxPhaseDecision.acao !== "NENHUMA_ACAO") {
   backendStrategicGuidance.push({
@@ -22727,6 +26917,45 @@ if (Array.isArray(backendStrategicGuidance)) {
       turnPolicy?.cuidadoPrincipal || ""
     ].filter(Boolean).join("\n"),
     detalhes: turnPolicy
+  });
+}
+
+   // ORIENTAÇÃO DE AVANÇO: quando 4/4 etapas estão concluídas e taxa não foi apresentada,
+// orientar o Pré-SDR a conduzir para o investimento como próximo passo natural
+const etapasAtual = currentLead?.etapas || {};
+const todasEtapasConcluidas =
+  etapasAtual.programa === true &&
+  etapasAtual.beneficios === true &&
+  etapasAtual.estoque === true &&
+  etapasAtual.responsabilidades === true;
+
+const taxaAindaNaoApresentada =
+  etapasAtual.investimento !== true &&
+  etapasAtual.taxaPerguntada !== true &&
+  currentLead?.taxaAlinhada !== true;
+
+if (todasEtapasConcluidas && taxaAindaNaoApresentada) {
+  backendStrategicGuidance.push({
+    tipo: "avancar_para_investimento",
+    prioridade: "critica",
+    motivo: "Todas as 4 etapas do funil foram concluídas. Próximo passo obrigatório: apresentar o investimento.",
+    orientacaoParaPreSdr: [
+      "ATENÇÃO — TODAS AS ETAPAS CONCLUÍDAS:",
+      "O lead já entendeu: programa, benefícios, estoque em comodato e responsabilidades.",
+      "NÃO repetir nenhum desses temas. NÃO perguntar se ficou dúvida sobre estoque ou responsabilidades.",
+      "O ÚNICO próximo passo agora é apresentar o investimento (taxa de adesão R$ 1.990).",
+      "A SDR deve conduzir de forma natural para o tema do investimento.",
+      "Exemplo: 'Agora que você já conhece a estrutura do programa, vou te explicar sobre o investimento para a ativação.'",
+      "Depois de apresentar o valor, explicar que NÃO é compra de mercadoria, NÃO é caução, NÃO é garantia.",
+      "Mencionar que o lote inicial em comodato vale mais de R$ 5.000 em preço de venda.",
+      "Mencionar que pode ser parcelado em até 10x de R$ 199.",
+      "NÃO pedir dados pessoais ainda. Apenas apresentar o investimento e aguardar a reação do lead."
+    ].join("\n")
+  });
+
+  console.log("🎯 Orientação de avanço para investimento adicionada:", {
+    user: from,
+    etapas: etapasAtual
   });
 }
    
@@ -23764,12 +27993,24 @@ const antiRepetition = applyAntiRepetitionGuard({
 });
 
 if (antiRepetition.changed) {
+  const tokensRepetidos = antiRepetition.reason?.repeatedTokens || [];
+  const temaRepetido = antiRepetition.reason?.repeatedSameTheme || null;
+
   sdrReviewFindings.push({
     tipo: "repeticao_de_tema",
     prioridade: "alta",
     reason: antiRepetition.reason,
-    orientacao:
-      "A SDR tentou repetir um tema já explicado. Reescrever sem repetir o textão e conduzir para o próximo passo natural."
+    orientacao: [
+      "A SDR repetiu conteúdo da resposta anterior.",
+      temaRepetido
+        ? `Tema repetido entre a última resposta da SDR e a atual: "${temaRepetido}".`
+        : "",
+      tokensRepetidos.length > 0
+        ? `Tokens/bordões repetidos: ${tokensRepetidos.join(", ")}.`
+        : "",
+      "Reescrever trazendo um ângulo novo do tema, sem repetir os mesmos valores monetários, frases-chave ou explicações já usadas no turno anterior.",
+      "Se já citou R$ 5.000, R$ 1.990, comodato, 10% de comissão vitalícia, margem 40%, suporte+treinamento, taxa de adesão ou pré-análise na resposta passada, NÃO repetir agora — buscar outro argumento ou conduzir para próximo passo natural."
+    ].filter(Boolean).join("\n")
   });
 }
 
@@ -23941,8 +28182,8 @@ if (sdrReviewFindings.length > 0) {
     .filter(([_, v]) => v)
     .map(([k, _]) => k);
 
-  const guardFindingsComDados = [
-    ...sdrReviewFindings,
+  const construirGuardFindingsComDados = (findings) => [
+    ...findings,
     ...(dadosJaPreenchidos.length > 0
       ? [{
           tipo: "dados_ja_recebidos_neste_turno",
@@ -23961,23 +28202,163 @@ if (sdrReviewFindings.length > 0) {
       : [])
   ];
 
-  respostaFinal = await regenerateSdrReplyWithGuardGuidance({
-  currentLead: {
-    ...(currentLead || {}),
-    semanticContinuity: typeof semanticContinuity !== "undefined" ? semanticContinuity : null
-  },
-  history,
-  userText: text,
-  primeiraRespostaSdr,
-  preSdrConsultantAdvice: preSdrConsultantAdvice || {},
-  preSdrConsultantContext,
-  guardFindings: guardFindingsComDados
-});
+  /*
+    Bug 5 — loop de regeneração com revalidação + fallback humano.
+
+    Antes, a regeneração era one-shot: o GPT regenerava UMA vez, e a resposta
+    regenerada seguia direto para sendWhatsAppMessage sem nova validação. Se
+    a regeneração não eliminasse o crítico (ou se introduzisse outro), o lead
+    recebia a violação assim mesmo.
+
+    Agora:
+    - Loop com MAX_REGEN_ATTEMPTS=2 tentativas.
+    - Após cada regeneração, revalidarCriticosEstruturais roda subset dos
+      detectores críticos que dependem da respostaFinal (8 detectores).
+    - Se ainda crítico após N tentativas, fallback duplo:
+      (a) substituir respostaFinal por mensagem segura de handoff;
+      (b) marcar lead na Janela 2 via flagLeadForRegenerationFailureHandoff.
+    - Observabilidade: 4 audit_events distintos (gate_disparado,
+      tentativa_sucesso, tentativa_falha, fallback_humano).
+  */
+  const criticosIniciais = sdrReviewFindings
+    .filter(f => f.prioridade === "critica")
+    .map(f => f.tipo);
+
+  if (typeof auditSystemEvent === "function") {
+    await auditSystemEvent("regeneracao_sdr_gate_disparado", "medium", from, {
+      criticosIniciais,
+      totalFindings: sdrReviewFindings.length
+    });
+  }
+
+  const aplicarAjusteGenero = (texto) => {
+    const genero = currentLead?.generoProvavel || extractedData?.generoProvavel;
+    if (genero === "masculino") {
+      return texto
+        .replace(/\binteressada\b/gi, "interessado")
+        .replace(/\bpronta\b/gi, "pronto")
+        .replace(/\bpreparada\b/gi, "preparado");
+    }
+    if (genero === "feminino") {
+      return texto
+        .replace(/\binteressado\b/gi, "interessada")
+        .replace(/\bpronto\b/gi, "pronta")
+        .replace(/\bpreparado\b/gi, "preparada");
+    }
+    return texto;
+  };
+
+  const MAX_REGEN_ATTEMPTS = 2;
+  let regenAttempts = 0;
+  let findingsParaProximaTentativa = sdrReviewFindings;
+  let criticosRemanescentes = sdrReviewFindings.filter(f => f.prioridade === "critica");
+
+  while (criticosRemanescentes.length > 0 && regenAttempts < MAX_REGEN_ATTEMPTS) {
+    regenAttempts++;
+
+    const respostaAnterior = respostaFinal;
+    const novaResposta = await regenerateSdrReplyWithGuardGuidance({
+      currentLead: {
+        ...(currentLead || {}),
+        semanticContinuity: typeof semanticContinuity !== "undefined" ? semanticContinuity : null
+      },
+      history,
+      userText: text,
+      primeiraRespostaSdr,
+      preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+      preSdrConsultantContext,
+      guardFindings: construirGuardFindingsComDados(findingsParaProximaTentativa)
+    });
+
+    if (!novaResposta || novaResposta === respostaAnterior) {
+      console.error("⚠️ Regeneração falhou silenciosamente:", {
+        user: from,
+        tentativa: regenAttempts,
+        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+      });
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
+          tentativa: regenAttempts,
+          motivo: "regeneracao_silenciosamente_devolveu_resposta_anterior",
+          criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+        });
+      }
+      break;
+    }
+
+    respostaFinal = aplicarAjusteGenero(novaResposta);
+
+    criticosRemanescentes = await revalidarCriticosEstruturais({
+      respostaFinal,
+      currentLead,
+      leadText: text,
+      history,
+      preSdrConsultantAdvice: preSdrConsultantAdvice || {},
+      semanticIntent,
+      commercialRouteDecision,
+      taxPhaseDecision: typeof taxPhaseDecision !== "undefined" ? taxPhaseDecision : null,
+      podeIniciarColeta,
+      coletaLiberadaPorTaxaAceita
+    });
+
+    findingsParaProximaTentativa = criticosRemanescentes;
+
+    if (criticosRemanescentes.length === 0) {
+      console.log("🔁 Regeneração eliminou todos os críticos:", {
+        user: from,
+        tentativa: regenAttempts,
+        criticosResolvidos: criticosIniciais
+      });
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("regeneracao_sdr_tentativa_sucesso", "low", from, {
+          tentativa: regenAttempts,
+          criticosResolvidos: criticosIniciais
+        });
+      }
+      break;
+    }
+
+    console.warn("⚠️ Regeneração resolveu parte mas ainda há críticos:", {
+      user: from,
+      tentativa: regenAttempts,
+      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+    });
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
+        tentativa: regenAttempts,
+        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+      });
+    }
+  }
+
+  // Fallback final: se ainda crítico após MAX_REGEN_ATTEMPTS, mensagem segura + Janela 2.
+  // disciplina_funil é uma melhoria de cadência, não um perigo real ao lead.
+  // Não justifica handoff humano — a última regeneração (mesmo imperfeita) é melhor.
+  // Outros tipos críticos (falsa promessa, pré-análise prematura, etc.) continuam gatilhando handoff.
+  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil");
+
+  if (criticosQueExigemHandoff.length > 0) {
+    respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
+    try {
+      await flagLeadForRegenerationFailureHandoff(from, criticosQueExigemHandoff);
+    } catch (handoffError) {
+      console.error("Erro ao marcar lead para Janela 2 após falha de regeneração (ignorado):", handoffError.message);
+    }
+  } else if (criticosRemanescentes.length > 0) {
+    // Apenas disciplina_funil remanescente — log para observabilidade, sem handoff.
+    try {
+      await auditSystemEvent("regeneracao_sdr_soft_critico_descartado", "low", from, {
+        tiposIgnorados: criticosRemanescentes.map(f => f.tipo)
+      });
+    } catch (_) {}
+  }
 
   console.log("🔁 Resposta final saiu de revisão da SDR antes do envio:", {
     user: from,
     quantidadeProblemasDetectados: sdrReviewFindings.length,
     problemas: sdrReviewFindings.map(item => item.tipo),
+    tentativasDeRegeneracao: regenAttempts,
+    caiuNoFallbackHumano: criticosRemanescentes.length > 0,
     primeiraRespostaSdr,
     respostaFinal
   });
@@ -24014,9 +28395,15 @@ if (funnelProgressFromLead.changed) {
     }
   };
 
+  // Terceiro caminho: só marca taxaAlinhada se R$ 1.990 foi mencionado
+  // na última resposta da SDR (consistente com correções 20-21)
+  const lastSdrForFunnel = [...(history || [])].reverse().find(m => m.role === "assistant")?.content || "";
+  const funnelMencionouValorReal = /\b(1990|1\.990|r\$\s*1[\.,]?990|10x\s*de?\s*r?\$?\s*199)\b/i.test(lastSdrForFunnel);
+
   if (
     funnelProgressFromLead.understoodSteps.includes("investimento") &&
-    currentLead?.taxaAlinhada !== true
+    currentLead?.taxaAlinhada !== true &&
+    funnelMencionouValorReal
   ) {
     patchEntendimentoLead.taxaAlinhada = true;
     patchEntendimentoLead.taxaObjectionCount = 0;
@@ -24339,10 +28726,25 @@ await recordAuditEvent({
     respostaFinalSdr: String(respostaFinal || "").slice(0, 1500),
     actions: syncedFinalReply.actions || actions || [],
     sdrReviewFindingsCount: sdrReviewFindings.length,
-    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => ({
-      tipo: f.tipo,
-      prioridade: f.prioridade
-    })),
+    sdrReviewFindings: sdrReviewFindings.slice(0, 5).map(f => {
+      const motivoTexto = (() => {
+        if (typeof f.motivo === "string" && f.motivo.trim()) return f.motivo.trim();
+        if (typeof f.reason === "string" && f.reason.trim()) return f.reason.trim();
+        if (f.reason && typeof f.reason === "object") {
+          try { return JSON.stringify(f.reason).slice(0, 500); }
+          catch (_) { return ""; }
+        }
+        return "";
+      })();
+
+      return {
+        tipo: f.tipo,
+        prioridade: f.prioridade,
+        motivo: motivoTexto,
+        orientacao: String(f.orientacao || "").slice(0, 800),
+        detalhes: f.reason && typeof f.reason === "object" ? f.reason : undefined
+      };
+    }),
     estadoLead: {
       status: currentLead?.status || "-",
       faseQualificacao: currentLead?.faseQualificacao || "-",
@@ -24420,8 +28822,34 @@ if (
     respostaLowerConfirm.includes("pode confirmar?") ||
     respostaLowerConfirm.includes("confirma?");
 
-  if (gptPareceuConfirmar && !gptReconfirmou) {
-    // GPT aceitou o dado — salvar confirmação no backend
+ /*
+    TRAVA DE SEGURANÇA — não confirmar campo por engano.
+    O detector acima olha a RESPOSTA da SDR ("entendi", "perfeito") para
+    adivinhar confirmação. Isso é frágil: a SDR pode dizer "Entendi" como
+    saudação numa mensagem em que o lead NEGOU o dado.
+    Antes de salvar, verificamos o que IMPORTA:
+    1) o lead não está corrigindo/negando o dado;
+    2) o valor pendente é válido para o campo.
+  */
+  const leadNegouOuCorrigiu =
+    semanticIntent?.dataCorrectionIntent === true ||
+    isNegativeConfirmation(text) ||
+    /\b(nao|não)\b.*\b(correto|certo|esse|essa|isso)\b/i.test(text || "") ||
+    /\b(errado|errada|incorreto|incorreta|verifique|verificar|corrig)\b/i.test(text || "");
+
+  const valorPendenteEhValido = (() => {
+    const campoP = currentLead.campoPendente;
+    const valorP = currentLead.valorPendente;
+    if (!campoP || !valorP) return false;
+    if (campoP === "nome") {
+      return !isInvalidLooseNameCandidate(valorP);
+    }
+    const validacao = validateLeadData({ [campoP]: valorP });
+    return validacao.isValid === true;
+  })();
+
+  if (gptPareceuConfirmar && !gptReconfirmou && !leadNegouOuCorrigiu && valorPendenteEhValido) {
+    // GPT aceitou o dado E o lead não negou E o valor é válido — salvar
     const campoConfirmado = currentLead.campoPendente;
     const valorConfirmado = currentLead.valorPendente;
 
@@ -24457,6 +28885,33 @@ if (
       campoConfirmado,
       valorConfirmado,
       proximoCampo: missingAfterConfirm[0] || "nenhum"
+    });
+  } else if (leadNegouOuCorrigiu || !valorPendenteEhValido) {
+    /*
+      O lead negou/corrigiu o dado, OU o valor pendente é inválido
+      (ex: uma frase capturada como nome por engano).
+      NÃO confirmar. Limpar o valor-lixo pendente para o sistema
+      não ficar preso tentando confirmar a mesma coisa errada.
+    */
+    const campoLimpo = currentLead.campoPendente;
+
+    await saveLeadProfile(from, {
+      campoPendente: null,
+      valorPendente: null,
+      cidadePendente: null,
+      estadoPendente: null,
+      aguardandoConfirmacaoCampo: false,
+      faseQualificacao: "corrigir_dado",
+      status: "corrigir_dado",
+      campoEsperado: campoLimpo || null
+    });
+
+    currentLead = await loadLeadProfile(from);
+
+    console.log("🧹 Valor pendente inválido/negado foi limpo — sistema vai pedir o dado novamente:", {
+      user: from,
+      campoLimpo,
+      motivo: leadNegouOuCorrigiu ? "lead_negou_ou_corrigiu" : "valor_pendente_invalido"
     });
   }
 }
@@ -24530,6 +28985,8 @@ for (const action of actions) {
   }
 }
 
+const leadReclamouNaoRecebimento = leadAskedFileResend(text);
+
 for (const key of fileKeys) {
   if (!canSendBusinessFile(key, currentLead || {})) {
     console.log("📎 Arquivo não enviado por regra comercial:", {
@@ -24540,21 +28997,32 @@ for (const key of fileKeys) {
     continue;
   }
 
-  await sendFileOnce(from, key);
+  await sendFileOnce(from, key, {
+    forceResend: leadReclamouNaoRecebimento,
+    resendReason: leadReclamouNaoRecebimento ? "lead_reclamou_nao_recebimento" : null
+  });
 }
 
-// 🔥 follow-up sempre ativo após resposta da IA
-scheduleLeadFollowups(from);
+// Reagenda follow-up após resposta da SDR.
+// scheduleLeadFollowups é idempotente e já verifica estados protegidos.
+await scheduleLeadFollowups(from);
 
-    markMessageIdsAsProcessed(bufferedMessageIds);
-
+markMessageIdsAsProcessed(bufferedMessageIds);
+     
 return;
+     
   } catch (error) {
     if (messageId) {
       processingMessages.delete(messageId);
     }
 
     console.error("Erro no webhook:", error);
+await auditSystemEvent("erro_sistema", "high", null, {
+      origem: "webhook_principal",
+      erro: error.message,
+      stack: String(error.stack || "").slice(0, 500)
+    });
+     
     return;
   }
 });
@@ -25312,13 +29780,30 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
     if (traceFilter) query.traceId = { $regex: traceFilter, $options: "i" };
     if (leadFilter) query.userMasked = { $regex: leadFilter, $options: "i" };
 
-    const events = await db
+    /*
+      Ordena do MAIS RECENTE para o mais antigo e aplica o limite.
+      Assim, quando há mais eventos que o teto, mantém os mais recentes
+      (antes o sort ascendente cortava justamente os dias recentes).
+      Depois reordena de forma crescente para a leitura cronológica.
+    */
+    const limiteEventos = wantsFullHistory ? 8000 : 6000;
+
+    const eventsRaw = await db
       .collection("audit_events")
       .find(query)
-      .sort({ timestamp: 1 })
-      .limit(wantsFullHistory ? 5000 : 2000)
+      .sort({ timestamp: -1 })
+      .limit(limiteEventos)
       .toArray();
 
+    const events = eventsRaw.sort(
+      (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+    );
+
+    const totalEventosNoBanco = await db
+      .collection("audit_events")
+      .countDocuments(query);
+
+    const relatorioTruncado = totalEventosNoBanco > limiteEventos;
     const grouped = {};
     for (const evt of events) {
       const key = evt.traceId || "sem_trace_" + evt._id;
@@ -25439,7 +29924,13 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
           ? (events[0]?.timestamp || null)
           : cutoff.toISOString(),
         dataFim: new Date().toISOString(),
-        totalEventos: events.length,
+       totalEventos: events.length,
+        totalEventosNoBanco: totalEventosNoBanco,
+        relatorioTruncado: relatorioTruncado,
+        avisoTruncamento: relatorioTruncado
+          ? `Atenção: há ${totalEventosNoBanco} eventos no período, mas o relatório traz os ${limiteEventos} mais recentes. Reduza a janela de horas para ver tudo.`
+          : null,
+         
         totalConversas: conversas.length,
         totalLeads: leadsUnicos.length,
         auditLevelAtivo: getCurrentAuditLevel(),
@@ -25689,6 +30180,86 @@ function leadRecoveredByAffiliateForKpi(lead = {}) {
   );
 }
 
+/* =========================
+   DETECÇÃO DE TAXA NAS MENSAGENS — DASHBOARD
+   Adicionado em 13/05/2026.
+
+   Detecta se o valor R$ 1.990 (taxa do Programa Parceiro Homologado)
+   apareceu em qualquer mensagem da conversa, independente de quem
+   falou — SDR ou lead. Usado pelo dashboard para marcar a coluna
+   "Taxa" com ✅ assim que a SDR chegou nessa parte da conversa.
+
+   Importante: esta função NÃO altera a lógica interna do sistema
+   (taxaAlinhada, taxaApresentada, etapas.investimento). Ela só
+   serve para o dashboard ter uma visão mais ampla, baseada na
+   conversa real, sem depender exclusivamente das flags do motor.
+========================= */
+
+/*
+  Regex que detecta os formatos comuns do valor da taxa.
+  Pega:
+    - "1.990"
+    - "1990"
+    - "1 990"
+    - "R$ 1.990"
+    - "R$ 1.990,00"
+    - "r$1990"
+    - "mil novecentos e noventa"
+*/
+const REGEX_VALOR_TAXA_1990 = /(r\$\s*1[.\s]?990(?:[,.]00)?|\b1[.\s]?990\b|mil\s+novecentos\s+e\s+noventa)/i;
+
+/*
+  Verifica se o texto de uma única mensagem contém o valor da taxa.
+  Recebe string, devolve boolean.
+*/
+function mensagemContemValorTaxa(texto = "") {
+  if (!texto || typeof texto !== "string") return false;
+  return REGEX_VALOR_TAXA_1990.test(texto);
+}
+
+/*
+  Verifica se o histórico completo de mensagens já tocou no valor da taxa.
+  Recebe array de mensagens (formato {role, content}), devolve boolean.
+*/
+function conversaTocouNaTaxa(messages = []) {
+  if (!Array.isArray(messages) || messages.length === 0) return false;
+
+  for (const msg of messages) {
+    if (msg && typeof msg.content === "string" && mensagemContemValorTaxa(msg.content)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/*
+  Função PRINCIPAL: dado um lead + suas mensagens, retorna true se
+  qualquer evidência indicar que a fase da taxa já foi alcançada.
+
+  Olha em DUAS fontes (qualquer uma satisfaz):
+    1. Conversa: alguma mensagem (lead ou SDR) mencionou 1.990.
+    2. Flags antigas: campos que o sistema já marcava antes
+       (fallback para leads sem conversa em mãos).
+
+  Não persiste nada. Só lê.
+*/
+function leadAtingiuFaseTaxaDashboard(lead = {}, messages = []) {
+  /* Camada 1: olhar a conversa real */
+  if (conversaTocouNaTaxa(messages)) return true;
+
+  /* Camada 2: fallback nos campos antigos do sistema */
+  const etapas = lead.etapas || {};
+  return Boolean(
+    etapas.investimento === true ||
+    etapas.taxaPerguntada === true ||
+    lead.taxaAlinhada === true ||
+    lead.taxaApresentada === true ||
+    lead.taxaApresentadaEm ||
+    Number(lead.taxaObjectionCount || 0) > 0
+  );
+}
+
 function buildKpiMetricsForCLevel(leads = []) {
   const safeLeads = Array.isArray(leads) ? leads : [];
 
@@ -25754,7 +30325,568 @@ function buildKpiMetricsForCLevel(leads = []) {
   };
 }
 
-function buildCLevelDashboardSnapshot(allLeads = []) {
+/* =========================
+   FUNÇÕES AUXILIARES — RELATÓRIO DE TRÁFEGO PRO GESTOR
+   Adicionado em 13/05/2026.
+   Usadas por buildCLevelDashboardSnapshot e pela rota
+   /dashboard/c-level-consultor quando o gestor pede
+   relatório de tráfego.
+========================= */
+
+/*
+  Detecta se a pergunta do gestor é um pedido de relatório de tráfego
+  e extrai o período em horas. Retorna { isPedido, horas, label }.
+
+  Exemplos que ativam:
+    "me dá o relatório de tráfego dos últimos 3 dias"
+    "relatório de tráfego de hoje"
+    "como foi o tráfego dessa semana"
+    "leads que entraram nas últimas 48 horas"
+*/
+function detectaPedidoRelatorioTrafego(pergunta = "") {
+  const texto = String(pergunta || "").toLowerCase().trim();
+
+  const palavrasChaveTrafego = [
+    "relatório de tráfego",
+    "relatorio de trafego",
+    "relatório do tráfego",
+    "relatorio do trafego",
+    "relatório de leads",
+    "relatorio de leads",
+    "como foi o tráfego",
+    "como foi o trafego",
+    "como está o tráfego",
+    "como esta o trafego",
+    "leads que entraram",
+    "leads entraram",
+    "qualidade do tráfego dos",
+    "qualidade do trafego dos",
+    "tráfego de hoje",
+    "trafego de hoje",
+    "tráfego de ontem",
+    "trafego de ontem",
+    "tráfego da semana",
+    "trafego da semana",
+    "tráfego dessa semana",
+    "trafego dessa semana",
+    "tráfego desse mês",
+    "trafego desse mes",
+    "tráfego dos últimos",
+    "trafego dos ultimos"
+  ];
+
+  const isPedido = palavrasChaveTrafego.some(chave => texto.includes(chave));
+
+  if (!isPedido) {
+    return { isPedido: false, horas: 0, label: "" };
+  }
+
+  let horas = 24;
+  let label = "últimas 24 horas";
+
+  const matchDias = texto.match(/(\d{1,3})\s*dia/);
+  if (matchDias) {
+    const n = Math.min(Math.max(Number(matchDias[1]), 1), 60);
+    horas = n * 24;
+    label = `últimos ${n} dia${n > 1 ? "s" : ""}`;
+    return { isPedido: true, horas, label };
+  }
+
+  const matchHoras = texto.match(/(\d{1,4})\s*hora/);
+  if (matchHoras) {
+    const n = Math.min(Math.max(Number(matchHoras[1]), 1), 1440);
+    horas = n;
+    label = `últimas ${n} hora${n > 1 ? "s" : ""}`;
+    return { isPedido: true, horas, label };
+  }
+
+  if (texto.includes("hoje")) {
+    horas = 24;
+    label = "hoje (últimas 24h)";
+  } else if (texto.includes("ontem")) {
+    horas = 48;
+    label = "ontem e hoje (últimas 48h)";
+  } else if (texto.includes("semana")) {
+    horas = 168;
+    label = "última semana (7 dias)";
+  } else if (texto.includes("mês") || texto.includes("mes")) {
+    horas = 720;
+    label = "último mês (30 dias)";
+  }
+
+  return { isPedido: true, horas, label };
+}
+
+/*
+  Extrai a 2ª mensagem real do lead (intenção verdadeira),
+  ignorando saudações curtas como "oi", "olá", "bom dia".
+  Se a 2ª for genérica, tenta a 3ª.
+*/
+function extrairSegundaMensagemDoLead(messages = []) {
+  if (!Array.isArray(messages)) return "";
+
+  const msgsDoLead = messages
+    .filter(m => m && m.role === "user" && typeof m.content === "string")
+    .map(m => m.content.trim())
+    .filter(Boolean);
+
+  if (msgsDoLead.length === 0) return "";
+  if (msgsDoLead.length === 1) return msgsDoLead[0];
+
+  const padraoGenerico = /^(oi+|ol[áa]|opa|bom\s*dia|boa\s*tarde|boa\s*noite|tudo\s*bem|e\s*a[ií]|hey|hi|hello|tudo\s*bom|td\s*bem|td\s*bm|alguem|alguém|tem\s*alguem|tem\s*alguém)[\s!?.,]*$/i;
+
+  for (let i = 1; i < msgsDoLead.length; i++) {
+    const m = msgsDoLead[i];
+    if (m.length < 4) continue;
+    if (padraoGenerico.test(m)) continue;
+    return m;
+  }
+
+  return msgsDoLead[1];
+}
+
+/*
+  Calcula a etapa máxima atingida pelo lead no funil.
+  Retorna { idx: 0-8, label: string }.
+*/
+function calcularEtapaMaxima(lead = {}) {
+  const etapas = lead.etapas || {};
+  const ordem = [
+    { idx: 1, key: "programa", label: "Programa" },
+    { idx: 2, key: "beneficios", label: "Benefícios" },
+    { idx: 3, key: "estoque", label: "Estoque" },
+    { idx: 4, key: "responsabilidades", label: "Responsabilidades" },
+    { idx: 5, key: "investimento", label: "Investimento/Taxa" },
+    { idx: 6, key: "compromisso", label: "Compromisso" }
+  ];
+
+  let maxIdx = 0;
+  let maxLabel = "Sem avanço";
+
+  for (const etapa of ordem) {
+    if (etapas[etapa.key] === true) {
+      maxIdx = etapa.idx;
+      maxLabel = etapa.label;
+    }
+  }
+
+  if (lead.taxaAlinhada === true && maxIdx < 6) {
+    maxIdx = 6;
+    maxLabel = "Taxa alinhada";
+  }
+  if (
+    lead.faseFunil === "coleta_dados" ||
+    lead.faseQualificacao === "coletando_dados" ||
+    lead.faseQualificacao === "dados_parciais"
+  ) {
+    maxIdx = 7;
+    maxLabel = "Coleta de dados";
+  }
+  if (
+    lead.dadosConfirmadosPeloLead === true ||
+    lead.crmEnviado === true ||
+    lead.status === "fechado" ||
+    lead.statusDashboard === "negociado"
+  ) {
+    maxIdx = 8;
+    maxLabel = "Dados confirmados/CRM";
+  }
+
+  return { idx: maxIdx, label: maxLabel };
+}
+
+/*
+  Determina a rota final do lead (Homologado, Afiliado, Indefinido).
+*/
+function calcularRotaFinal(lead = {}) {
+  if (
+    lead.rotaComercial === "afiliado" ||
+    lead.faseFunil === "afiliado" ||
+    lead.afiliadoInstrucoesEnviadas === true ||
+    lead.interesseAfiliado === true
+  ) {
+    return "Afiliado";
+  }
+  if (
+    lead.etapas?.programa === true ||
+    lead.taxaAlinhada === true ||
+    lead.rotaComercial === "homologado"
+  ) {
+    return "Homologado";
+  }
+  return "Indefinido";
+}
+
+/*
+  Engajamento: lead enviou mais de 3 mensagens.
+*/
+function leadEngajou(messages = []) {
+  if (!Array.isArray(messages)) return false;
+  const msgsDoLead = messages.filter(m => m && m.role === "user");
+  return msgsDoLead.length > 3;
+}
+
+/*
+  Pega as últimas N mensagens da conversa (para o GPT inferir motivo de saída).
+  Limita tamanho de cada msg pra economizar tokens.
+*/
+function ultimasMensagensParaInferencia(messages = [], n = 3) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .slice(-n * 2)
+    .filter(m => m && typeof m.content === "string")
+    .map(m => ({
+      role: m.role === "user" ? "lead" : m.role === "assistant" ? "sdr" : "sis",
+      texto: String(m.content || "").slice(0, 200)
+    }));
+}
+
+/*
+  Status final visual do lead (para coluna "Status" da tabela).
+*/
+function calcularStatusFinal(lead = {}) {
+  const status = lead.statusDashboard || lead.status || "";
+
+  if (status === "fechado" || status === "negociado") return "Negociado";
+  if (status === "perdido") return "Perdido";
+  if (status === "em_atendimento") return "Humano";
+  if (lead.crmEnviado === true) return "Enviado CRM";
+  if (
+    lead.dadosConfirmadosPeloLead === true ||
+    lead.faseQualificacao === "dados_confirmados"
+  ) {
+    return "Dados confirmados";
+  }
+  if (lead.taxaAlinhada === true) return "Taxa aceita";
+
+  const dataAtualizacao = lead.updatedAt ? new Date(lead.updatedAt).getTime() : 0;
+  const horasInativo = dataAtualizacao
+    ? (Date.now() - dataAtualizacao) / (1000 * 60 * 60)
+    : 0;
+
+  if (horasInativo > 24) return "Esfriou";
+  return "Em conversa";
+}
+
+/*
+  Monta o array lead-a-lead com dados determinísticos.
+  Para CADA lead da janela temporal, devolve um objeto com:
+   - identificação (telefone mascarado)
+   - 2ª mensagem (intenção real)
+   - engajou
+   - etapa máxima
+   - rota final
+   - status final
+   - últimas mensagens (para o GPT inferir motivo de saída)
+*/
+function buildLinhasTrafegoLeads(leads = [], conversationsByUser = {}) {
+  if (!Array.isArray(leads)) return [];
+
+  return leads.map(lead => {
+    const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+    const conv = conversationsByUser[user] || {};
+    const messages = Array.isArray(conv.messages) ? conv.messages : [];
+
+    const segundaMsg = extrairSegundaMensagemDoLead(messages);
+    const engajou = leadEngajou(messages);
+    const etapaMax = calcularEtapaMaxima(lead);
+    const rotaFinal = calcularRotaFinal(lead);
+    const statusFinal = calcularStatusFinal(lead);
+    const ultimasMsgs = ultimasMensagensParaInferencia(messages, 3);
+
+    const telefone = lead.telefoneWhatsApp || lead.telefone || user || "-";
+    const telefoneMasked = telefone.length >= 6
+      ? telefone.slice(0, 4) + "*****" + telefone.slice(-2)
+      : telefone;
+
+    const dataEntrada = lead.createdAt || lead.dataEntrada || lead.updatedAt || null;
+    const dataFormatada = dataEntrada
+      ? new Date(dataEntrada).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+      : "-";
+
+    return {
+      idLead: telefoneMasked,
+      telefoneMasked,
+      dataEntrada: dataFormatada,
+      dataEntradaIso: dataEntrada ? new Date(dataEntrada).toISOString() : null,
+      cidade: lead.cidade || "-",
+      estado: lead.estado || "-",
+      segundaMensagem: (segundaMsg || "").slice(0, 250),
+      engajou,
+      totalMsgsLead: messages.filter(m => m?.role === "user").length,
+      etapaMaximaIdx: etapaMax.idx,
+      etapaMaximaLabel: etapaMax.label,
+      rotaFinal,
+      statusFinal,
+      ultimasMensagens: ultimasMsgs
+    };
+  });
+}
+
+/*
+  Resumos quantitativos do tráfego (números crus pro GPT só interpretar,
+  não calcular). Mais barato e mais confiável.
+*/
+function buildResumoQuantitativoTrafego(linhasLeads = []) {
+  if (!Array.isArray(linhasLeads) || linhasLeads.length === 0) {
+    return {
+      volumeTotal: 0,
+      engajados: 0,
+      naoEngajados: 0,
+      taxaEngajamento: "0%",
+      porEstado: {},
+      porCidade: {},
+      porHora: {},
+      porRotaFinal: {},
+      porStatusFinal: {},
+      porEtapaMaxima: {},
+      mediaMsgsPorLead: 0,
+      leadsSemSegundaMsg: 0
+    };
+  }
+
+  const volumeTotal = linhasLeads.length;
+  const engajados = linhasLeads.filter(l => l.engajou).length;
+  const naoEngajados = volumeTotal - engajados;
+
+  const porEstado = {};
+  const porCidade = {};
+  const porHora = {};
+  const porRotaFinal = {};
+  const porStatusFinal = {};
+  const porEtapaMaxima = {};
+  let somaMsgs = 0;
+  let semSegundaMsg = 0;
+
+  for (const l of linhasLeads) {
+    porEstado[l.estado] = (porEstado[l.estado] || 0) + 1;
+    porCidade[l.cidade] = (porCidade[l.cidade] || 0) + 1;
+    porRotaFinal[l.rotaFinal] = (porRotaFinal[l.rotaFinal] || 0) + 1;
+    porStatusFinal[l.statusFinal] = (porStatusFinal[l.statusFinal] || 0) + 1;
+    porEtapaMaxima[l.etapaMaximaLabel] = (porEtapaMaxima[l.etapaMaximaLabel] || 0) + 1;
+
+    if (l.dataEntradaIso) {
+      const hora = new Date(l.dataEntradaIso).getHours();
+      const chaveHora = `${String(hora).padStart(2, "0")}h`;
+      porHora[chaveHora] = (porHora[chaveHora] || 0) + 1;
+    }
+
+    somaMsgs += Number(l.totalMsgsLead || 0);
+    if (!l.segundaMensagem) semSegundaMsg++;
+  }
+
+  const top5 = obj => Object.fromEntries(
+    Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  );
+
+  return {
+    volumeTotal,
+    engajados,
+    naoEngajados,
+    taxaEngajamento: `${((engajados / volumeTotal) * 100).toFixed(1)}%`,
+    porEstado: top5(porEstado),
+    porCidade: top5(porCidade),
+    porHora: Object.fromEntries(
+      Object.entries(porHora).sort((a, b) => a[0].localeCompare(b[0]))
+    ),
+    porRotaFinal,
+    porStatusFinal,
+    porEtapaMaxima,
+    mediaMsgsPorLead: Number((somaMsgs / volumeTotal).toFixed(1)),
+    leadsSemSegundaMsg: semSegundaMsg
+  };
+}
+
+/* =========================
+   AMOSTRAS DE LEADS PARA O MULTI C-LEVEL GPT
+   Adicionado em 13/05/2026.
+
+   Em vez de mandar só números pro GPT, mandamos também
+   amostras concretas de leads divididos em 4 categorias:
+
+   1. NÃO chegou na taxa     → problema de TOPO do funil
+   2. Chegou na taxa, NÃO aceitou → problema de FIM do funil
+   3. Objetou e foi perdido  → problema de RECUPERAÇÃO
+   4. Leads bons             → referência de sucesso
+
+   Cada amostra contém telefone mascarado, intenção real
+   (2ª mensagem), última mensagem, fase máxima atingida e
+   um trecho-chave da conversa. Isso permite ao GPT dar
+   análise concreta e acionável, citando exemplos reais.
+========================= */
+
+/*
+  Monta uma amostra detalhada de UM lead para o Multi C-Level GPT.
+
+  Foco: dar contexto suficiente sem inflar o token a ponto de
+  explodir a chamada. Cada amostra fica em ~300-600 tokens.
+
+  Inclui:
+    - telefone mascarado (5554***75)
+    - 2ª mensagem do lead (intenção real, sem saudação)
+    - última mensagem do lead
+    - última resposta da SDR
+    - fase máxima atingida
+    - rota final, status final
+    - 3 mensagens-chave para o GPT inferir o que aconteceu
+*/
+function buildLeadSampleForCLevel(lead = {}, messages = []) {
+  const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+  const telefoneMasked = user.length >= 6
+    ? user.slice(0, 4) + "***" + user.slice(-2)
+    : (user || "-");
+
+  const msgsArray = Array.isArray(messages) ? messages : [];
+
+  /* 2ª mensagem real do lead (intenção verdadeira) */
+  const segundaMsg = extrairSegundaMensagemDoLead(msgsArray);
+
+  /* Última mensagem do lead e da SDR */
+  const ultimaMsgLead = [...msgsArray].reverse()
+    .find(m => m?.role === "user")?.content || "";
+  const ultimaRespSdr = [...msgsArray].reverse()
+    .find(m => m?.role === "assistant")?.content || "";
+
+  /* Fase máxima e rota */
+  const etapaMax = calcularEtapaMaxima(lead);
+  const rotaFinal = calcularRotaFinal(lead);
+  const statusFinal = calcularStatusFinal(lead);
+
+  /* 3 mensagens-chave do final da conversa para o GPT entender o desfecho */
+  const mensagensChave = msgsArray
+    .slice(-6)
+    .filter(m => m && typeof m.content === "string")
+    .map(m => ({
+      quem: m.role === "user" ? "lead" : m.role === "assistant" ? "sdr" : "sis",
+      texto: String(m.content || "").slice(0, 180)
+    }));
+
+  /* Cidade/estado (pra detectar padrão regional) */
+  const local = [lead.cidade, lead.estado].filter(Boolean).join("/") || "-";
+
+  return {
+    telefoneMasked,
+    local,
+    intencaoReal: (segundaMsg || "").slice(0, 200),
+    totalMsgsLead: msgsArray.filter(m => m?.role === "user").length,
+    etapaMaxima: etapaMax.label,
+    rotaFinal,
+    statusFinal,
+    taxaAlinhada: lead.taxaAlinhada === true,
+    taxaObjectionCount: Number(lead.taxaObjectionCount || 0),
+    ultimaMensagemLead: String(ultimaMsgLead || "").slice(0, 180),
+    ultimaRespostaSdr: String(ultimaRespSdr || "").slice(0, 180),
+    mensagensFinais: mensagensChave
+  };
+}
+
+/*
+  Separa todos os leads em 4 categorias e retorna amostras.
+
+  Configuração:
+    - 8 amostras de leads PROBLEMÁTICOS (3 cat + 3 cat + 2 cat)
+    - 2-3 amostras de leads BONS
+
+  Total: ~10-11 amostras por análise.
+*/
+function buildCLevelSamplesByCategory(allLeads = [], conversationsByUser = {}) {
+  if (!Array.isArray(allLeads) || allLeads.length === 0) {
+    return {
+      naoChegouNaTaxa: [],
+      chegouTaxaNaoAceitou: [],
+      objetouEFoiPerdido: [],
+      leadsBons: [],
+      totalAmostras: 0,
+      observacao: "Sem leads suficientes para gerar amostras."
+    };
+  }
+
+  /* Helper para pegar mensagens de um lead */
+  const getMsgs = (lead) => {
+    const user = lead.user || lead.telefoneWhatsApp || lead.telefone;
+    return user ? (conversationsByUser[user]?.messages || []) : [];
+  };
+
+  /* Categoria 1: NÃO chegou na taxa
+     Critério: nunca tocou no valor R$ 1.990 e tem >= 2 msgs (não é fantasma) */
+  const categoria1 = allLeads.filter(lead => {
+    const msgs = getMsgs(lead);
+    const tocouTaxa = conversaTocouNaTaxa(msgs) || leadAtingiuFaseTaxaDashboard(lead, []);
+    const temConversa = msgs.filter(m => m?.role === "user").length >= 2;
+    return !tocouTaxa && temConversa;
+  });
+
+  /* Categoria 2: chegou na taxa, NÃO aceitou
+     Critério: ouviu o valor mas taxaAlinhada=false E não está em coleta */
+  const categoria2 = allLeads.filter(lead => {
+    const msgs = getMsgs(lead);
+    const tocouTaxa = conversaTocouNaTaxa(msgs) || leadAtingiuFaseTaxaDashboard(lead, []);
+    const aceitou = lead.taxaAlinhada === true;
+    const emColeta = [
+      "coleta_dados", "confirmacao_dados", "pre_analise", "crm"
+    ].includes(lead.faseFunil) || lead.dadosConfirmadosPeloLead === true;
+    return tocouTaxa && !aceitou && !emColeta;
+  });
+
+  /* Categoria 3: objetou e foi perdido
+     Critério: taxaObjectionCount > 0 e status final = perdido/frio/morno sem avanço */
+  const categoria3 = allLeads.filter(lead => {
+    const objetou = Number(lead.taxaObjectionCount || 0) > 0 || lead.sinalObjecaoTaxa === true;
+    const foiPerdido = lead.status === "perdido" || lead.statusDashboard === "perdido";
+    const naoAvancou = !lead.dadosConfirmadosPeloLead && !lead.crmEnviado;
+    return objetou && (foiPerdido || naoAvancou);
+  });
+
+  /* Categoria 4: leads BONS (referência)
+     Critério: chegaram em coleta/CRM OU dados confirmados */
+  const categoria4 = allLeads.filter(lead => {
+    const sucessoComercial = Boolean(
+      lead.dadosConfirmadosPeloLead === true ||
+      lead.crmEnviado === true ||
+      lead.statusDashboard === "negociado" ||
+      lead.status === "fechado" ||
+      ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(lead.faseFunil)
+    );
+    return sucessoComercial;
+  });
+
+  /* Helper para pegar N amostras + ordenar por mais recente */
+  const pegarAmostras = (lista, n) => {
+    return lista
+      .sort((a, b) => {
+        const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return dateB - dateA;
+      })
+      .slice(0, n)
+      .map(lead => buildLeadSampleForCLevel(lead, getMsgs(lead)));
+  };
+
+  /* Distribuição: 3 + 3 + 2 problemáticos + 3 bons = 11 amostras */
+  const amostras = {
+    naoChegouNaTaxa: pegarAmostras(categoria1, 3),
+    chegouTaxaNaoAceitou: pegarAmostras(categoria2, 3),
+    objetouEFoiPerdido: pegarAmostras(categoria3, 2),
+    leadsBons: pegarAmostras(categoria4, 3),
+    totaisPorCategoria: {
+      naoChegouNaTaxa: categoria1.length,
+      chegouTaxaNaoAceitou: categoria2.length,
+      objetouEFoiPerdido: categoria3.length,
+      leadsBons: categoria4.length
+    }
+  };
+
+  amostras.totalAmostras =
+    amostras.naoChegouNaTaxa.length +
+    amostras.chegouTaxaNaoAceitou.length +
+    amostras.objetouEFoiPerdido.length +
+    amostras.leadsBons.length;
+
+  return amostras;
+}
+
+function buildCLevelDashboardSnapshot(allLeads = [], relatorioTrafego = null, amostrasLeads = null) {
   const now = new Date();
 
   const startOfToday = new Date(now);
@@ -25773,7 +30905,7 @@ function buildCLevelDashboardSnapshot(allLeads = []) {
     return date && date.getTime() >= sevenDaysAgo.getTime();
   });
 
-  return {
+  const snapshot = {
     geradoEm: now.toISOString(),
     periodoPrincipal: "ultimos_7_dias",
     observacao:
@@ -25782,81 +30914,227 @@ function buildCLevelDashboardSnapshot(allLeads = []) {
     hoje: buildKpiMetricsForCLevel(leadsHoje),
     ultimos7Dias: buildKpiMetricsForCLevel(leadsUltimos7Dias)
   };
+
+  /*
+    Amostras concretas de leads para o GPT analisar (em vez de só números).
+    Quando disponíveis, são divididas em 4 categorias:
+      1. Não chegou na taxa (problema de TOPO do funil / tráfego)
+      2. Chegou na taxa mas não aceitou (problema de FIM do funil / SDR)
+      3. Objetou e foi perdido (problema de RECUPERAÇÃO)
+      4. Leads bons (referência de sucesso)
+  */
+  if (amostrasLeads && amostrasLeads.totalAmostras > 0) {
+    snapshot.amostrasLeadsParaAnalise = amostrasLeads;
+  }
+
+  /*
+    Se o gestor pediu relatório de tráfego, anexa o bloco completo.
+    Sem isso, perguntas normais continuam baratas (sem inflar payload).
+  */
+  if (relatorioTrafego && relatorioTrafego.linhasLeads) {
+    snapshot.trafegoDetalhado = {
+      periodoAnalisado: relatorioTrafego.periodoLabel,
+      janelaHoras: relatorioTrafego.horas,
+      dataInicio: relatorioTrafego.dataInicio,
+      dataFim: relatorioTrafego.dataFim,
+      resumoQuantitativo: relatorioTrafego.resumoQuantitativo,
+      totalLeadsNaJanela: relatorioTrafego.linhasLeads.length,
+      /*
+        Enviamos apenas os campos necessários para o GPT INFERIR o motivo
+        de saída. O resto (tabela completa) é renderizado pelo backend
+        e devolvido junto na resposta — não passa pelo GPT.
+      */
+      leadsParaInferenciaMotivoSaida: relatorioTrafego.linhasLeads.map(l => ({
+        idLead: l.idLead,
+        segundaMensagem: l.segundaMensagem,
+        etapaMaxima: l.etapaMaximaLabel,
+        rotaFinal: l.rotaFinal,
+        statusFinal: l.statusFinal,
+        ultimasMensagens: l.ultimasMensagens
+      }))
+    };
+  }
+
+  return snapshot;
 }
 
 const MULTI_C_LEVEL_SYSTEM_PROMPT = `
-Você é o Multi C-Level GPT da IQG.
+Você é o Multi C-Level GPT da IQG — Indústria Química Gaúcha.
 
-Atue como um comitê consultivo formado por:
-- CGO: Chief Growth Officer;
-- CRO: Chief Revenue Officer;
-- especialista em KPIs;
-- especialista em Revenue Operations;
-- especialista em Growth Analytics;
-- especialista em tráfego pago;
-- especialista em funil comercial com SDR IA no WhatsApp.
+Atue como um comitê executivo formado por CGO, CRO, especialistas em Growth, Revenue Operations, KPIs, tráfego pago e funil comercial com SDR IA no WhatsApp.
 
-Você analisa KPIs reais do dashboard da IQG.
+Sua missão é fazer análises EXECUTIVAS, CONCRETAS e ACIONÁVEIS dos KPIs e amostras de leads reais da IQG.
 
-Contexto da IQG:
-- O funil principal é o Programa Parceiro Homologado IQG.
-- O lead vem de tráfego pago.
-- A SDR IA conversa no WhatsApp.
-- A fase da taxa é um gargalo importante.
-- O Programa de Afiliados IQG é rota alternativa para recuperar leads que não seguem no Homologado.
-- O objetivo do dashboard é avaliar qualidade do tráfego, qualidade da SDR IA, gargalos de conversão e oportunidade de escala.
+═══════════════════════════════════════
+CONTEXTO DA OPERAÇÃO IQG
+═══════════════════════════════════════
+
+- Programa Parceiro Homologado: principal funil. Taxa R$ 1.990,00. Comodato, suporte, treinamento.
+- Programa de Afiliados: rota alternativa. Link, sem estoque, sem taxa.
+- Tráfego pago é a origem dos leads.
+- SDR IA conversa no WhatsApp.
+- Funil tem 8 etapas: programa → benefícios → estoque → responsabilidades → investimento → compromisso → coleta → confirmação → CRM.
+- O ponto crítico é a fase de investimento (R$ 1.990).
+
+═══════════════════════════════════════
+LIMITES ABSOLUTOS
+═══════════════════════════════════════
 
 Você NÃO pode:
-- inventar números;
+- inventar números além dos que estão no payload;
 - alterar leads;
 - mandar WhatsApp;
 - enviar CRM;
 - prometer resultados;
-- dizer que uma campanha está boa ou ruim sem base nos KPIs recebidos;
-- fingir certeza quando a amostra for pequena.
+- ser educado demais quando os números são ruins;
+- usar generalidades vagas tipo "revisar comunicação" ou "monitorar semanalmente" sem dizer EXATAMENTE o que revisar.
 
-Se a amostra for pequena, diga claramente que a leitura ainda é inicial.
+═══════════════════════════════════════
+REGRA CENTRAL — SEPARAR 2 PROBLEMAS DISTINTOS
+═══════════════════════════════════════
+
+Você DEVE sempre separar o diagnóstico em duas dimensões:
+
+▼ PROBLEMA 1: TOPO DO FUNIL (qualidade do tráfego)
+   Pergunta-chave: o tráfego está trazendo o público certo?
+   Sintoma típico: leads param ANTES de ouvir a taxa.
+   Indicadores: % baixo de "Taxa apresentada", muitos leads "frio" cedo,
+                conversas de 2-5 mensagens, leads pedindo emprego CLT,
+                leads sem perfil para parceria comercial.
+   Solução: anúncio, segmentação, copy do criativo, filtro de palavra-chave.
+   NÃO é resolvido com prompt de SDR.
+
+▼ PROBLEMA 2: FIM DO FUNIL (condução da SDR)
+   Pergunta-chave: a SDR está convertendo quem chega?
+   Sintoma típico: leads chegam na taxa MAS não avançam.
+   Indicadores: alta "Objeção à taxa", baixa "Recuperação", leads
+                que objetaram e não foram reaquecidos.
+   Solução: prompt da SDR, prompt do Pré-SDR, travas comerciais.
+   NÃO é resolvido com tráfego.
+
+Em CADA análise, você DEVE dizer claramente:
+- "Problema de TRÁFEGO porque X..."
+- "Problema de SDR porque Y..."
+- "Problema misto porque Z..."
+
+═══════════════════════════════════════
+COMO USAR AS AMOSTRAS DE LEADS
+═══════════════════════════════════════
+
+O payload pode incluir o campo "amostrasLeadsParaAnalise" com 4 categorias:
+
+1. naoChegouNaTaxa: leads que pararam ANTES de ouvir o valor.
+2. chegouTaxaNaoAceitou: leads que ouviram o valor mas não avançaram.
+3. objetouEFoiPerdido: leads que objetaram e foram perdidos sem reaquecimento.
+4. leadsBons: leads que avançaram (referência de sucesso).
+
+REGRAS OBRIGATÓRIAS ao analisar:
+
+1. Leia as amostras antes de escrever conclusões.
+2. Cite SEMPRE exemplos concretos com o telefone mascarado real (ex: 5554***75) que aparece no payload. Nunca invente um número.
+3. Quando citar, mencione brevemente o que aconteceu com aquele lead (ex: "o lead 5512***01 só queria vaga de motorista, não tem perfil para parceria").
+4. Use as amostras de leadsBons como contraste: o que estes leads bons fizeram que os ruins não fizeram?
+5. Se uma categoria está vazia, diga claramente "sem amostras suficientes para diagnóstico nesta categoria".
+6. Não invente padrões que não estão nas amostras.
+
+═══════════════════════════════════════
+TOM DA ANÁLISE
+═══════════════════════════════════════
+
+- Direto, executivo, sem floreios.
+- Honesto quando os números são ruins. Não suavize.
+- Acionável: cada recomendação deve ter "o quê" + "como" + "onde no sistema".
+- Crítico construtivo: pode dizer "a SDR está reativa demais em objeções de taxa, perdeu 3 oportunidades nas amostras X, Y, Z".
+- Se a amostra é pequena (menos de 30 leads na semana), sinalize antes de concluir.
+
+═══════════════════════════════════════
+FORMATO OBRIGATÓRIO DA RESPOSTA
+═══════════════════════════════════════
 
 Responda SEMPRE em JSON válido, sem markdown e sem texto fora do JSON.
-
-Formato obrigatório:
 
 {
   "tituloDiagnostico": "",
   "resumoExecutivo": "",
-  "qualidadeTrafego": {
+  "diagnosticoTrafego": {
     "status": "boa | atencao | critica | inconclusiva",
-    "analise": ""
+    "analise": "",
+    "exemplosCitados": []
   },
-  "saudeFunil": {
+  "diagnosticoSdr": {
     "status": "boa | atencao | critica | inconclusiva",
-    "analise": ""
+    "analise": "",
+    "exemplosCitados": []
   },
   "indicadoresBons": [],
   "indicadoresAtencao": [],
   "gargaloPrincipal": "",
-  "possiveisCausas": [],
-  "estrategiaMelhoria": [],
+  "ondeFocarPrimeiro": "trafego | sdr | ambos",
+  "acoesEspecificasTrafego": [
+    {
+      "acao": "",
+      "porque": "",
+      "exemploLead": ""
+    }
+  ],
+  "acoesEspecificasSdr": [
+    {
+      "acao": "",
+      "porque": "",
+      "exemploLead": ""
+    }
+  ],
   "planoProximos7Dias": [],
   "prioridadeExecutiva": "baixa | media | alta | critica",
-  "observacaoSobreAmostra": ""
+  "observacaoSobreAmostra": "",
+  "motivosDeSaida": []
 }
 
-Como responder:
-- Seja consultivo, direto e executivo.
-- Explique o que os indicadores significam.
-- Separe tráfego ruim de problema de atendimento quando possível.
-- Analise especialmente:
-  1. leads dos últimos 7 dias;
-  2. qualificados;
-  3. taxa apresentada;
-  4. objeção à taxa;
-  5. recuperação pós-objeção;
-  6. pré-análise iniciada;
-  7. dados completos;
-  8. recuperação por Afiliados.
-- Se houver poucos leads, não conclua com certeza. Fale em tendência inicial.
-- Sempre entregue estratégia prática.
+═══════════════════════════════════════
+INSTRUÇÕES SOBRE CAMPOS ESPECÍFICOS
+═══════════════════════════════════════
+
+▼ "exemplosCitados" em diagnosticoTrafego e diagnosticoSdr:
+   Array de strings curtas como:
+   ["5554***75 — chegou em compromisso mas saiu sem ouvir a taxa, conversa de 24 msgs"]
+   ["5512***01 — pediu vaga de motorista, não é público-alvo de parceria"]
+   Sempre baseado nas amostras reais. Nunca inventar.
+
+▼ "ondeFocarPrimeiro": "trafego" | "sdr" | "ambos"
+   Sua opinião executiva sobre por onde o gestor deveria começar a agir.
+
+▼ "acoesEspecificasTrafego": ações concretas pra problema 1
+   Exemplo bom: { "acao": "Adicionar negativa de palavras no anúncio: vaga, emprego, CLT, salário",
+                  "porque": "3 dos 8 leads sem perfil pediam vaga de emprego",
+                  "exemploLead": "5512***01 e 5567***36" }
+
+▼ "acoesEspecificasSdr": ações concretas pra problema 2
+   Exemplo bom: { "acao": "Adicionar no prompt do SDR: após objeção de taxa, oferecer Programa de Afiliados ativamente",
+                  "porque": "Recuperação está em 0% — nenhum lead que objetou foi reaquecido",
+                  "exemploLead": "5514***04 e 5521***09" }
+
+▼ "motivosDeSaida":
+   Use SOMENTE quando o payload tiver "trafegoDetalhado" (modo relatório de tráfego).
+   Caso contrário, retorne array vazio [].
+
+═══════════════════════════════════════
+MODO RELATÓRIO DE TRÁFEGO (quando há trafegoDetalhado no payload)
+═══════════════════════════════════════
+
+Mesma regra de antes: para cada lead em "leadsParaInferenciaMotivoSaida",
+infira o motivo de saída. Use idLead exato.
+
+═══════════════════════════════════════
+RESUMO FINAL DO QUE ESPERO DE VOCÊ
+═══════════════════════════════════════
+
+1. Diagnóstico SEPARADO de tráfego e SDR.
+2. Exemplos REAIS com telefone mascarado em cada conclusão.
+3. Ações ESPECÍFICAS por categoria, não vagas.
+4. Honestidade: se 22% de Taxa Apresentada é ruim, diga que é ruim.
+5. Use leads bons como contraste para entender o que funciona.
+6. Sinalize amostra pequena quando for o caso.
+7. Não invente número, telefone, padrão ou exemplo.
 `;
 
 function buildDefaultCLevelAnalysis() {
@@ -25879,16 +31157,16 @@ function buildDefaultCLevelAnalysis() {
     estrategiaMelhoria: [],
     planoProximos7Dias: [],
     prioridadeExecutiva: "media",
-    observacaoSobreAmostra: ""
+    observacaoSobreAmostra: "",
+    motivosDeSaida: []
   };
 }
 
 function parseCLevelAnalysisJson(rawText = "") {
   const fallback = buildDefaultCLevelAnalysis();
 
-  try {
-    const parsed = JSON.parse(rawText);
-
+  const tryParse = text => {
+    const parsed = JSON.parse(text);
     return {
       ...fallback,
       ...parsed,
@@ -25904,36 +31182,19 @@ function parseCLevelAnalysisJson(rawText = "") {
       indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
       possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
       estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
-      planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
+      planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : [],
+      motivosDeSaida: Array.isArray(parsed.motivosDeSaida) ? parsed.motivosDeSaida : []
     };
+  };
+
+  try {
+    return tryParse(rawText);
   } catch (error) {
     try {
       const start = rawText.indexOf("{");
       const end = rawText.lastIndexOf("}");
-
-      if (start === -1 || end === -1 || end <= start) {
-        return fallback;
-      }
-
-      const parsed = JSON.parse(rawText.slice(start, end + 1));
-
-      return {
-        ...fallback,
-        ...parsed,
-        qualidadeTrafego: {
-          ...fallback.qualidadeTrafego,
-          ...(parsed.qualidadeTrafego || {})
-        },
-        saudeFunil: {
-          ...fallback.saudeFunil,
-          ...(parsed.saudeFunil || {})
-        },
-        indicadoresBons: Array.isArray(parsed.indicadoresBons) ? parsed.indicadoresBons : [],
-        indicadoresAtencao: Array.isArray(parsed.indicadoresAtencao) ? parsed.indicadoresAtencao : [],
-        possiveisCausas: Array.isArray(parsed.possiveisCausas) ? parsed.possiveisCausas : [],
-        estrategiaMelhoria: Array.isArray(parsed.estrategiaMelhoria) ? parsed.estrategiaMelhoria : [],
-        planoProximos7Dias: Array.isArray(parsed.planoProximos7Dias) ? parsed.planoProximos7Dias : []
-      };
+      if (start === -1 || end === -1 || end <= start) return fallback;
+      return tryParse(rawText.slice(start, end + 1));
     } catch (secondError) {
       return fallback;
     }
@@ -26004,17 +31265,152 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
     await connectMongo();
 
     const allLeads = await db.collection("leads").find({}).toArray();
-    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads);
+
+    /*
+      ===== AMOSTRAS DE LEADS PARA O MULTI C-LEVEL GPT =====
+      Busca as conversations de todos os leads (em uma única query)
+      e prepara amostras divididas em 4 categorias para o GPT analisar.
+
+      Esse bloco rodará SEMPRE (não só em relatório de tráfego), porque
+      a análise de KPIs com exemplos concretos é a evolução principal
+      do C-Level GPT a partir de hoje.
+    */
+    const usersParaAmostras = allLeads
+      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+      .filter(Boolean);
+
+    const conversationsParaAmostras = usersParaAmostras.length > 0
+      ? await db.collection("conversations").find({
+          user: { $in: usersParaAmostras }
+        }, {
+          projection: { user: 1, messages: 1 }
+        }).toArray()
+      : [];
+
+    const conversationsByUserForSamples = {};
+    for (const conv of conversationsParaAmostras) {
+      if (conv && conv.user) {
+        conversationsByUserForSamples[conv.user] = conv;
+      }
+    }
+
+    const amostrasLeadsParaCLevel = buildCLevelSamplesByCategory(
+      allLeads,
+      conversationsByUserForSamples
+    );
+
+    console.log("[C-Level GPT] Amostras montadas:", {
+      total: amostrasLeadsParaCLevel.totalAmostras,
+      naoChegouNaTaxa: amostrasLeadsParaCLevel.naoChegouNaTaxa.length,
+      chegouTaxaNaoAceitou: amostrasLeadsParaCLevel.chegouTaxaNaoAceitou.length,
+      objetouEFoiPerdido: amostrasLeadsParaCLevel.objetouEFoiPerdido.length,
+      leadsBons: amostrasLeadsParaCLevel.leadsBons.length
+    });
+
+     
+    /*
+      ===== DETECÇÃO DE RELATÓRIO DE TRÁFEGO =====
+      Olha a pergunta. Se o gestor pediu relatório, monta os dados
+      detalhados; senão, segue fluxo normal (barato).
+    */
+    const deteccao = { isPedido: false };
+
+    let relatorioTrafego = null;
+
+    if (deteccao.isPedido) {
+      const cutoff = new Date(Date.now() - deteccao.horas * 60 * 60 * 1000);
+
+      /* Filtra leads da janela temporal */
+      const leadsNaJanela = allLeads.filter(lead => {
+        const dt = getLeadDateForKpi(lead);
+        return dt && dt.getTime() >= cutoff.getTime();
+      });
+
+      /* Busca conversations APENAS dos leads da janela (não a coleção inteira) */
+      const usersNaJanela = leadsNaJanela
+        .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+        .filter(Boolean);
+
+      const conversationsDocs = usersNaJanela.length > 0
+        ? await db.collection("conversations").find({
+            user: { $in: usersNaJanela }
+          }).toArray()
+        : [];
+
+      /* Index por user para lookup rápido */
+      const conversationsByUser = {};
+      for (const c of conversationsDocs) {
+        if (c.user) conversationsByUser[c.user] = c;
+      }
+
+      /* Monta as linhas e o resumo quantitativo */
+      const linhasLeads = buildLinhasTrafegoLeads(leadsNaJanela, conversationsByUser);
+      const resumoQuantitativo = buildResumoQuantitativoTrafego(linhasLeads);
+
+      relatorioTrafego = {
+        horas: deteccao.horas,
+        periodoLabel: deteccao.label,
+        dataInicio: cutoff.toISOString(),
+        dataFim: new Date().toISOString(),
+        linhasLeads,
+        resumoQuantitativo
+      };
+
+      console.log(
+        `[Relatório Tráfego] Pedido detectado: ${deteccao.label} | ` +
+        `${leadsNaJanela.length} leads | ${conversationsDocs.length} conversas`
+      );
+    }
+
+    const kpiSnapshot = buildCLevelDashboardSnapshot(allLeads, relatorioTrafego, amostrasLeadsParaCLevel);
 
     const analysis = await runMultiCLevelDashboardAnalysis({
       pergunta,
       kpiSnapshot
     });
 
+    /*
+      Se foi relatório de tráfego, devolve também as linhas completas
+      (com cidade, hora, etc) pro front renderizar a tabela.
+      O GPT só entrega `motivosDeSaida` (idLead → motivo).
+      O backend ENRIQUECE cada linha com o motivo inferido.
+    */
+    let relatorioTrafegoResposta = null;
+
+    if (relatorioTrafego) {
+      const motivosPorIdLead = {};
+      for (const m of (analysis.motivosDeSaida || [])) {
+        if (m && m.idLead) {
+          motivosPorIdLead[m.idLead] = {
+            motivo: m.motivo || "Indeterminado",
+            observacao: m.observacao || ""
+          };
+        }
+      }
+
+      const linhasEnriquecidas = relatorioTrafego.linhasLeads.map(l => ({
+        ...l,
+        motivoSaida: motivosPorIdLead[l.idLead]?.motivo || "Indeterminado",
+        observacaoMotivo: motivosPorIdLead[l.idLead]?.observacao || "",
+        /* remove campo grande que o front não precisa */
+        ultimasMensagens: undefined
+      }));
+
+      relatorioTrafegoResposta = {
+        periodoLabel: relatorioTrafego.periodoLabel,
+        horas: relatorioTrafego.horas,
+        dataInicio: relatorioTrafego.dataInicio,
+        dataFim: relatorioTrafego.dataFim,
+        resumoQuantitativo: relatorioTrafego.resumoQuantitativo,
+        linhas: linhasEnriquecidas
+      };
+    }
+
     return res.json({
       ok: true,
       analysis,
-      kpiSnapshot
+      kpiSnapshot,
+      relatorioTrafego: relatorioTrafegoResposta
     });
   } catch (error) {
     console.error("Erro na rota Multi C-Level GPT:", error);
@@ -26025,6 +31421,40 @@ app.post("/dashboard/c-level-consultor", async (req, res) => {
     });
   }
 });
+
+app.get("/lead/:user/whatsapp-atender", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const user = decodeURIComponent(req.params.user || "");
+    const currentLead = await db.collection("leads").findOne({ user });
+
+    const phone = currentLead?.telefoneWhatsApp || currentLead?.telefone || user || "";
+    const waLink = phone ? `https://wa.me/${phone}` : "#";
+
+    const jaEmAtendimento =
+      currentLead?.humanoAssumiu === true ||
+      currentLead?.atendimentoHumanoAtivo === true ||
+      currentLead?.status === "em_atendimento";
+
+    const jaNegociadoOuPerdido =
+      currentLead?.status === "fechado" ||
+      currentLead?.status === "perdido" ||
+      currentLead?.statusDashboard === "negociado";
+
+    if (!jaEmAtendimento && !jaNegociadoOuPerdido) {
+      await updateLeadStatus(user, "em_atendimento");
+    }
+
+    return res.redirect(waLink);
+  } catch (error) {
+    console.error("Erro ao abrir WhatsApp + atender:", error);
+    return res.status(500).send("Erro ao processar.");
+  }
+});
+
 
 app.get("/lead/:user/status/:status", async (req, res) => {
   try {
@@ -26044,7 +31474,7 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   "pre_analise",
   "quente",
   "em_atendimento",
-  "fechado",
+  "negociado",
   "perdido",
   "erro_dados",
   "erro_envio_crm",
@@ -26067,6 +31497,227 @@ app.get("/lead/:user/status/:status", async (req, res) => {
   } catch (error) {
     console.error("Erro ao atualizar status:", error);
     return res.status(500).send("Erro ao atualizar status.");
+  }
+});
+
+/*
+  ===========================================================
+  MIGRAÇÃO DE LEAD ENTRE JANELAS DO DASHBOARD
+  ===========================================================
+  Move um lead para uma das 5 janelas, aplicando os efeitos
+  técnicos corretos no bot:
+    1 = IA gerindo sozinha   → IA reassume + cadência recomeça
+    2 = Humano precisa assumir → marca atenção humana
+    3 = Humano atendendo     → bloqueia o bot
+    4 = Perdido              → encerra
+    5 = Fechado              → encerra como negócio fechado
+*/
+app.get("/lead/:user/janela/:janela", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const { user } = req.params;
+    const janela = Number(req.params.janela);
+    const senha = req.query.senha ? `?senha=${req.query.senha}` : "";
+
+    if (![1, 2, 3, 4, 5].includes(janela)) {
+      return res.status(400).send("Janela inválida.");
+    }
+
+    const lead = await db.collection("leads").findOne({ user });
+    if (!lead) {
+      return res.status(404).send("Lead não encontrado.");
+    }
+
+    let patch = {
+      statusDashboardAtualizadoEm: new Date(),
+      atualizadoPeloDashboard: true,
+      updatedAt: new Date()
+    };
+
+    if (janela === 1) {
+      // IA gerindo sozinha — IA reassume e cadência recomeça.
+      // A fase de retorno reflete o ponto MAIS AVANÇADO que o lead
+      // realmente alcançou, lido dos campos que nunca são apagados
+      // (etapas, crmEnviado, taxaAlinhada, dados de cadastro).
+      // Assim a IA não rebobina um lead que já concluiu o funil.
+      const etapasLead = lead.etapas || {};
+
+      const temDadosCompletos = Boolean(
+        lead.nome &&
+        lead.cpf &&
+        (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+        lead.cidade &&
+        lead.estado
+      );
+
+      const estavaEmColeta = [
+        "coletando_dados", "dados_parciais", "aguardando_dados",
+        "aguardando_confirmacao_campo", "aguardando_confirmacao_dados",
+        "dados_confirmados"
+      ].includes(lead.faseQualificacao);
+
+      let statusRetorno, faseRetorno;
+
+      if (lead.crmEnviado === true) {
+        statusRetorno = "enviado_crm";
+        faseRetorno = "enviado_crm";
+      } else if (lead.dadosConfirmadosPeloLead === true) {
+        statusRetorno = "dados_confirmados";
+        faseRetorno = "dados_confirmados";
+      } else if (temDadosCompletos) {
+        statusRetorno = "dados_confirmados";
+        faseRetorno = "dados_confirmados";
+      } else if (estavaEmColeta) {
+        statusRetorno = lead.faseQualificacao;
+        faseRetorno = lead.faseQualificacao;
+      } else if (etapasLead.compromisso === true || lead.taxaAlinhada === true) {
+        statusRetorno = "qualificando";
+        faseRetorno = "qualificando";
+      } else {
+        statusRetorno = "morno";
+        faseRetorno = "morno";
+      }
+
+      patch = {
+        ...patch,
+        status: statusRetorno,
+        faseQualificacao: faseRetorno,
+        statusOperacional: "ativo",
+        statusDashboard: statusRetorno,
+        statusVisualDashboard: statusRetorno,
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        botBloqueadoPorHumano: false,
+        leadPediuHumano: false,
+        solicitouAtendimentoHumano: false,
+        necessitaAtencaoHumanaDashboard: false,
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null,
+        // Reativa a cadência do zero (mesma trava do Bug B / Bug D — step 1
+        // só agenda com delay curto se estamos dentro do expediente; fora
+        // dele, posterga pra próxima abertura comercial).
+        followupStep: 1,
+        followupVersionDb: Number(lead.followupVersionDb || 0) + 1,
+        followupLockEm: null,
+        proximoFollowupEm: isBusinessTime()
+          ? computeNextFollowupDate(FOLLOWUP_CONFIG[0])
+          : computeNextFollowupDate({ ...FOLLOWUP_CONFIG[0], businessOnly: true }),
+        reativadoPeloDashboardEm: new Date()
+      };
+
+      console.log("🔀 Migração Janela 1 — estado preservado:", {
+        user,
+        statusRetorno,
+        temDadosCompletos,
+        estavaEmColeta,
+        crmEnviado: lead.crmEnviado === true
+      });
+    } else if (janela === 2) {
+       
+      // Humano precisa assumir
+      patch = {
+        ...patch,
+        status: "qualificando",
+        faseQualificacao: "qualificando",
+        statusOperacional: "ativo",
+        statusDashboard: "qualificando",
+        statusVisualDashboard: "qualificando",
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        botBloqueadoPorHumano: false,
+        necessitaAtencaoHumanaDashboard: true,
+        motivoAtencaoHumanaDashboard: "Movido manualmente para a Janela 2 pelo dashboard.",
+        prioridadeAtencaoHumanaDashboard: "alta",
+        atencaoHumanaDashboardEm: new Date(),
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null
+      };
+    } else if (janela === 3) {
+      // Humano atendendo — bloqueia o bot
+      patch = {
+        ...patch,
+        status: "em_atendimento",
+        faseQualificacao: "em_atendimento",
+        statusOperacional: "em_atendimento",
+        statusDashboard: "em_atendimento",
+        statusVisualDashboard: "em_atendimento",
+        humanoAssumiu: true,
+        atendimentoHumanoAtivo: true,
+        botBloqueadoPorHumano: true,
+        assumidoPorHumanoEm: new Date(),
+        // Cancela cadência — humano está no controle
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null,
+        motivoPerda: null,
+        encerradoPor: null,
+        origemEncerramento: null
+      };
+    } else if (janela === 4) {
+      // Perdido — encerrado por decisão humana
+      patch = {
+        ...patch,
+        status: "perdido",
+        faseQualificacao: "perdido",
+        statusOperacional: "perdido",
+        statusDashboard: "perdido",
+        statusVisualDashboard: "perdido",
+        faseFunil: "encerrado",
+        botBloqueadoPorHumano: true,
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        encerradoPor: "humano",
+        origemEncerramento: "humano",
+        encerradoEm: new Date(),
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null
+      };
+    } else if (janela === 5) {
+      // Fechado
+      patch = {
+        ...patch,
+        status: "fechado",
+        faseQualificacao: "fechado",
+        statusOperacional: "fechado",
+        statusDashboard: "fechado",
+        statusVisualDashboard: "fechado",
+        faseFunil: "encerrado",
+        botBloqueadoPorHumano: true,
+        humanoAssumiu: false,
+        atendimentoHumanoAtivo: false,
+        encerradoPor: "humano",
+        origemEncerramento: "humano",
+        fechadoEm: new Date(),
+        followupStep: 0,
+        proximoFollowupEm: null,
+        followupLockEm: null
+      };
+    }
+
+    await db.collection("leads").updateOne({ user }, { $set: patch });
+
+    console.log("🔀 Lead migrado de janela pelo dashboard:", {
+      user,
+      janelaDestino: janela
+    });
+
+    if (typeof auditSystemEvent === "function") {
+      await auditSystemEvent("decisao_backend", "low", user, {
+        evento: "migracao_janela_dashboard",
+        janelaDestino: janela
+      });
+    }
+
+    return res.redirect(`/dashboard${senha}${senha ? "&" : "?"}janela=${janela}`);
+  } catch (error) {
+    console.error("Erro ao migrar lead de janela:", error);
+    return res.status(500).send("Erro ao migrar lead de janela.");
   }
 });
 
@@ -26162,6 +31813,7 @@ app.get("/conversation/:user", async (req, res) => {
             flex-wrap: wrap;
             margin-bottom: 18px;
           }
+          
 
           .btn {
             display: inline-block;
@@ -26987,7 +32639,15 @@ const query =
   cpf: "cpf",
   cidade: "cidade",
   estado: "estado",
-  updatedAt: "updatedAt"
+  updatedAt: "updatedAt",
+  programa: "etapas.programa",
+  beneficios: "etapas.beneficios",
+  estoque: "etapas.estoque",
+  responsabilidades: "etapas.responsabilidades",
+  investimento: "etapas.investimento",
+  taxaAlinhada: "taxaAlinhada",
+  compromisso: "etapas.compromisso",
+  afiliado: "interesseAfiliado"
 };
     const sortField = sortMap[sort] || "updatedAt";
 
@@ -27000,12 +32660,41 @@ const query =
 
     const allLeads = await db.collection("leads").find({}).toArray();
 
-const getVisualStatus = lead =>
-  lead.statusDashboard ||
-  lead.statusVisualDashboard ||
-  lead.status ||
-  "novo";
+const getVisualStatus = lead => {
+  const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+  const fase = lead.faseQualificacao || "";
+  const status = lead.status || "";
+  const etapas = lead.etapas || {};
+  const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
 
+  // 1. Ação do humano no dashboard tem prioridade
+  if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+
+  // 2. Estados terminais
+  if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+  if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+
+  // 3. Coleta de dados ativa = Pré-análise
+  if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+
+  // 4. Dados confirmados ou CRM = Quente
+  if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+
+  // 5. Fase explicitamente qualificando
+  if (fase === "qualificando") return "qualificando";
+
+  // 6. Fallback por etapas — ANTES de morno, para não engolir leads avançados
+  if (etapasConcluidas >= 3) return "qualificando";
+
+  // 7. Morno (fase ou afiliado)
+  if (fase === "morno" || fase === "afiliado") return "morno";
+  if (etapasConcluidas >= 1) return "morno";
+  if (status === "morno") return "morno";
+
+  // 8. Novo real
+  return status || "novo";
+};
+     
 const countByStatus = status =>
   allLeads.filter(lead => getVisualStatus(lead) === status).length;
 
@@ -27053,37 +32742,154 @@ const numberBr = value => {
 
 const leadCreatedAt = lead => lead.createdAt || lead.created_at || lead.dataEntrada || lead.updatedAt;
 
+/*
+      ===== DETECÇÃO DE TAXA NAS MENSAGENS (DASHBOARD) =====
+      Busca as conversations de todos os leads em uma única query
+      e monta um Map onde a chave é o "user" do lead e o valor é
+      true/false indicando se a conversa tocou no valor R$ 1.990.
+
+      Precisa estar ANTES de hasTaxPresented, isQualifiedLead etc.
+    */
+    const allUsers = allLeads
+      .map(l => l.user || l.telefoneWhatsApp || l.telefone)
+      .filter(Boolean);
+
+    const conversationsForTaxDetection = allUsers.length > 0
+      ? await db.collection("conversations").find({
+          user: { $in: allUsers }
+        }, {
+          projection: { user: 1, messages: 1 }
+        }).toArray()
+      : [];
+
+    const leadTocouTaxaMap = new Map();
+    for (const conv of conversationsForTaxDetection) {
+      if (conv && conv.user) {
+        leadTocouTaxaMap.set(conv.user, conversaTocouNaTaxa(conv.messages || []));
+      }
+    }
+
+
+
+    const leadAtingiuFaseTaxaParaDashboard = lead => {
+      const user = lead.user || lead.telefoneWhatsApp || lead.telefone || "";
+      const tocouNaConversa = leadTocouTaxaMap.get(user) === true;
+      if (tocouNaConversa) return true;
+      return leadAtingiuFaseTaxaDashboard(lead, []);
+    };
+     
 const leadsHoje = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), startOfToday)).length;
 const leadsUltimos7Dias = allLeads.filter(lead => isAfterDate(leadCreatedAt(lead), sevenDaysAgo)).length;
 
+/*
+      ===== TEMPERATURA E STATUS VISUAL (DASHBOARD) =====
+      Calculados na hora, sem alterar o motor.
+
+      Regras:
+        - "quente": chegou na taxa E (aceitou taxa OU está em coleta OU dados completos)
+        - "morno": chegou na taxa mas ainda não aceitou
+        - "qualificando": engajado (já trocou várias msgs) mas ainda longe da taxa
+        - "frio": pouco engajado ou desinteressado
+
+      Status visual: combinação de status do motor + temperatura calculada.
+    */
+    const computeDashboardTemperatura = (lead, tocouTaxa) => {
+      // Lead morto = sem temperatura útil
+      if (lead?.status === "perdido" || lead?.statusDashboard === "perdido") {
+        return "frio";
+      }
+
+      const aceitouTaxa = lead?.taxaAlinhada === true;
+      const estaEmColeta = Boolean(
+        ["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(lead?.faseFunil) ||
+        ["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "dados_confirmados", "enviado_crm"].includes(lead?.faseQualificacao)
+      );
+      const dadosCompletos = Boolean(
+        lead?.dadosConfirmadosPeloLead === true ||
+        (lead?.nome && lead?.cpf && (lead?.telefone || lead?.telefoneWhatsApp || lead?.user) && lead?.cidade && lead?.estado)
+      );
+
+      // QUENTE: tocou na taxa E (aceitou OU está coletando OU tem dados completos)
+      if (tocouTaxa && (aceitouTaxa || estaEmColeta || dadosCompletos)) {
+        return "quente";
+      }
+
+      // MORNO: ouviu a taxa mas ainda não avançou
+      if (tocouTaxa) {
+        return "morno";
+      }
+
+      // QUALIFICANDO: engajou (passou da fase inicial), mas ainda não chegou na taxa
+      const etapas = lead?.etapas || {};
+      const passouFaseInicial = Boolean(
+        etapas.beneficios === true ||
+        etapas.estoque === true ||
+        etapas.responsabilidades === true ||
+        lead?.interesseReal === true
+      );
+      if (passouFaseInicial) {
+        return "qualificando";
+      }
+
+      // FRIO: pouco engajado
+      return "frio";
+    };
+
+    const computeDashboardStatusVisual = (lead, tocouTaxa) => {
+      // Status manuais têm prioridade absoluta
+      const statusManual = lead?.statusDashboard || lead?.status || "";
+      if (statusManual === "perdido") return { tipo: "perdido", temp: "frio" };
+      if (statusManual === "fechado" || statusManual === "negociado") return { tipo: "negociado", temp: "quente" };
+      if (statusManual === "em_atendimento") return { tipo: "humano", temp: computeDashboardTemperatura(lead, tocouTaxa) };
+
+      // Senão, calcula visualmente
+      return { tipo: "IA", temp: computeDashboardTemperatura(lead, tocouTaxa) };
+    };
+     
 const isQualifiedLead = lead => {
-  const status = getVisualStatus(lead);
+  /*
+    Critério apertado (13/05/2026):
+    Lead "qualificado" agora exige avanço REAL no funil:
+    - Ouviu a taxa OU
+    - Avançou pelo menos até responsabilidades OU
+    - Está em coleta de dados / pré-análise / CRM OU
+    - Negociado/fechado
+
+    Não basta mais ser "morno" pelo status — precisa ter avanço concreto.
+  */
+  const tocouTaxa = leadAtingiuFaseTaxaParaDashboard(lead);
   const faseFunil = lead?.faseFunil || "";
   const faseQualificacao = lead?.faseQualificacao || "";
-  const temperatura = lead?.temperaturaComercial || "";
-
-  return Boolean(
-    ["morno", "qualificando", "pre_analise", "quente", "em_atendimento", "fechado"].includes(status) ||
-    ["beneficios", "estoque", "responsabilidades", "investimento", "compromisso", "coleta_dados", "pre_analise", "crm"].includes(faseFunil) ||
-    ["morno", "qualificando", "coletando_dados", "dados_parciais", "dados_confirmados", "em_atendimento", "enviado_crm"].includes(faseQualificacao) ||
-    ["morno", "quente"].includes(temperatura) ||
-    lead?.interesseReal === true
-  );
-};
-
-const hasTaxPresented = lead => {
+  const status = getVisualStatus(lead);
   const etapas = lead?.etapas || {};
 
-  return Boolean(
-    etapas.investimento === true ||
-    etapas.taxaPerguntada === true ||
-    lead?.taxaAlinhada === true ||
-    lead?.taxaApresentada === true ||
-    lead?.taxaApresentadaEm ||
-    Number(lead?.taxaObjectionCount || 0) > 0
-  );
-};
+  // Critério 1: chegou na taxa
+  if (tocouTaxa) return true;
 
+  // Critério 2: avançou até pelo menos responsabilidades (etapa 4 do funil)
+  if (etapas.responsabilidades === true || etapas.investimento === true || etapas.compromisso === true) return true;
+
+  // Critério 3: está em coleta ou pré-análise
+  if (["coleta_dados", "confirmacao_dados", "pre_analise", "crm"].includes(faseFunil)) return true;
+  if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados", "dados_confirmados", "enviado_crm"].includes(faseQualificacao)) return true;
+
+  // Critério 4: status final positivo
+  if (["fechado", "em_atendimento", "quente", "pre_analise"].includes(status)) return true;
+
+  return false;
+};
+     
+const hasTaxPresented = lead => {
+  /*
+    Lógica nova (13/05/2026):
+    O dashboard considera "taxa apresentada" sempre que o valor
+    R$ 1.990 já apareceu em alguma mensagem da conversa, ou quando
+    as flags antigas do motor indicarem isso. Isso é só pra exibição
+    no dashboard — o motor continua usando suas próprias regras.
+  */
+  return leadAtingiuFaseTaxaParaDashboard(lead);
+};
+     
 const hasTaxObjection = lead => {
   return Boolean(
     Number(lead?.taxaObjectionCount || 0) > 0 ||
@@ -27333,11 +33139,72 @@ const kpiCardsHtml = [
   </div>
 `).join("");
 
+   /*
+      Classifica cada lead em uma das 5 janelas de gestão:
+      1 = IA gerindo sozinha (humano não precisa agir)
+      2 = Humano precisa assumir (pediu humano OU dados completos p/ CRM)
+      3 = Humano já atendendo (bot bloqueado)
+      4 = Perdidos
+      5 = Fechados
+    */
+    function classificarJanelaLead(lead) {
+      const status = lead.status || lead.statusDashboard || "";
+
+      // Janela 5 — Fechados
+      if (status === "fechado" || lead.statusDashboard === "fechado" || lead.statusDashboard === "negociado") {
+        return 5;
+      }
+
+      // Janela 4 — Perdidos
+      if (status === "perdido" || lead.statusDashboard === "perdido") {
+        return 4;
+      }
+
+      // Janela 3 — Humano já atendendo
+      if (
+        lead.botBloqueadoPorHumano === true ||
+        lead.humanoAssumiu === true ||
+        lead.atendimentoHumanoAtivo === true ||
+        lead.statusOperacional === "em_atendimento" ||
+        status === "em_atendimento"
+      ) {
+        return 3;
+      }
+
+      // Janela 2 — Humano precisa assumir
+      // Critério A: lead pediu para falar com humano
+      const pediuHumano =
+        lead.leadPediuHumano === true ||
+        lead.solicitouAtendimentoHumano === true ||
+        lead.necessitaAtencaoHumanaDashboard === true;
+
+      // Critério B: dados completos, pronto para CRM
+      const dadosCompletos = Boolean(
+        lead.nome &&
+        lead.cpf &&
+        (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+        lead.cidade &&
+        lead.estado
+      );
+
+      if (pediuHumano || dadosCompletos) {
+        return 2;
+      }
+
+      // Janela 1 — IA gerindo sozinha (todo o resto)
+      return 1;
+    }
+
+    const leadsComJanela = leads.map(lead => ({
+      lead: lead,
+      janela: classificarJanelaLead(lead)
+    }));
+
     const rows = leads.map(lead => {
   const phone = lead.telefoneWhatsApp || lead.telefone || lead.user || "";
   const waLink = phone ? `https://wa.me/${phone}` : "#";
   const { cidade, estado } = splitCidadeEstado(lead.cidadeEstado);
-
+       
   const user = encodeURIComponent(lead.user || phone);
   const baseStatusLink = `/lead/${user}/status`;
 
@@ -27370,35 +33237,256 @@ const precisaAtencaoHumana =
   ["alto", "critico", "crítico"].includes(String(supervisorRiscoPerda || "").toLowerCase()) ||
   ["alta", "critica", "crítica"].includes(String(supervisorPrioridadeHumana || "").toLowerCase());
 
-const humanoHtml = humanoAtivo
-  ? `<span class="badge em_atendimento">em atendimento</span>`
-  : precisaAtencaoHumana
-    ? `<span class="badge danger" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`
-    : `<span class="badge ativo">não</span>`;
+const statusVisual = (() => {
+  const tocouTaxa = leadAtingiuFaseTaxaParaDashboard(lead);
+  const temp = computeDashboardTemperatura(lead, tocouTaxa);
 
+  // Badge de temperatura (sempre aparece, ao lado)
+  const tempColors = {
+    quente: { bg: "#fee2e2", color: "#991b1b", label: "quente" },
+    morno: { bg: "#ffedd5", color: "#9a3412", label: "morno" },
+    qualificando: { bg: "#dbeafe", color: "#1e40af", label: "qualif." },
+    frio: { bg: "#f3f4f6", color: "#6b7280", label: "frio" }
+  };
+  const t = tempColors[temp] || tempColors.frio;
+  const tempBadge = `<span style="display:inline-block;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:700;background:${t.bg};color:${t.color};margin-left:4px;">${t.label}</span>`;
+
+  // Status principal
+  let mainBadge = "";
+  if (lead.status === "perdido" || lead.statusDashboard === "perdido") {
+    mainBadge = `<span class="badge badge-perdido">perdido</span>`;
+  } else if (lead.status === "fechado" || lead.statusDashboard === "negociado" || lead.statusDashboard === "fechado") {
+    mainBadge = `<span class="badge badge-negociado">negociado</span>`;
+  } else if (humanoAtivo) {
+    mainBadge = `<span class="badge badge-humano">humano</span>`;
+  } else if (precisaAtencaoHumana) {
+    mainBadge = `<span class="badge badge-atencao" title="${escapeHtml(lead.motivoAtencaoHumanaDashboard || "Atenção humana recomendada")}">atenção</span>`;
+  } else {
+    mainBadge = `<span class="badge badge-ia">IA</span>`;
+  }
+
+  return `<div style="display:flex;align-items:center;flex-wrap:wrap;">${mainBadge}${tempBadge}</div>`;
+})();
+       
   return `
     <tr>
-      <td>${escapeHtml(lead.nome || "-")}</td>
+      <td>${escapeHtml(lead.nome || lead.nomeWhatsApp || "-")}</td>
       <td>${escapeHtml(phone || "-")}</td>
-      <td>${escapeHtml(lead.cpf || "-")}</td>
       <td>${escapeHtml(lead.cidade || cidade || "-")}</td>
       <td>${escapeHtml(lead.estado || estado || "-")}</td>
-      <td>${formatDate(lead.updatedAt)}</td>
-            <td>${humanoHtml}</td>
-      <td class="actions">
-        <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados Adicionais</a>
-        <span class="action-divider"></span>
-        <a class="btn whatsapp" href="${waLink}" target="_blank">WhatsApp</a>
-        <a class="btn" href="/conversation/${user}${senhaQuery}">Mensagem</a>
-        <a class="btn" href="${baseStatusLink}/em_atendimento${senhaQuery}">Atender</a>
-        <a class="btn success" href="${baseStatusLink}/fechado${senhaQuery}">Fechar</a>
-        <a class="btn danger" href="${baseStatusLink}/perdido${senhaQuery}">Perder</a>
+     <td style="font-size:11px;padding-right:14px">${lead.updatedAt ? `<div>${new Date(lead.updatedAt).toLocaleDateString("pt-BR")}</div><div style="color:#64748b">${new Date(lead.updatedAt).toLocaleTimeString("pt-BR")}</div>` : '-'}</td>
+      <td style="text-align:center">${lead.etapas?.programa ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.beneficios ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.estoque ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+     <td style="text-align:center">${lead.etapas?.responsabilidades ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${leadAtingiuFaseTaxaParaDashboard(lead) ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.investimento ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${lead.etapas?.compromisso ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+      <td style="text-align:center">${(lead.interesseAfiliado || lead.afiliadoInstrucoesEnviadas || lead.rotaComercial === 'afiliado') ? '✅' : '<span style="color:#d1d5db">·</span>'}</td>
+    <td>${statusVisual}</td>
+      <td style="font-size:11px;">${(() => {
+        if (lead.status !== "perdido" && lead.statusDashboard !== "perdido") return '<span style="color:#d1d5db">·</span>';
+        const por = lead.encerradoPor || "";
+        const motivo = lead.motivoPerda || "";
+        const motivosLegiveis = {
+          "hostilidade_ou_pedido_parar": "hostilidade / pediu parar",
+          "rejeicao_total_apos_afiliado": "rejeitou tudo após Afiliado",
+          "despedida_apos_afiliado": "despediu após Afiliado",
+          "cadencia_completa_sem_resposta": "cadência completa s/ resposta"
+        };
+        const motivoTxt = motivosLegiveis[motivo] || motivo || "";
+        if (por === "ia") {
+          return '<span style="color:#7c3aed;font-weight:700;">🤖 IA</span>' +
+            (motivoTxt ? '<br><span style="color:#64748b;font-size:10px;">' + escapeHtml(motivoTxt) + '</span>' : '');
+        }
+        if (por === "humano") {
+          return '<span style="color:#ea580c;font-weight:700;">👤 Humano</span>';
+        }
+        return '<span style="color:#94a3b8;">—</span>';
+      })()}</td>
+      
+     <td class="actions">
+        <a class="btn info" href="/lead/${user}/dados-adicionais${senhaQuery}">Dados</a>
+        <a class="btn whatsapp" href="/lead/${user}/whatsapp-atender${senhaQuery}">WhatsApp</a>
+        <div style="margin-top:6px;">
+          <select onchange="if(this.value){if(confirm('Mover este lead para: '+this.options[this.selectedIndex].text+'?')){window.location.href=this.value;}else{this.selectedIndex=0;}}"
+            style="font-size:11px;padding:4px 6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;">
+            <option value="">↪ Mover para...</option>
+            <option value="/lead/${user}/janela/1${senhaQuery}">🤖 IA gerindo sozinha</option>
+            <option value="/lead/${user}/janela/2${senhaQuery}">🙋 Humano precisa assumir</option>
+            <option value="/lead/${user}/janela/3${senhaQuery}">💬 Humano atendendo</option>
+            <option value="/lead/${user}/janela/4${senhaQuery}">❌ Perdido</option>
+            <option value="/lead/${user}/janela/5${senhaQuery}">✅ Fechado</option>
+          </select>
+        </div>
       </td>
+      
     </tr>
   `;
-}).join("");
+});
+
+    // Agrupar as linhas por janela
+    const rowsPorJanela = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+    leads.forEach((lead, idx) => {
+      const janela = classificarJanelaLead(lead);
+      rowsPorJanela[janela].push(rows[idx]);
+    });
+
+    const janelaConfig = {
+      1: { titulo: "🤖 IA gerindo sozinha", desc: "A IA está conduzindo. Você não precisa agir agora.", cor: "#16a34a" },
+      2: { titulo: "🙋 Humano precisa assumir", desc: "Lead pediu atendimento ou tem dados completos prontos para o CRM.", cor: "#ea580c" },
+      3: { titulo: "💬 Humano atendendo", desc: "Você está conversando. A SDR IA não fala mais com estes leads.", cor: "#2563eb" },
+      4: { titulo: "❌ Perdidos", desc: "Leads encerrados sem conversão.", cor: "#dc2626" },
+      5: { titulo: "✅ Fechados", desc: "Negócios fechados.", cor: "#15803d" }
+    };
+
+    function montarTabelaJanela(janela) {
+      const linhas = rowsPorJanela[janela];
+      const cfg = janelaConfig[janela];
+      const corpoTabela = linhas.length > 0
+        ? linhas.join("")
+        : `<tr><td colspan="16" style="text-align:center;padding:20px;color:#64748b;">Nenhum lead nesta janela.</td></tr>`;
+       
+      return `
+        <div class="janela-bloco" data-janela="${janela}" style="display:${janela === 1 ? "block" : "none"};">
+          <div style="padding:12px 16px;background:${cfg.cor}15;border-left:4px solid ${cfg.cor};border-radius:6px;margin-bottom:12px;">
+            <strong style="color:${cfg.cor};font-size:15px;">${cfg.titulo}</strong>
+            <span style="color:#64748b;font-size:13px;margin-left:8px;">${cfg.desc}</span>
+            <span style="float:right;font-weight:700;color:${cfg.cor};">${linhas.length} lead(s)</span>
+          </div>
+          <div class="leads-table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th><th>Telefone</th><th>Cidade</th><th>Estado</th>
+                  <th>Atualizado</th><th>Prog</th><th>Benef</th><th>Estoq</th>
+                  <th>Resp</th><th>Taxa<br>Inic.</th><th>Taxa<br>Final.</th>
+                  <th>Comp</th><th>Afil</th><th>Status</th><th>Encerrado<br>por</th><th>Ação</th>
+                </tr>
+              </thead>
+              <tbody>${corpoTabela}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+/*
+      CAIXA DE RECONTATOS AGENDADOS.
+      Lista os recontatos pendentes (collection scheduled_callbacks) que a
+      IA vai disparar automaticamente. É informativa: o operador humano só
+      acompanha — quem dispara é o cron de recontatos.
+    */
+    let recontatosHtml = "";
+    try {
+      const recontatosPendentes = await db.collection("scheduled_callbacks")
+        .find({ status: "pendente" })
+        .sort({ scheduledDate: 1 })
+        .limit(50)
+        .toArray();
+
+      if (recontatosPendentes.length > 0) {
+        const agoraRec = new Date(
+          new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })
+        );
+        const fimDeHoje = new Date(agoraRec);
+        fimDeHoje.setHours(23, 59, 59, 999);
+
+        const linhasRec = recontatosPendentes.map(rec => {
+          const dataRec = rec.scheduledDate ? new Date(rec.scheduledDate) : null;
+          const ehHoje = dataRec && dataRec.getTime() <= fimDeHoje.getTime();
+          const ehAtrasado = dataRec && dataRec.getTime() < agoraRec.getTime();
+
+          const dataTxt = dataRec
+            ? dataRec.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" })
+            : "-";
+          const horaTxt = dataRec
+            ? dataRec.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+            : "-";
+
+          const telRec = rec.user || "";
+          const waLinkRec = telRec ? `https://wa.me/${telRec}` : "#";
+
+          let tagTempo = "";
+          if (ehAtrasado) {
+            tagTempo = `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">atrasado</span>`;
+          } else if (ehHoje) {
+            tagTempo = `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;">hoje</span>`;
+          }
+
+          return `
+            <tr style="${ehHoje ? "background:#fffbeb;" : ""}">
+              <td style="padding:8px 12px;font-weight:600;">📅 ${dataTxt} ${horaTxt} ${tagTempo}</td>
+              <td style="padding:8px 12px;">${escapeHtml(rec.nome || "Sem nome")}</td>
+              <td style="padding:8px 12px;color:#64748b;">${escapeHtml(telRec || "-")}</td>
+              <td style="padding:8px 12px;">
+                <a href="${waLinkRec}" target="_blank" style="color:#16a34a;font-weight:700;text-decoration:none;">WhatsApp →</a>
+              </td>
+            </tr>
+          `;
+        }).join("");
+
+        recontatosHtml = `
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:20px;overflow:hidden;">
+            <div style="padding:12px 16px;background:#eff6ff;border-left:4px solid #2563eb;">
+              <strong style="color:#1e40af;font-size:15px;">📅 Recontatos Agendados</strong>
+              <span style="color:#64748b;font-size:13px;margin-left:8px;">A IA vai retomar o contato automaticamente nos horários abaixo.</span>
+              <span style="float:right;font-weight:700;color:#1e40af;">${recontatosPendentes.length} agendado(s)</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+              <tbody>${linhasRec}</tbody>
+            </table>
+          </div>
+        `;
+      }
+    } catch (erroRecontatos) {
+      console.error("Erro ao carregar recontatos agendados no dashboard:", erroRecontatos.message);
+      recontatosHtml = "";
+    }
+     
+    const janelasHtml = `
+      <div class="janelas-abas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+        ${[1,2,3,4,5].map(j => {
+          const cfg = janelaConfig[j];
+          const qtd = rowsPorJanela[j].length;
+          return `<button type="button" class="janela-aba" data-aba="${j}"
+            style="cursor:pointer;padding:10px 14px;border-radius:8px;border:2px solid ${cfg.cor};
+            background:${j === 1 ? cfg.cor : "transparent"};color:${j === 1 ? "#fff" : cfg.cor};
+            font-weight:700;font-size:13px;"
+            onclick="trocarJanela(${j})">${cfg.titulo} (${qtd})</button>`;
+        }).join("")}
+      </div>
+      ${[1,2,3,4,5].map(j => montarTabelaJanela(j)).join("")}
+      <script>
+        function trocarJanela(janela) {
+          document.querySelectorAll('.janela-bloco').forEach(function(b) {
+            b.style.display = (Number(b.dataset.janela) === janela) ? 'block' : 'none';
+          });
+          document.querySelectorAll('.janela-aba').forEach(function(a) {
+            var j = Number(a.dataset.aba);
+            var cores = {1:'#16a34a',2:'#ea580c',3:'#2563eb',4:'#dc2626',5:'#15803d'};
+            if (j === janela) {
+              a.style.background = cores[j];
+              a.style.color = '#fff';
+            } else {
+              a.style.background = 'transparent';
+              a.style.color = cores[j];
+            }
+          });
+        }
+        // Ao carregar a página, abrir a janela indicada na URL (se houver)
+        (function() {
+          var params = new URLSearchParams(window.location.search);
+          var janelaUrl = Number(params.get("janela"));
+          if (janelaUrl >= 1 && janelaUrl <= 5) {
+            trocarJanela(janelaUrl);
+          }
+        })();
+      </script>
+    `;
 
     res.send(`
+    
       <!DOCTYPE html>
       <html lang="pt-BR">
       <head>
@@ -28136,7 +34224,7 @@ body {
 
 table {
   width: 100%;
-  min-width: 1100px;
+  min-width: 1400px;
   border-collapse: collapse;
   background: #fff;
 }
@@ -28146,18 +34234,36 @@ th {
   color: #334155;
   font-size: 12px;
   text-align: left;
-  padding: 12px;
+  padding: 12px 8px;
   border-bottom: 1px solid #e5e7eb;
   white-space: nowrap;
 }
 
-th a {
+th:nth-child(5) { min-width: 90px; padding-right: 14px !important; }
+td:nth-child(5) { min-width: 90px; }
+th:nth-child(1) { max-width: 150px; }
+td:nth-child(1) { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+th:nth-child(4) { max-width: 90px; }
+td:nth-child(4) { max-width: 90px; }
+
+th:nth-child(5) { max-width: 50px; }
+td:nth-child(5) { max-width: 50px; }
+
+th:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 12px 4px; background: #f0f4ff; }
+td:nth-child(n+6):nth-child(-n+13) { text-align: center; max-width: 45px; width: 45px; padding: 11px 4px; }
+
+th:nth-child(6) { border-left: 2px solid #cbd5e1; }
+td:nth-child(6) { border-left: 2px solid #e2e8f0; }
+
+th:nth-child(14) { border-left: 2px solid #cbd5e1; }
+td:nth-child(14) { border-left: 2px solid #e2e8f0; }th a {
   color: #334155;
   text-decoration: none;
 }
 
 td {
-  padding: 11px 12px;
+  padding: 11px 8px;
   border-bottom: 1px solid #f1f5f9;
   color: #111827;
   font-size: 13px;
@@ -28179,19 +34285,36 @@ tr:hover td {
   color: #374151;
 }
 
-.badge.ativo {
-  background: #dcfce7;
-  color: #166534;
+.badge.ativo,
+.badge-ia {
+  background: #dbeafe;
+  color: #1e40af;
 }
 
-.badge.em_atendimento {
+.badge.em_atendimento,
+.badge-humano {
   background: #ffedd5;
   color: #c2410c;
 }
 
-.badge.danger {
+.badge.danger,
+.badge-perdido {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.badge-negociado {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-atencao {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.btn-negociado {
+  background: #16a34a;
 }
 
 .actions {
@@ -28205,15 +34328,15 @@ tr:hover td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 7px 9px;
-  border-radius: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
   background: #374151;
   color: white;
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
   border: 0;
+  white-space: nowrap;
 }
-
 .btn.whatsapp {
   background: #16a34a;
 }
@@ -28309,7 +34432,7 @@ tr:hover td {
 
   table {
     font-size: 12px;
-    min-width: 900px;
+    min-width: 1400px;
   }
 
   th,
@@ -28351,9 +34474,20 @@ tr:hover td {
       return;
     }
 
-    window.location.reload();
-  }, 10000);
+    // Preserva a janela ativa no refresh, lendo qual aba está visível
+    var janelaAtiva = 1;
+    document.querySelectorAll(".janela-bloco").forEach(function(b) {
+      if (b.style.display !== "none") {
+        janelaAtiva = Number(b.dataset.janela) || 1;
+      }
+    });
 
+    var baseUrl = "/dashboard?sort=updatedAt&dir=desc&janela=" + janelaAtiva +
+      (dashboardSenha ? "&senha=" + encodeURIComponent(dashboardSenha) : "");
+    window.location.href = baseUrl;
+  }, 90000);
+  
+  
   function printCRM() {
     window.print();
   }
@@ -28382,7 +34516,7 @@ tr:hover td {
     ].join("");
   }
 
-  function renderCLevelAnalysis(analysis) {
+  function renderCLevelAnalysis(analysis, relatorioTrafego) {
     if (!analysis) {
       return "<p>Não foi possível montar a análise.</p>";
     }
@@ -28390,7 +34524,7 @@ tr:hover td {
     const qualidadeTrafego = analysis.qualidadeTrafego || {};
     const saudeFunil = analysis.saudeFunil || {};
 
-    return [
+    const partes = [
       "<div class='c-level-response-title'>Resposta estratégica</div>",
       "<h4>" + escapeHtmlClient(analysis.tituloDiagnostico || "Diagnóstico executivo") + "</h4>",
       "<div>",
@@ -28408,9 +34542,73 @@ tr:hover td {
       renderCLevelList("Estratégia de melhoria", analysis.estrategiaMelhoria),
       renderCLevelList("Plano dos próximos 7 dias", analysis.planoProximos7Dias),
       analysis.observacaoSobreAmostra ? "<h5>Observação sobre a amostra</h5><p>" + escapeHtmlClient(analysis.observacaoSobreAmostra) + "</p>" : ""
-    ].join("");
+    ];
+
+    if (relatorioTrafego && Array.isArray(relatorioTrafego.linhas) && relatorioTrafego.linhas.length > 0) {
+      partes.push(renderTabelaTrafego(relatorioTrafego));
+    }
+
+    return partes.join("");
   }
 
+  function renderTabelaTrafego(rel) {
+    const resumo = rel.resumoQuantitativo || {};
+
+    const kvList = obj => {
+      if (!obj || Object.keys(obj).length === 0) return "<em>sem dados</em>";
+      return Object.entries(obj)
+        .map(([k, v]) => "<strong>" + escapeHtmlClient(k) + "</strong>: " + v)
+        .join(" · ");
+    };
+
+    const rows = rel.linhas.map(l => {
+      return "<tr>" +
+        "<td style='padding:6px 8px;font-family:monospace;font-size:11px;'>" + escapeHtmlClient(l.telefoneMasked) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.dataEntrada) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.cidade) + "/" + escapeHtmlClient(l.estado) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;max-width:280px;'>" + escapeHtmlClient(l.segundaMensagem || "-") + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;text-align:center;'>" + (l.engajou ? "\u2705" : "\u00b7") + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.etapaMaximaLabel) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.rotaFinal) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.statusFinal) + "</td>" +
+        "<td style='padding:6px 8px;font-size:11px;'>" + escapeHtmlClient(l.motivoSaida) + "</td>" +
+      "</tr>";
+    }).join("");
+
+    return [
+      "<div style='margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.15);'>",
+        "<h5 style='color:#fde68a;font-size:14px;'>\ud83d\udcca Relatório de Tráfego \u2014 " + escapeHtmlClient(rel.periodoLabel) + "</h5>",
+        "<div style='background:rgba(255,255,255,0.06);border-radius:8px;padding:12px;margin-bottom:14px;font-size:12px;line-height:1.6;'>",
+          "<div><strong>Volume:</strong> " + resumo.volumeTotal + " leads | <strong>Engajados:</strong> " + resumo.engajados + " (" + resumo.taxaEngajamento + ") | <strong>Média de msgs/lead:</strong> " + resumo.mediaMsgsPorLead + "</div>",
+          "<div style='margin-top:6px;'><strong>Top estados:</strong> " + kvList(resumo.porEstado) + "</div>",
+          "<div style='margin-top:6px;'><strong>Top cidades:</strong> " + kvList(resumo.porCidade) + "</div>",
+          "<div style='margin-top:6px;'><strong>Por hora de entrada:</strong> " + kvList(resumo.porHora) + "</div>",
+          "<div style='margin-top:6px;'><strong>Rota final:</strong> " + kvList(resumo.porRotaFinal) + "</div>",
+          "<div style='margin-top:6px;'><strong>Status final:</strong> " + kvList(resumo.porStatusFinal) + "</div>",
+          "<div style='margin-top:6px;'><strong>Etapa máxima atingida:</strong> " + kvList(resumo.porEtapaMaxima) + "</div>",
+        "</div>",
+        "<div style='overflow-x:auto;background:rgba(255,255,255,0.04);border-radius:8px;'>",
+          "<table style='width:100%;border-collapse:collapse;color:#e2e8f0;'>",
+            "<thead>",
+              "<tr style='background:rgba(255,255,255,0.10);'>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Telefone</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Entrada</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Cidade/UF</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>2\u00aa msg (inten\u00e7\u00e3o real)</th>",
+                "<th style='padding:8px;text-align:center;font-size:11px;'>Engajou</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Etapa m\u00e1x</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Rota</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Status</th>",
+                "<th style='padding:8px;text-align:left;font-size:11px;'>Motivo de sa\u00edda</th>",
+              "</tr>",
+            "</thead>",
+            "<tbody>" + rows + "</tbody>",
+          "</table>",
+        "</div>",
+      "</div>"
+    ].join("");
+  }
+  
   async function askCLevel(questionOverride) {
     const questionBox = document.getElementById("cLevelQuestion");
     const responseBox = document.getElementById("cLevelResponse");
@@ -28469,7 +34667,7 @@ tr:hover td {
       }
 
       responseBox.classList.remove("loading");
-      responseBox.innerHTML = renderCLevelAnalysis(data.analysis);
+      responseBox.innerHTML = renderCLevelAnalysis(data.analysis, data.relatorioTrafego);
     } catch (error) {
       responseBox.classList.remove("loading");
       responseBox.classList.add("error");
@@ -28656,29 +34854,13 @@ tr:hover td {
   <button type="button" onclick="printCRM()">Imprimir</button>
 </form>
           <div class="print-info">
-            Exibindo ${leads.length} lead(s). Clique nos títulos das colunas para ordenar.
+            ${leads.length} lead(s) no total, organizados em 5 janelas de gestão.
           </div>
 
-          <div class="leads-table-card">
-<table>
+          ${recontatosHtml}
 
-           <thead>
-  <tr>
-    <th><a href="${makeSortLink("nome", "Nome")}">Nome</a></th>
-    <th><a href="${makeSortLink("telefone", "Telefone")}">Telefone</a></th>
-    <th><a href="${makeSortLink("cpf", "CPF")}">CPF</a></th>
-    <th><a href="${makeSortLink("cidade", "Cidade")}">Cidade</a></th>
-    <th><a href="${makeSortLink("estado", "Estado")}">Estado</a></th>
-    <th><a href="${makeSortLink("updatedAt", "Atualizado")}">Atualizado</a></th>
-    <th>Humano</th>
-    <th>Ação</th>
-  </tr>
-</thead>
-            <tbody>
-                       ${rows || `<tr><td colspan="8">Nenhum lead encontrado.</td></tr>`}
-            </tbody>
-          </table>
-</div>
+          ${janelasHtml}
+          
         </div>
       </body>
       </html>
@@ -28688,7 +34870,154 @@ tr:hover td {
     res.status(500).send("Erro ao carregar dashboard.");
   }
 });
-   
+
+/* =========================
+   ROTA DE DIAGNÓSTICO — investigação Bug 20 (mensagens perdidas)
+   Uso: GET /diagnostico-anderson?senha=SENHA
+   Read-only. Não altera nada. Pode ser removida depois.
+   ========================= */
+app.get("/diagnostico-anderson", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const userTarget = "5532920001830";
+    const userMaskedRegex = /5532.*30/;
+
+    // 1. Conversa completa do Anderson em conversations
+    const conversation = await db.collection("conversations").findOne(
+      { user: userTarget },
+      { projection: { messages: 1, totalMessages: 1, createdAt: 1, updatedAt: 1 } }
+    );
+
+    const messagesFromMongo = (conversation?.messages || []).map(m => ({
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt
+    }));
+
+    // 2. Buffer órfão do Anderson + contagem global
+    const bufferOrfao = await db.collection("incoming_message_buffers").find({
+      $or: [
+        { _id: userTarget },
+        { user: userTarget }
+      ]
+    }).toArray();
+
+    const totalBuffersGlobal = await db.collection("incoming_message_buffers")
+      .countDocuments({});
+
+    // 3. Audit events do Anderson — todos
+    const auditAll = await db.collection("audit_events").find({
+      $or: [
+        { userMasked: userMaskedRegex },
+        { user: userTarget }
+      ]
+    })
+    .sort({ timestamp: 1 })
+    .project({
+      timestamp: 1,
+      component: 1,
+      eventType: 1,
+      severity: 1,
+      "payload.mensagemLead": 1,
+      "payload.respostaFinal": 1,
+      "payload.criticosRemanescentes": 1,
+      "payload.tiposIgnorados": 1
+    })
+    .toArray();
+
+    // 4. Buscas específicas por frases-chave nos audits
+    const buscarFrase = async (regex) => {
+      const docs = await db.collection("audit_events").find({
+        $and: [
+          { $or: [ { userMasked: userMaskedRegex }, { user: userTarget } ] },
+          { $or: [
+            { "payload.mensagemLead": { $regex: regex, $options: "i" } },
+            { "payload.respostaFinal": { $regex: regex, $options: "i" } },
+            { "payload.text": { $regex: regex, $options: "i" } }
+          ] }
+        ]
+      }).project({
+        timestamp: 1,
+        eventType: 1,
+        component: 1,
+        "payload.mensagemLead": 1,
+        "payload.text": 1
+      }).toArray();
+      return docs;
+    };
+
+    const buscaRepresentante = await buscarFrase("representante");
+    const buscaDistribuidor = await buscarFrase("distribuidor");
+    const buscaValidade = await buscarFrase("validade");
+    const buscaExperiencia = await buscarFrase("28 anos");
+
+    // 5. Resumo agregado por eventType
+    const resumoEventTypes = {};
+    for (const ev of auditAll) {
+      resumoEventTypes[ev.eventType] = (resumoEventTypes[ev.eventType] || 0) + 1;
+    }
+
+    return res.json({
+      _meta: {
+        geradoEm: new Date().toISOString(),
+        userAlvo: userTarget,
+        descricao: "Diagnostico Bug 20 - Anderson"
+      },
+
+      conversations: {
+        totalMessagesField: conversation?.totalMessages || 0,
+        countRealDoArray: messagesFromMongo.length,
+        countUserRole: messagesFromMongo.filter(m => m.role === "user").length,
+        countAssistantRole: messagesFromMongo.filter(m => m.role === "assistant").length,
+        createdAt: conversation?.createdAt || null,
+        updatedAt: conversation?.updatedAt || null,
+        mensagensCompletas: messagesFromMongo
+      },
+
+      buffer: {
+        totalGlobalNoSistema: totalBuffersGlobal,
+        anderson: bufferOrfao
+      },
+
+      auditEvents: {
+        totalGeral: auditAll.length,
+        resumoPorEventType: resumoEventTypes,
+        amostraCronologica: auditAll
+      },
+
+      buscaPorFrase: {
+        representante: {
+          count: buscaRepresentante.length,
+          eventos: buscaRepresentante
+        },
+        distribuidor: {
+          count: buscaDistribuidor.length,
+          eventos: buscaDistribuidor
+        },
+        validade: {
+          count: buscaValidade.length,
+          eventos: buscaValidade
+        },
+        "28 anos": {
+          count: buscaExperiencia.length,
+          eventos: buscaExperiencia
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error("Erro em /diagnostico-anderson:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
