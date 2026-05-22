@@ -409,28 +409,36 @@ recorrente com audit "vazio".
 
 ---
 
-## 16. Bug 20-A Path A — preservar mensagem do lead no agendamento
+## 16. Bug 20-A Path A — investigado, sem bug
 
-**Onde:** server.js, bloco de scheduling em ~23286-23311 (Path A 
-mapeado durante investigação Anderson).
+**Onde:** server.js, bloco de scheduling no webhook handler 
+(~23298-23322) + função `scheduleClientCallback` (~20786-20880).
 
-**Problema:** mesmo bug estrutural do Path B (Bug 20-A já fixado em 
-commit 2ff6211), mas no caminho de detecção de agendamento. Quando 
-`detectScheduleRequest` aciona early-return, a mensagem do lead 
-não é pushada no `history` antes do save. Lead que pede agendamento 
-desaparece de `conversations.messages`.
+**Investigação:** durante a sessão de 2026-05-21, o Path A foi 
+inicialmente classificado como tendo o mesmo bug do Path B 
+(early-return sem preservar mensagem do lead no histórico). 
+A hipótese surgiu da análise dos 6 paths de early-return do 
+webhook handler, sem inspecionar o que as funções chamadas 
+faziam internamente.
 
-**Sugestão de correção:** aplicar mesmo padrão do R-A do Path B 
-(history.push role: "user" com origem: "lead" antes do retorno), 
-porém com adaptação: Path A não tem `loadConversation` no fluxo 
-atual, então é necessário adicionar load + 2 pushes + saveConversation 
-ao bloco. Implementação mais invasiva — recomendado commit isolado, 
-após R-A do Path B validar em produção (1-2 dias).
+**Conclusão:** análise aprofundada da função `scheduleClientCallback` 
+(chamada no Path A) revelou que ela JÁ FAZ load + push user + 
+push assistant + save nas linhas 20855-20868, padrão idêntico 
+ao R-A aplicado ao Path B (commit 2ff6211). Lead message vai 
+com `content: detection.originalText, origem: "lead"`. Assistant 
+message vai com `content: confirmationMsg, origem: "agendamento_confirmacao"`. 
+Não há bug a corrigir.
 
-**Prioridade:** média.
+**Lição metodológica:** mapeamento de paths de early-return deve 
+olhar o que acontece DENTRO das funções chamadas, não apenas o 
+webhook handler externo. Inspeção rasa pode gerar falsos positivos 
+de "missing persistence".
 
-**Identificado:** sessão Anderson, análise R-A do Claude Code 
-(2026-05-21).
+**Status:** sem ação necessária. Item mantido no TODO como registro 
+da investigação e da metodologia corrigida.
+
+**Identificado:** sessão Anderson, análise inicial do Claude Code 
+(2026-05-21). Invalidado na mesma sessão durante dúvidas pré-fix.
 
 ---
 
