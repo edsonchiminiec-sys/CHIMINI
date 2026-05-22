@@ -35485,6 +35485,90 @@ app.get("/diagnostico-22-05-2026-bis", async (req, res) => {
   }
 });
 
+/* =========================
+   ROTA DE DIAGNÓSTICO — auditoria forense 22/05/2026 TER
+   Uso: GET /diagnostico-22-05-2026-ter?senha=SENHA
+   Read-only. 4 queries (J, K, L, M) para confirmar Hipótese A do Bug 3.
+   ========================= */
+app.get("/diagnostico-22-05-2026-ter", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const result = {
+      geradoEm: new Date().toISOString(),
+      descricao: "Diagnóstico forense 22/05/2026 ter — janela crítica 18/05 11:00-14:00 + bootstrap detection"
+    };
+
+    // QUERY J — Janela crítica do lead 5514991168002 (18/05 11:00-14:00 UTC)
+    result.queryJ_janelaCriticaLead = await db.collection("audit_events").find(
+      {
+        userPhone: "5514991168002",
+        timestamp: {
+          $gte: new Date("2026-05-18T11:00:00.000Z"),
+          $lte: new Date("2026-05-18T14:00:00.000Z")
+        }
+      }
+    ).sort({ timestamp: 1 }).toArray();
+
+    // QUERY K — Eventos de sistema/bootstrap em 18/05 13:00-14:00 UTC
+    result.queryK_eventosSistemaBootstrap = await db.collection("audit_events").find(
+      {
+        timestamp: {
+          $gte: new Date("2026-05-18T13:00:00.000Z"),
+          $lte: new Date("2026-05-18T14:00:00.000Z")
+        },
+        $or: [
+          { eventType: { $regex: "bootstrap" } },
+          { eventType: { $regex: "sistema" } },
+          { eventType: { $regex: "deploy" } },
+          { eventType: { $regex: "boot" } },
+          { component: "backend_sistema" }
+        ]
+      }
+    ).sort({ timestamp: 1 }).toArray();
+
+    // QUERY L — Estado atual do lead 5514991168002 no banco
+    result.queryL_estadoAtualLead = await db.collection("leads").findOne(
+      { user: "5514991168002" },
+      { projection: {
+          user: 1, status: 1, statusOperacional: 1, encerradoPor: 1,
+          motivoPerda: 1, perdidoEm: 1, followupStep: 1, proximoFollowupEm: 1,
+          reativadoPeloDashboardEm: 1, updatedAt: 1, createdAt: 1,
+          followupVersionDb: 1, faseQualificacao: 1, statusDashboard: 1,
+          statusAnteriorDashboard: 1, faseAnteriorDashboard: 1
+        }
+      }
+    );
+
+    // QUERY M — Confirmação Hipótese A: bootstrap rodando em 18/05 13:00-14:00
+    result.queryM_bootstrapDetection = await db.collection("audit_events").find(
+      {
+        timestamp: {
+          $gte: new Date("2026-05-18T13:00:00.000Z"),
+          $lte: new Date("2026-05-18T14:00:00.000Z")
+        },
+        $or: [
+          { "payload.evento": "bootstrap_executado" },
+          { "payload.evento": { $regex: "bootstrap" } },
+          { eventType: { $regex: "bootstrap" } }
+        ]
+      }
+    ).sort({ timestamp: 1 }).toArray();
+
+    return res.json(result);
+
+  } catch (error) {
+    console.error("Erro em /diagnostico-22-05-2026-ter:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
