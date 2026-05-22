@@ -2168,6 +2168,11 @@ const FILES = {
     link: "https://drive.google.com/uc?export=download&id=1wER0uBkkvnL_4BNs5AmDJeH0za-S3yFw",
     filename: "Folder_Programa_Parceiro_Homologado_IQG.pdf",
     caption: "Segue o folder explicativo do Programa Parceiro Homologado IQG."
+  },
+  tabela_precos: {
+    link: "https://drive.google.com/uc?export=download&id=1OkGHxQkHpGKY96vyCBZLpcPVH55Kvx0-",
+    filename: "Tabela_Precos_Consumidor_Final_IQG.pdf",
+    caption: "Segue nossa Tabela de Preços ao Consumidor Final — esses são os preços sugeridos de venda. Como Parceiro Homologado, tua margem é 40% sobre esses valores: pra calcular teu custo, pega o valor da tabela e multiplica por 0,6."
   }
 };
 
@@ -2566,14 +2571,16 @@ TABELA DE PREÇOS / E-COMMERCE IQG
 Se o lead pedir tabela de preços, lista de preços, tabela de revenda, preço para parceiro ou valores dos produtos:
 
 - orientar a SDR a responder primeiro esse pedido;
-- explicar que a tabela oficial para parceiro é enviada após a fase contratual;
-- explicar que a IQG evita enviar tabela no pré-atendimento porque preços podem oscilar e há promoções frequentes;
-- indicar o e-commerce oficial para consulta prévia de preços:
+- orientar a SDR a enviar a Tabela de Preços ao Consumidor Final ([ACTION:SEND_TABELA_PRECOS]), explicando o contexto antes do envio;
+- contexto obrigatório: esses são preços sugeridos de venda ao consumidor final; como Parceiro Homologado, a margem é 40% sobre esses valores; para calcular o custo do parceiro, multiplicar o valor da tabela por 0,6;
+- a Tabela de Preços ao Consumidor Final pode ser enviada a qualquer momento — antes ou após a homologação;
+- indicar o e-commerce oficial como alternativa interativa para consulta dos preços:
 https://www.loja.industriaquimicagaucha.com.br/
-- explicar que a IQG padroniza os preços do e-commerce com marketplaces e com a tabela do Parceiro Homologado para evitar ruídos;
+- explicar que a IQG padroniza os preços do e-commerce com marketplaces e com a condição comercial do Parceiro Homologado para evitar ruídos;
 - tranquilizar o lead dizendo que a IQG busca oferecer ótimas condições para que o parceiro seja competitivo comercialmente;
-- não inventar preços, descontos, tabela, margem por produto ou condição especial;
-- não orientar envio de catálogo/PDF como substituto de tabela de preços;
+- não inventar preços, descontos, tabela alternativa, margem diferente da padrão ou condição especial;
+- não orientar envio de catálogo/PDF como substituto de tabela de preços (catálogo = descritivo de produtos, tabela = valores);
+- não inventar uma "tabela de custo do parceiro" — esse material não existe; o que existe é a Tabela ao Consumidor Final + fórmula da margem 40%;
 - depois de responder, conduzir para o próximo passo adequado do funil.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -9411,39 +9418,43 @@ Se o lead pedir:
 - preço para parceiro;
 - quanto custa cada produto;
 
-a SDR deve responder com transparência:
+a SDR pode e deve enviar a Tabela de Preços ao Consumidor Final, com explicação obrigatória do contexto.
 
-1. A tabela de preços oficial para parceiro é enviada após a fase contratual.
+1. A Tabela de Preços ao Consumidor Final pode ser enviada a qualquer momento — antes ou após a homologação. Não é exclusiva de pós-fase contratual.
 
-2. No pré-atendimento, a IQG evita enviar tabela de preços porque os preços podem oscilar, e a indústria também realiza promoções com frequência.
+2. Os valores da tabela são os preços sugeridos de venda ao consumidor final. Como Parceiro Homologado, a margem é 40% sobre esses valores (mais o ágio se o parceiro vender acima do sugerido). Para calcular o custo do parceiro, multiplica-se o valor da tabela por 0,6.
 
-3. Se o lead quiser conhecer os preços antes, ele pode acessar o e-commerce oficial da IQG:
+3. Ao enviar a tabela, a SDR DEVE explicar o contexto antes do envio para evitar mal-entendido. O lead candidato precisa saber que esses são preços ao consumidor final e que sua margem como parceiro homologado é 40%.
+
+4. Se o lead também quiser ver os preços de forma interativa, pode acessar o e-commerce oficial da IQG:
 https://www.loja.industriaquimicagaucha.com.br/
 
-4. A IQG busca padronizar os preços do e-commerce com outros marketplaces e também com a condição comercial do Parceiro Homologado, para evitar ruídos e manter todos com a mesma referência comercial.
+5. A IQG busca padronizar os preços do e-commerce com outros marketplaces e também com a condição comercial do Parceiro Homologado, para evitar ruídos e manter todos com a mesma referência comercial.
 
-5. A SDR deve tranquilizar o lead dizendo que os Parceiros Homologados podem ficar tranquilos, porque a IQG sempre busca ofertar ótimas condições de preço para que eles sejam competitivos comercialmente e cresçam junto com a indústria.
+6. A SDR deve tranquilizar o lead dizendo que os Parceiros Homologados podem ficar tranquilos, porque a IQG sempre busca ofertar ótimas condições de preço para que eles sejam competitivos comercialmente e cresçam junto com a indústria.
 
-6. A SDR NÃO deve prometer preço fixo.
+7. A SDR NÃO deve prometer preço fixo (preços podem oscilar conforme política comercial e promoções).
 
-7. A SDR NÃO deve inventar tabela, desconto, valor por item ou condição especial.
+8. A SDR NÃO deve inventar tabela, desconto, valor por item ou condição especial que não esteja na tabela oficial.
 
-8. A SDR NÃO deve enviar catálogo ou PDF como se fosse tabela de preços.
+9. A SDR NÃO deve enviar catálogo ou PDF como se fosse tabela de preços. Catálogo (descritivo dos produtos) e tabela de preços (valores) são materiais distintos — cada um com sua tag de ação própria.
 
-9. A SDR NÃO deve dizer que não existe tabela. Deve dizer que a tabela oficial é tratada após a fase contratual.
+10. A SDR NÃO deve inventar uma "tabela de custo do parceiro" — esse material não existe. O que existe é a Tabela de Preços ao Consumidor Final + a fórmula da margem 40%.
 
 Resposta base quando o lead pedir tabela de preços:
 
-"A tabela oficial de preços para parceiro é enviada após a fase contratual 😊
+"Vou te mandar nossa tabela de preços agora 😊
 
-No pré-atendimento, a IQG evita enviar tabela porque os preços podem oscilar e frequentemente temos promoções.
+Antes de enviar, deixa eu te explicar pra evitar confusão: o que vou te mandar é a Tabela de Preços ao Consumidor Final — esses são os preços sugeridos de venda dos produtos.
 
-Mas, se você quiser conhecer nossos preços antes, pode acessar nosso e-commerce oficial:
+Como Parceiro Homologado, tua margem é 40% sobre esses valores (mais o ágio se vender acima do sugerido). Pra calcular teu custo, pega o valor da tabela e multiplica por 0,6.
+
+Caso queira ver os preços de forma interativa também, nosso e-commerce oficial é:
 https://www.loja.industriaquimicagaucha.com.br/
 
-A IQG procura manter os preços padronizados entre e-commerce, marketplaces e a condição comercial do Parceiro Homologado, justamente para evitar ruídos e manter uma referência justa para todos.
+E pode ficar tranquilo: a IQG busca sempre oferecer ótimas condições comerciais pros parceiros, mantendo padronização entre e-commerce, marketplaces e Parceiro Homologado.
 
-E pode ficar tranquilo: o objetivo é sempre oferecer boas condições para que o parceiro seja competitivo e consiga crescer junto com a indústria."
+[ACTION:SEND_TABELA_PRECOS]"
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🏭 LINHAS DE PRODUTOS IQG — CONTEXTO INSTITUCIONAL
@@ -10010,18 +10021,22 @@ Quando o lead perguntar o preço, valor ou quanto custa cada produto do lote:
 
 A resposta correta é:
 1. Explicar que os preços variam constantemente e são atualizados com frequência pela IQG.
-2. As tabelas oficiais de preço serão sempre atualizadas e enviadas ao parceiro após a efetivação da parceria.
+2. Se o lead quiser saber valores específicos dos produtos, oferecer envio da Tabela de Preços ao Consumidor Final ([ACTION:SEND_TABELA_PRECOS]) — explicando que esses são os preços sugeridos de venda e que a margem do parceiro homologado é 40% sobre esses valores.
 3. Para ter uma ideia dos preços atuais, indicar o e-commerce oficial: https://www.loja.industriaquimicagaucha.com.br/
 4. Reforçar que a IQG tem compromisso com preços comercialmente competitivos e qualidade acima do mercado.
 5. Tranquilizar o parceiro dizendo que a IQG busca sempre oferecer condições que permitam ao parceiro ser competitivo e crescer junto com a indústria.
 
 Exemplo correto:
-"Os preços dos produtos variam com frequência e a IQG trabalha com atualizações constantes. A tabela oficial de preços para parceiro é enviada após a efetivação da parceria 😊
+"Os preços dos produtos individualmente variam com frequência e a IQG trabalha com atualizações constantes. Mas posso te mandar agora nossa Tabela de Preços ao Consumidor Final pra tu ter visão completa dos valores atuais 😊
 
-Para ter uma boa ideia dos preços atuais, você pode consultar nosso e-commerce:
+Antes de enviar, deixa eu te explicar pra evitar confusão: esses são os preços sugeridos de venda ao consumidor final. Como Parceiro Homologado, tua margem é 40% sobre esses valores — pra calcular teu custo, pega o valor da tabela e multiplica por 0,6.
+
+Pra ver os preços de forma interativa também, nosso e-commerce oficial está disponível:
 https://www.loja.industriaquimicagaucha.com.br/
 
-E pode ficar tranquilo: a IQG tem compromisso com preços competitivos e qualidade acima do mercado, justamente para que o parceiro consiga atuar de forma forte comercialmente."
+E pode ficar tranquilo: a IQG tem compromisso com preços competitivos e qualidade acima do mercado, pra que o parceiro consiga atuar de forma forte comercialmente.
+
+[ACTION:SEND_TABELA_PRECOS]"
 
 Exemplo ERRADO (nunca responder assim):
 "IQG Clarificante 1L: R$ XX,XX"
@@ -10288,6 +10303,7 @@ Use apenas:
 [ACTION:SEND_CONTRATO]
 [ACTION:SEND_KIT]
 [ACTION:SEND_MANUAL]
+[ACTION:SEND_TABELA_PRECOS]
 
 Regras:
 - só no final da mensagem
@@ -10342,6 +10358,16 @@ a SDR deve:
 FOLDER DO PROGRAMA:
 Envio obrigatório na fase de benefícios.
 - Enviar: [ACTION:SEND_FOLDER]
+
+TABELA DE PREÇOS AO CONSUMIDOR FINAL:
+Quando o lead pedir tabela de preços, tabela de valores, lista de preços, preço dos produtos, valores dos produtos, tabela do parceiro, tabela de revenda, preço para parceiro, ou quanto custa cada produto:
+1. Responder que vai enviar a Tabela de Preços ao Consumidor Final.
+2. Explicar o contexto OBRIGATORIAMENTE antes do envio: esses são preços sugeridos ao consumidor final; a margem do parceiro homologado é 40% sobre esses valores; pra calcular o custo do parceiro, multiplicar o valor da tabela por 0,6.
+3. Enviar: [ACTION:SEND_TABELA_PRECOS]
+4. Não enviar sem explicar o contexto.
+5. Não recusar envio. A tabela pode ser enviada antes da homologação.
+6. Não confundir com catálogo (catálogo = descritivo de produtos, tabela = preços).
+7. Não inventar uma "tabela de custo do parceiro" — esse material não existe; o que existe é a Tabela ao Consumidor Final + fórmula da margem 40%.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️ REGRA CRÍTICA SOBRE MATERIAIS
@@ -11318,11 +11344,11 @@ Lead: "Pode sim, agradeço."
 Você: "Combinado. Anotei pra te chamar daqui 60 dias. Até lá, foca em organizar o que tá precisando."
 ━━━ fim do exemplo ━━━
 
-━━━ EXEMPLO — B9: "Quero conhecer os produtos primeiro" (lead C, F3/F4 verificação técnica, redirecionamento e-commerce) ━━━
+━━━ EXEMPLO — B9: "Quero conhecer os produtos primeiro" (lead C, F3/F4 verificação técnica, envio de tabela + e-commerce como alternativa) ━━━
 Lead: "Olha, antes de eu avaliar entrar, quero conhecer os produtos. Quero ver tabela completa, preços, comparar com o que eu uso hoje. Como faço?"
-Você: "Pergunta justa. Tem dois caminhos: pra ver os produtos visualmente, com descritivo técnico e preços atuais do e-commerce, é por aqui — https://www.loja.industriaquimicagaucha.com.br/. Já dá pra navegar a linha completa de piscina."
+Você: "Pergunta justa. Vou te mandar nossa Tabela de Preços ao Consumidor Final agora — são os preços sugeridos de venda dos produtos da nossa linha. Tua margem como Parceiro Homologado é 40% sobre esses valores, então pra calcular teu custo, é só multiplicar por 0,6. Pra ver os produtos visualmente também, com descritivo técnico de cada um, nosso e-commerce oficial é por aqui: https://www.loja.industriaquimicagaucha.com.br/. [ACTION:SEND_TABELA_PRECOS]"
 Lead: "E a tabela de parceiro? Quero ver com o desconto, comparar com loja física."
-Você: "A tabela oficial do parceiro homologado, com preços de revenda e estrutura completa, é enviada após a homologação — não antes. É padrão do programa, não é segredo. Mas a referência de preço final de mercado é o que tá no e-commerce — então tu já consegue calcular a margem de 40% sobre o sugerido pra ter uma ideia."
+Você: "Boa pergunta. Essa 'tabela com desconto do parceiro' não existe como material separado — é só uma tabela só, a que acabei de te mandar (preço sugerido ao consumidor final). O teu 'preço de custo' como Parceiro Homologado é direto da fórmula: pega o valor da tabela e multiplica por 0,6 (que é a tabela menos os 40% da tua margem). Pra comparar com loja física, é só fazer essa conta item por item — fica transparente."
 Lead: "Faz sentido. E se eu olhar lá e gostar dos produtos, qual o próximo passo?"
 Você: "Aí a gente segue pra parte de investimento e pré-análise. Posso te explicar como é o investimento agora, pra você ir com a foto completa enquanto navega o site?"
 Lead: "Pode sim."
@@ -12082,7 +12108,8 @@ function extractActions(reply = "") {
     "[ACTION:SEND_CATALOGO]": "catalogo",
     "[ACTION:SEND_CONTRATO]": "contrato",
     "[ACTION:SEND_KIT]": "kit",
-    "[ACTION:SEND_MANUAL]": "manual"
+    "[ACTION:SEND_MANUAL]": "manual",
+    "[ACTION:SEND_TABELA_PRECOS]": "tabela_precos"
   };
 
   let cleanReply = reply;
