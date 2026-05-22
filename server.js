@@ -22695,7 +22695,10 @@ async function bootstrapFollowupsParaLeadsExistentes() {
       ],
       // Não está em estado terminal
       status: { $nin: ["enviado_crm", "em_atendimento", "fechado", "perdido"] },
-      statusOperacional: { $nin: ["enviado_crm", "em_atendimento", "encerrado_followup"] },
+      statusOperacional: { $nin: ["enviado_crm", "em_atendimento", "encerrado_followup", "perdido_cadencia_completa", "perdido_auto"] },
+      motivoPerda: { $in: [null, undefined, ""] },
+      encerradoPor: { $in: [null, undefined, ""] },
+      perdidoEm: { $in: [null, undefined] },
       // Não é afiliado que já recebeu instruções
       afiliadoInstrucoesEnviadas: { $ne: true },
       // Tem pelo menos uma interação
