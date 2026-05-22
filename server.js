@@ -618,9 +618,14 @@ async function saveLeadProfile(user, data = {}) {
     currentLead &&
     leadHasFinishedPreCadastro(currentLead) === true;
 
+  const MOTIVOS_PERDIMENTO_LEGITIMOS = [
+    "cadencia_completa_sem_resposta"
+  ];
+
   const tentativaDePerdaIndevida =
     currentLead &&
     leadFinalizouPreCadastro !== true &&
+    !MOTIVOS_PERDIMENTO_LEGITIMOS.includes(safeData.motivoPerda) &&
     (
       safeData.status === "perdido" ||
       safeData.faseQualificacao === "perdido" ||
