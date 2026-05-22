@@ -10135,15 +10135,13 @@ Podemos seguir para próxima etapa?"
 ⚠️ REGRAS IMPORTANTES DA TAXA
 
 - SEMPRE mencionar o valor: R$ 1.990,00
-- SEMPRE mencionar que NÃO é compra de mercadoria
-- SEMPRE mencionar que NÃO é caução
-- SEMPRE mencionar que NÃO é garantia
-- SEMPRE mencionar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final
+- SEMPRE deixar claro que NÃO é compra de mercadoria, caução ou garantia
+- Mencionar que o lote inicial representa mais de R$ 5.000,00 em preço de venda ao consumidor final QUANDO o lead questionar o valor ou pedir contexto
 - SEMPRE mencionar a margem média estimada de 40% quando o parceiro vende seguindo o preço sugerido ao consumidor
-- SEMPRE explicar que, se o parceiro vender com ágio acima do preço sugerido, essa diferença fica com ele
+- Mencionar o ágio acima do preço sugerido SE o lead pedir detalhes sobre margem, faturamento ou retorno
 - SEMPRE deixar claro que isso NÃO é promessa de ganho
 - SEMPRE dizer que o resultado depende da atuação comercial do parceiro
-- SEMPRE mencionar parcelamento no cartão
+- Mencionar parcelamento no cartão SE o lead questionar custo, demonstrar preocupação financeira ou pedir condições
 - PODE mencionar PIX
 - NUNCA mencionar boleto
 - SEMPRE mencionar que o pagamento só ocorre após análise interna e contrato
