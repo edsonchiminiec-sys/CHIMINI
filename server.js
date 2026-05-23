@@ -7825,6 +7825,18 @@ async function runSupervisor({
   lastUserText = "",
   lastSdrText = ""
 } = {}) {
+  await recordAuditEvent({
+    component: "gpt_supervisor",
+    eventType: "supervisor_invocado",
+    severity: "low",
+    userPhone: lead?.user || null,
+    payload: {
+      contexto: "pre_resposta",
+      fase: lead?.faseQualificacao || lead?.fase || null,
+      temperatura: lead?.temperaturaComercial || null
+    }
+  });
+
   const recentHistory = Array.isArray(history)
     ? history.slice(-12).map(message => ({
         role: message.role,
@@ -7881,6 +7893,14 @@ async function runSupervisor({
   if (!response.ok) {
     console.error("Erro ao rodar Supervisor:", data);
 
+    await recordAuditEvent({
+      component: "gpt_supervisor",
+      eventType: "supervisor_abortado",
+      severity: "low",
+      userPhone: lead?.user || null,
+      payload: { motivo: "response_not_ok" }
+    });
+
     return {
       ...buildDefaultSupervisorAnalysis(),
       houveErroSdr: true,
@@ -7897,8 +7917,34 @@ async function runSupervisor({
   }
 
   const rawText = data.choices?.[0]?.message?.content || "";
+  const resultado = parseSupervisorJson(rawText);
 
-  return parseSupervisorJson(rawText);
+  await recordAuditEvent({
+    component: "gpt_supervisor",
+    eventType: "supervisor_concluido",
+    severity: "low",
+    userPhone: lead?.user || null,
+    payload: {
+      riscoPerda: resultado?.riscoPerda || null,
+      necessitaHumano: !!resultado?.necessitaHumano,
+      prioridadeHumana: resultado?.prioridadeHumana || null,
+      pontoTrava: resultado?.pontoTrava || null,
+      motivoRisco: resultado?.motivoRisco || null,
+      qualidadeConducaoSdr: resultado?.qualidadeConducaoSdr || null,
+      notaConducaoSdr: resultado?.notaConducaoSdr || null,
+      resumoDiagnostico: typeof resultado?.resumoDiagnostico === "string"
+        ? resultado.resumoDiagnostico.slice(0, 300)
+        : null,
+      descricaoErroPrincipal: typeof resultado?.descricaoErroPrincipal === "string"
+        ? resultado.descricaoErroPrincipal.slice(0, 200)
+        : null,
+      errosDetectadosCount: Array.isArray(resultado?.errosDetectados)
+        ? resultado.errosDetectados.length
+        : 0
+    }
+  });
+
+  return resultado;
 }
 
 async function runSupervisorAfterSdrReply({
@@ -7909,7 +7955,28 @@ async function runSupervisorAfterSdrReply({
   lastSdrText = ""
 } = {}) {
   try {
-    if (!user) return;
+    if (!user) {
+      await recordAuditEvent({
+        component: "gpt_supervisor",
+        eventType: "supervisor_abortado",
+        severity: "low",
+        userPhone: null,
+        payload: { motivo: "sem_user_no_pos_resposta" }
+      });
+      return;
+    }
+
+    await recordAuditEvent({
+      component: "gpt_supervisor",
+      eventType: "supervisor_pos_resposta_invocado",
+      severity: "low",
+      userPhone: user || null,
+      payload: {
+        contexto: "pos_resposta",
+        respostaSdrLen: typeof lastSdrText === "string" ? lastSdrText.length : 0,
+        mensagemLeadLen: typeof lastUserText === "string" ? lastUserText.length : 0
+      }
+    });
 
    let supervisorAnalysis = await runSupervisor({
   lead,
@@ -8013,8 +8080,50 @@ await saveSupervisorAnalysis(user, supervisorAnalysis);
       alertaEnviado: deveEnviarAlertaSupervisor,
       classificadorAcionado: true
     });
+
+    await recordAuditEvent({
+      component: "gpt_supervisor",
+      eventType: "supervisor_pos_resposta_concluido",
+      severity: "low",
+      userPhone: user || null,
+      payload: {
+        riscoPerda: supervisorAnalysis?.riscoPerda || null,
+        necessitaHumano: !!supervisorAnalysis?.necessitaHumano,
+        prioridadeHumana: supervisorAnalysis?.prioridadeHumana || null,
+        pontoTrava: supervisorAnalysis?.pontoTrava || null,
+        motivoRisco: supervisorAnalysis?.motivoRisco || null,
+        qualidadeConducaoSdr: supervisorAnalysis?.qualidadeConducaoSdr || null,
+        notaConducaoSdr: supervisorAnalysis?.notaConducaoSdr || null,
+        resumoDiagnostico: typeof supervisorAnalysis?.resumoDiagnostico === "string"
+          ? supervisorAnalysis.resumoDiagnostico.slice(0, 300)
+          : null,
+        descricaoErroPrincipal: typeof supervisorAnalysis?.descricaoErroPrincipal === "string"
+          ? supervisorAnalysis.descricaoErroPrincipal.slice(0, 200)
+          : null,
+        errosDetectadosCount: Array.isArray(supervisorAnalysis?.errosDetectados)
+          ? supervisorAnalysis.errosDetectados.length
+          : 0,
+        acaoTomada: typeof deveEnviarAlertaSupervisor !== "undefined"
+          ? (deveEnviarAlertaSupervisor ? "alerta_disparado" : "nenhuma_acao")
+          : "nao_avaliado",
+        handoffDisparado: !!deveEnviarAlertaSupervisor
+      }
+    });
   } catch (error) {
     console.error("⚠️ Supervisor falhou, mas atendimento continua:", error.message);
+
+    await recordAuditEvent({
+      component: "gpt_supervisor",
+      eventType: "supervisor_abortado",
+      severity: "low",
+      userPhone: user || null,
+      payload: {
+        motivo: "excecao_no_try",
+        errorMessage: typeof error?.message === "string"
+          ? error.message.slice(0, 200)
+          : null
+      }
+    });
   }
 }
 
@@ -22034,7 +22143,9 @@ async function flagLeadForRegenerationFailureHandoff(from, criticosRemanescentes
   if (typeof auditSystemEvent === "function") {
     await auditSystemEvent("regeneracao_sdr_fallback_humano", "high", from, {
       tentativas: 2,
-      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+      criticosRemanescentes: criticosRemanescentes.map(f => f.tipo),
+      criticosQueExigiramHandoff: criticosRemanescentes.filter(cr => (cr?.tipo || cr) !== "disciplina_funil").map(cr => cr?.tipo || cr),
+      todosCriticosNoMomentoHandoff: criticosRemanescentes.map(cr => cr?.tipo || cr)
     });
   }
 }
@@ -28726,7 +28837,10 @@ if (sdrReviewFindings.length > 0) {
   if (typeof auditSystemEvent === "function") {
     await auditSystemEvent("regeneracao_sdr_gate_disparado", "medium", from, {
       criticosIniciais,
-      totalFindings: sdrReviewFindings.length
+      totalFindings: sdrReviewFindings.length,
+      tiposFindings: sdrReviewFindings.map(f => f.tipo),
+      haCriticosNaoDisciplinaFunil: criticosIniciais.some(c => c !== "disciplina_funil"),
+      respostaOriginalLen: typeof respostaFinal === "string" ? respostaFinal.length : 0
     });
   }
 
@@ -28779,7 +28893,10 @@ if (sdrReviewFindings.length > 0) {
         await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
           tentativa: regenAttempts,
           motivo: "regeneracao_silenciosamente_devolveu_resposta_anterior",
-          criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+          criticosRemanescentes: criticosRemanescentes.map(f => f.tipo),
+          criticosOriginais: criticosIniciais,
+          criticosResolvidosParcialmente: [],
+          motivoFalha: "regenerador_devolveu_resposta_identica"
         });
       }
       break;
@@ -28811,7 +28928,12 @@ if (sdrReviewFindings.length > 0) {
       if (typeof auditSystemEvent === "function") {
         await auditSystemEvent("regeneracao_sdr_tentativa_sucesso", "low", from, {
           tentativa: regenAttempts,
-          criticosResolvidos: criticosIniciais
+          criticosResolvidos: criticosIniciais,
+          criticosNaoDisciplinaResolvidos: criticosIniciais.filter(c => c !== "disciplina_funil"),
+          respostaAntesLen: typeof respostaAnterior === "string" ? respostaAnterior.length : null,
+          respostaDepoisLen: typeof respostaFinal === "string" ? respostaFinal.length : null,
+          respostaAntesTrecho: typeof respostaAnterior === "string" ? respostaAnterior.slice(0, 150) : null,
+          respostaDepoisTrecho: typeof respostaFinal === "string" ? respostaFinal.slice(0, 150) : null
         });
       }
       break;
@@ -28825,7 +28947,13 @@ if (sdrReviewFindings.length > 0) {
     if (typeof auditSystemEvent === "function") {
       await auditSystemEvent("regeneracao_sdr_tentativa_falha", "medium", from, {
         tentativa: regenAttempts,
-        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo)
+        criticosRemanescentes: criticosRemanescentes.map(f => f.tipo),
+        criticosOriginais: criticosIniciais,
+        criticosResolvidosParcialmente: criticosIniciais.filter(c => !criticosRemanescentes.some(cr => (cr?.tipo || cr) === c)),
+        criticosNaoDisciplinaRemanescentes: criticosRemanescentes.filter(cr => (cr?.tipo || cr) !== "disciplina_funil").map(cr => cr?.tipo || cr),
+        tipoFalha: criticosRemanescentes.every(cr => (cr?.tipo || cr) === "disciplina_funil")
+          ? "apenas_disciplina_funil_remanescente"
+          : "criticos_reais_nao_resolvidos"
       });
     }
   }
@@ -28847,7 +28975,13 @@ if (sdrReviewFindings.length > 0) {
     // Apenas disciplina_funil remanescente — log para observabilidade, sem handoff.
     try {
       await auditSystemEvent("regeneracao_sdr_soft_critico_descartado", "low", from, {
-        tiposIgnorados: criticosRemanescentes.map(f => f.tipo)
+        tiposIgnorados: criticosRemanescentes.map(f => f.tipo),
+        intencional: criticosRemanescentes.every(f => (f?.tipo || f) === "disciplina_funil"),
+        motivoDescarte: criticosRemanescentes.every(f => (f?.tipo || f) === "disciplina_funil")
+          ? "disciplina_funil_e_melhoria_de_cadencia_nao_perigo"
+          : "outro_motivo_investigar",
+        respostaEnviadaLen: typeof respostaFinal === "string" ? respostaFinal.length : 0,
+        respostaEnviadaTrecho: typeof respostaFinal === "string" ? respostaFinal.slice(0, 200) : null
       });
     } catch (_) {}
   }
