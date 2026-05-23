@@ -4577,7 +4577,33 @@ const REVENDEDOR_LOJISTA_PATTERNS = [
   // pedido de tabela/preço/margem para lojista
   /\btabela (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
   /\bpre[cç]o (?:para |pra )?(?:lojistas?|revendedor|atacado)\b/i,
-  /\bmargem (?:para |pra )?(?:lojistas?|revendedor)\b/i
+  /\bmargem (?:para |pra )?(?:lojistas?|revendedor)\b/i,
+
+  // EXPANSÃO 2026-05-23 — 6 patterns adicionados após análise forense de 24h
+  // identificar 3 casos reais que escapavam (60% de falso negativo da heurística).
+  // Auditoria prévia testou contra 14 frases benignas: zero falso positivo.
+
+  // "como [um] lojista/revendedor/distribuidor"
+  /\bcomo (?:um |uma )?(?:lojista|revendedor|distribuidor)\b/i,
+
+  // "como [um] representante COMERCIAL/DA INDÚSTRIA/etc"
+  // (representante sozinho é ambíguo; exige contexto comercial)
+  /\bcomo (?:um |uma )?representante (?:comercial|da ind[uú]stria|da marca|de venda|do ramo|de produto)\b/i,
+
+  // "abrir/montar loja/comércio/distribuidora"
+  // (sem o verbo "ter" para evitar "vou ter que ter loja" — pergunta sobre requisito)
+  /\b(?:abrir|montar) (?:uma |minha |uma nova )?(?:loja|com[eé]rcio|distribuidora)\b/i,
+
+  // "interesse em abrir/montar/ter loja/comércio/distribuidora"
+  /\binteresse em (?:abrir|montar|ter) (?:uma |minha )?(?:loja|com[eé]rcio|distribuidora)\b/i,
+
+  // "saber/entender/comprar/adquirir/necessito/preciso/quero/gostaria ... para revender"
+  // (exige verbo de intenção antes de "para revender" para evitar
+  // pergunta retórica tipo "para revender? mas isso é o que ele faz?")
+  /\b(?:saber|entender|comprar|adquirir|necessit\w*|preciso?\w*|quero|gostaria) (?:.{0,20}\s)?(?:para|pra) revender\b/i,
+
+  // "informações ... revender" (ex: "informações que necessito saber para revender")
+  /\binforma[cç][oõ]es.{0,40}revender/i
 ];
 
 function detectRevendedorOuLojistaPretendido(text = "") {
