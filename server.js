@@ -30676,6 +30676,241 @@ app.get("/auditoria/relatorio-tecnico", async (req, res) => {
   }
 });
 
+/*
+  Rota forense temporária — /auditoria/forense-48h
+  Análise cruzada pós-deploy dos commits 2-5. Apenas leitura.
+  Cleanup planejado em TODO #27 (junto com as 3 rotas diagnósticas).
+
+  Adaptações vs proposta original (schema real do projeto):
+  - Driver nativo (db.collection), não Mongoose
+  - audit_events filtra por campo "timestamp" (não createdAt)
+  - Turnos derivados de audit_events agrupados por traceId
+    (webhook.payload.textPreview = lead; backend_orchestrator.payload.respostaFinalSdr = SDR)
+  - Cruzamento com leads via userMasked (lossy, aceito)
+  - conversations dispensada (audit_events já tem o essencial)
+*/
+app.get("/auditoria/forense-48h", async (req, res) => {
+  try {
+    if (!requireDashboardAuth(req, res)) return;
+
+    await connectMongo();
+
+    const horas = Math.min(Math.max(parseInt(req.query.horas) || 48, 1), 168);
+    const dataInicio = new Date(Date.now() - horas * 60 * 60 * 1000);
+
+    const auditEvents = await db
+      .collection("audit_events")
+      .find({ timestamp: { $gte: dataInicio } })
+      .sort({ timestamp: 1 })
+      .toArray();
+
+    // Marcos temporais inferidos — primeiro registro de cada feature dos commits 2-5
+    const marcosDeployInferidos = {
+      primeiroBypassFechamento:
+        auditEvents.find(e => e.eventType === "fechamento_conversacional_bypass_aplicado")?.timestamp || null,
+      primeiroSupervisorAuditado:
+        auditEvents.find(e => e.eventType === "supervisor_invocado")?.timestamp || null,
+      primeiroGateEnriquecido:
+        auditEvents.find(e =>
+          e.eventType === "regeneracao_sdr_gate_disparado" &&
+          e.payload && Object.prototype.hasOwnProperty.call(e.payload, "tiposFindings")
+        )?.timestamp || null,
+      primeiroFormatoRespostaNoConsultor:
+        auditEvents.find(e =>
+          e.component === "gpt_pre_sdr_consultant" &&
+          e.payload && e.payload.formatoResposta
+        )?.timestamp || null,
+      primeiroLojistaPatternNovo:
+        auditEvents.find(e => {
+          if (e.eventType !== "lead_declarou_revendedor_lojista") return false;
+          const motivo = e.payload?.motivo || "";
+          const match = motivo.match(/^pattern_(\d+)/);
+          return match && parseInt(match[1]) >= 13;
+        })?.timestamp || null
+    };
+
+    // Agrupar eventos por traceId (turnos reais) e por traceId de sistema (eventos avulsos)
+    const grouped = {};
+    for (const evt of auditEvents) {
+      const key = evt.traceId || "sem_trace_" + evt._id;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(evt);
+    }
+
+    // Montar turnos: cada traceId com webhook = turno real lead -> SDR
+    const porLead = {};
+    const todosTurnos = [];
+
+    for (const [traceId, evts] of Object.entries(grouped)) {
+      evts.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      const webhookEvt = evts.find(e => e.component === "webhook");
+      const orchestratorEvt = evts.find(e => e.component === "backend_orchestrator");
+
+      // Só consideramos "turno real" quando há mensagem do lead (webhook)
+      if (!webhookEvt) continue;
+
+      const userMasked =
+        evts.find(e => e.userMasked)?.userMasked || "desconhecido";
+
+      const mensagemLead = webhookEvt.payload?.textPreview || "";
+      const respostaFinalSdr = orchestratorEvt?.payload?.respostaFinalSdr || "";
+      const tamanhoLead = mensagemLead.length;
+      const tamanhoSdr = respostaFinalSdr.length;
+      const razaoSdrLead = tamanhoSdr / Math.max(tamanhoLead, 1);
+
+      const turno = {
+        ts: webhookEvt.timestamp,
+        traceId,
+        mensagemLead,
+        respostaFinalSdr,
+        tamanhoLead,
+        tamanhoSdr,
+        razaoSdrLead,
+        eventos: evts.map(e => ({
+          ts: e.timestamp,
+          component: e.component,
+          eventType: e.eventType,
+          severity: e.severity,
+          payload: e.payload
+        }))
+      };
+
+      if (!porLead[userMasked]) {
+        porLead[userMasked] = { userMasked, estadoAtualLead: null, turnos: [] };
+      }
+      porLead[userMasked].turnos.push(turno);
+      todosTurnos.push(turno);
+    }
+
+    // Ordenar turnos cronologicamente dentro de cada lead
+    for (const lead of Object.values(porLead)) {
+      lead.turnos.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    }
+
+    // Cruzar com estado atual dos leads via userMasked (lossy, aceito)
+    const masksEnvolvidos = Object.keys(porLead);
+    if (masksEnvolvidos.length > 0) {
+      const todosLeads = await db.collection("leads").find({}).toArray();
+      const leadPorMask = {};
+      for (const l of todosLeads) {
+        if (!l.user) continue;
+        const mask = maskPhone(l.user);
+        leadPorMask[mask] = l;
+      }
+      for (const mask of masksEnvolvidos) {
+        const l = leadPorMask[mask];
+        if (l) {
+          porLead[mask].estadoAtualLead = {
+            nome: l.nome || l.nomeWhatsApp || null,
+            faseQualificacao: l.faseQualificacao || null,
+            temperaturaComercial: l.temperaturaComercial || null,
+            rotaComercial: l.rotaComercial || null,
+            leadEhRevendedorLojista: l.leadEhRevendedorLojista || false,
+            status: l.status || null,
+            statusOperacional: l.statusOperacional || null
+          };
+        }
+      }
+    }
+
+    // Estatísticas globais
+    const bordaoPatterns = [
+      /estou (?:à |a )?disposi[çc][ãa]o/i,
+      /estou (?:aqui |sempre )?(?:para |pra )?(?:te )?ajudar/i,
+      /fique (?:a |à )vontade/i,
+      /qualquer d[úu]vida/i,
+      /(?:é )?s[óo] me (?:chamar|avisar|mandar)/i
+    ];
+
+    const razoes = todosTurnos
+      .filter(t => t.tamanhoLead > 0)
+      .map(t => t.razaoSdrLead)
+      .sort((a, b) => a - b);
+
+    const mediana = razoes.length ? razoes[Math.floor(razoes.length / 2)] : null;
+    const p75 = razoes.length ? razoes[Math.floor(razoes.length * 0.75)] : null;
+    const p90 = razoes.length ? razoes[Math.floor(razoes.length * 0.90)] : null;
+
+    const estatisticasGlobais = {
+      totalLeads: Object.keys(porLead).length,
+      totalTurnos: todosTurnos.length,
+      totalEventos: auditEvents.length,
+      razaoSdrLead: {
+        mediana: mediana,
+        p75: p75,
+        p90: p90
+      },
+      respostasMaiorQue10x: todosTurnos.filter(t => t.razaoSdrLead > 10).length,
+      respostasMaiorQue50x: todosTurnos.filter(t => t.razaoSdrLead > 50).length,
+      respostasComBordao: todosTurnos.filter(t =>
+        bordaoPatterns.some(re => re.test(t.respostaFinalSdr))
+      ).length,
+      respostasComBordaoEFechamento: todosTurnos.filter(t =>
+        t.tamanhoLead <= 25 &&
+        t.tamanhoSdr > 100 &&
+        bordaoPatterns.some(re => re.test(t.respostaFinalSdr))
+      ).length,
+      bypassesFechamentoAplicados: auditEvents.filter(e => e.eventType === "fechamento_conversacional_bypass_aplicado").length,
+      formatoRespostaDistribuicao: { breve: 0, medio: 0, expansivo: 0, ausente: 0 },
+      supervisorExecucoes: auditEvents.filter(e => e.eventType === "supervisor_invocado").length,
+      supervisorNotaMedia: null,
+      handoffLojistaTotal: auditEvents.filter(e => e.eventType === "lead_declarou_revendedor_lojista").length,
+      handoffLojistaPorPattern: {}
+    };
+
+    // formatoResposta distribuição (puxar do payload do gpt_pre_sdr_consultant)
+    for (const e of auditEvents) {
+      if (e.component === "gpt_pre_sdr_consultant" && e.eventType === "gpt_call_success") {
+        const formato = e.payload?.formatoResposta;
+        if (formato === "breve" || formato === "medio" || formato === "expansivo") {
+          estatisticasGlobais.formatoRespostaDistribuicao[formato]++;
+        } else {
+          estatisticasGlobais.formatoRespostaDistribuicao.ausente++;
+        }
+      }
+    }
+
+    // Supervisor nota média
+    const notasSup = auditEvents
+      .filter(e => e.eventType === "supervisor_concluido" && typeof e.payload?.notaConducaoSdr === "number")
+      .map(e => e.payload.notaConducaoSdr);
+    if (notasSup.length > 0) {
+      estatisticasGlobais.supervisorNotaMedia = notasSup.reduce((a, b) => a + b, 0) / notasSup.length;
+    }
+
+    // Lojista por pattern
+    for (const e of auditEvents.filter(e => e.eventType === "lead_declarou_revendedor_lojista")) {
+      const motivo = e.payload?.motivo || "desconhecido";
+      estatisticasGlobais.handoffLojistaPorPattern[motivo] =
+        (estatisticasGlobais.handoffLojistaPorPattern[motivo] || 0) + 1;
+    }
+
+    const resposta = {
+      metadata: {
+        geradoEm: new Date().toISOString(),
+        janelaHoras: horas,
+        dataInicio: dataInicio.toISOString(),
+        dataFim: new Date().toISOString(),
+        totalEventosNoBanco: auditEvents.length,
+        totalTurnosReais: todosTurnos.length,
+        totalLeadsComTurno: Object.keys(porLead).length,
+        nota: "Turnos derivados de audit_events por traceId. Cruzamento com leads via userMasked (lossy). conversations dispensada."
+      },
+      marcosDeployInferidos,
+      estatisticasGlobais,
+      porLead
+    };
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="forense-48h-${new Date().toISOString().slice(0, 10)}.json"`);
+    return res.send(JSON.stringify(resposta, null, 2));
+  } catch (error) {
+    console.error("Erro ao gerar relatório forense 48h:", error);
+    res.status(500).send("Erro ao gerar relatório forense 48h.");
+  }
+});
+
 app.get("/", (req, res) => {
   res.status(200).send("IQG WhatsApp Bot online.");
 });
