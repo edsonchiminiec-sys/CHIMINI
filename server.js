@@ -3050,7 +3050,8 @@ await recordAuditEvent({
     ofertaMaisAdequada: parsedConsultantAdvice?.ofertaMaisAdequada || "nao_analisado",
     prioridadeComercial: parsedConsultantAdvice?.prioridadeComercial || "nao_analisado",
     momentoIdealHumano: parsedConsultantAdvice?.momentoIdealHumano || "nao_analisado",
-    cuidadoPrincipal: String(parsedConsultantAdvice?.cuidadoPrincipal || "").slice(0, 200)
+    cuidadoPrincipal: String(parsedConsultantAdvice?.cuidadoPrincipal || "").slice(0, 200),
+    formatoResposta: parsedConsultantAdvice?.formatoResposta || "ausente"
   },
   requiredLevel: "STANDARD",
   userPhone: lead?.user || "",
@@ -16864,6 +16865,11 @@ function detectFechamentoConversacionalParedao(leadText = "", sdrText = "") {
   if (lead.length < 1 || lead.length > 25) return false;
   if (sdr.length <= 100) return false;
 
+  // Fechamento NUNCA é pergunta. Excluir interrogativas para não trocar
+  // resposta legítima por fallback curto (bug: "Cadê a tabela?" -> "📌").
+  if (lead.endsWith("?")) return false;
+  if (/\b(cad[êe]|qual|quais|quanto|quantos|quanta|quantas|onde|como|quando|porqu|por que|porque|preciso|precisa|posso|pode|tem que|d[áa] pra|funciona)\b/i.test(lead)) return false;
+
   return FECHAMENTO_BORDAO_PATTERNS.some(re => re.test(sdr));
 }
 
@@ -16874,7 +16880,8 @@ function detectFechamentoConversacionalParedao(leadText = "", sdrText = "") {
     2. Lead agradece (amém/gratidão/obrigado/valeu) -> espelha com nome
     3. Lead pausa (depois/amanhã/viagem/reunião/etc) -> "Combinado, [Nome]. Quando puder a gente continua."
     4. Lead ack curto (ok/sim/show/top/etc) -> "Combinado!"
-    5. Default -> 📌 (não deveria chegar — detect já filtrou)
+    5. Default -> null (não classificável como fechamento real;
+       sinaliza ao caller para NÃO aplicar o bypass e manter a resposta original).
 */
 function buildClosureSafeFallback(leadText = "", currentLead = {}) {
   const lead = String(leadText || "").trim();
@@ -16902,8 +16909,9 @@ function buildClosureSafeFallback(leadText = "", currentLead = {}) {
     return "Combinado!";
   }
 
-  // 5. Default
-  return "📌";
+  // 5. Default — não classificável como fechamento real.
+  // Retorna null: o caller mantém a resposta original (não aplica bypass).
+  return null;
 }
 
 function detectReplyMainTheme(text = "") {
@@ -28868,27 +28876,43 @@ if (sdrReviewFindings.length > 0) {
     const respostaOriginal = respostaFinal;
     const novaResposta = buildClosureSafeFallback(text, currentLead);
 
-    if (typeof auditSystemEvent === "function") {
-      await auditSystemEvent("fechamento_conversacional_bypass_aplicado", "medium", from, {
+    // Segunda trava (defesa em profundidade): só aplica bypass se o fallback
+    // classificou o texto como fechamento real (emoji/ack/agradecimento/pausa).
+    // Se retornou null, mantém a resposta original — evita trocar pergunta
+    // legítima por mensagem curta inadequada.
+    if (novaResposta) {
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("fechamento_conversacional_bypass_aplicado", "medium", from, {
+          textoLead: text,
+          respostaOriginalLen: respostaOriginal.length,
+          respostaOriginalTrecho: respostaOriginal.slice(0, 200),
+          respostaFallback: novaResposta
+        });
+      }
+
+      console.log("🛑 Bypass de fechamento conversacional aplicado:", {
+        user: from,
         textoLead: text,
         respostaOriginalLen: respostaOriginal.length,
-        respostaOriginalTrecho: respostaOriginal.slice(0, 200),
         respostaFallback: novaResposta
       });
+
+      respostaFinal = novaResposta;
+
+      // Limpar sdrReviewFindings que se tornariam irrelevantes após o fallback
+      // (a resposta curta não dispara os mesmos guards que o paredão original)
+      sdrReviewFindings = [];
+    } else {
+      // Detect positivo mas fallback não classificou (texto não é fechamento
+      // puro). Manter resposta original. Auditar para observabilidade.
+      if (typeof auditSystemEvent === "function") {
+        await auditSystemEvent("fechamento_conversacional_bypass_sem_classificacao", "low", from, {
+          textoLead: text,
+          respostaOriginalLen: respostaOriginal.length,
+          motivo: "buildClosureSafeFallback_retornou_null"
+        });
+      }
     }
-
-    console.log("🛑 Bypass de fechamento conversacional aplicado:", {
-      user: from,
-      textoLead: text,
-      respostaOriginalLen: respostaOriginal.length,
-      respostaFallback: novaResposta
-    });
-
-    respostaFinal = novaResposta;
-
-    // Limpar sdrReviewFindings que se tornariam irrelevantes após o fallback
-    // (a resposta curta não dispara os mesmos guards que o paredão original)
-    sdrReviewFindings = [];
   }
   // ========================================================================
 
