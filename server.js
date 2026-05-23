@@ -1619,6 +1619,7 @@ function buildDefaultConsultantAdvice() {
     momentoIdealHumano: "nao_analisado",
     prioridadeComercial: "nao_analisado",
     resumoConsultivo: "",
+    formatoResposta: "medio",
     consultadoEm: null
   };
 }
@@ -2830,7 +2831,8 @@ O JSON deve ter exatamente esta estrutura:
   "ofertaMaisAdequada": "nao_analisado",
   "momentoIdealHumano": "nao_analisado",
   "prioridadeComercial": "nao_analisado",
-  "resumoConsultivo": ""
+  "resumoConsultivo": "",
+  "formatoResposta": "medio"
 }
 
 Como preencher:
@@ -2854,6 +2856,17 @@ Exemplo: "Não falar taxa nesta resposta. Não pedir CPF. Não avançar para pr�
 "resumoConsultivo":
 Resuma claramente a orientação para a resposta atual.
 Exemplo: "O lead perguntou sobre continuidade do estoque. A SDR deve responder diretamente sobre comodato, sem falar de taxa, e conduzir para responsabilidades."
+
+"formatoResposta":
+Indique o tamanho esperado da resposta da SDR neste turno. Valores possíveis:
+
+- "breve": quando a mensagem do lead tem até 30 caracteres sem pedir explicação (ex: "ok", "sim", "show", emoji, "obrigado", "amém", "gratidão", "entendi", "depois falamos", "estou viajando"), ou quando o lead apenas confirmou ou agradeceu, ou quando o lead deu dado simples solicitado e basta confirmação. Resposta esperada da SDR: 1-2 frases curtas, até 120 caracteres.
+
+- "medio": quando o lead fez uma pergunta simples ou manifestou interesse de avançar sem pedir explicação detalhada, ou em coleta de dados onde basta orientar próximo passo. Resposta esperada: 2-4 frases, até 300 caracteres. Use este valor por padrão quando nenhuma outra condição se aplica.
+
+- "expansivo": apenas quando o lead pediu explicação detalhada (ex: "me explica melhor", "como funciona o programa", "quais os benefícios"), apresentou objeção complexa que precisa contra-argumentação estruturada, ou está na fase de apresentação de investimento onde a regra do prompt da SDR exige explicação completa. Resposta esperada: sem limite estrito, mas estruture em parágrafos curtos se passar de 600 caracteres.
+
+Evite emitir "expansivo" como padrão. Em dúvida entre "medio" e "expansivo", escolha "medio".
 `;
 
 function parseConsultantAdviceJson(rawText = "") {
@@ -9376,6 +9389,20 @@ Levar o lead até:
 9. Confirmar dados
 
 Após isso → CRM assume.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📏 FORMATO DA RESPOSTA
+━━━━━━━━━━━━━━━━━━━━━━━
+
+O Consultor Assessor envia em todo turno um campo "FORMATO ESPERADO DA RESPOSTA" no contexto interno. Respeitar este formato é prioridade.
+
+- BREVE: 1-2 frases curtas, até 120 caracteres. Sem convite condicional ("se precisar", "qualquer dúvida"). Sem bordão ("estou à disposição", "fique à vontade"). Sem retomada de explicação.
+- MÉDIO: 2-4 frases, até 300 caracteres. Resposta estruturada mas concisa.
+- EXPANSIVO: sem limite estrito. Estruturar em parágrafos curtos se passar de 600 caracteres.
+
+A EXCEÇÃO À REGRA DE BREVIDADE da Fase 6 (mensagem-base de investimento) mantém precedência sobre formato MÉDIO ou BREVE quando a Fase 6 está ativa.
+
+A REGRA OBRIGATÓRIA — RESPOSTA A SINAL DE FECHAMENTO/PAUSA/AGRADECIMENTO (descrita no contexto interno do Consultor) tem precedência sobre tudo quando se aplica.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🚫 REGRA ANTI-ALUCINAÇÃO (CRÍTICO)
@@ -27730,6 +27757,15 @@ ${turnPolicy?.cuidadoPrincipal || "-"}
 
 Regra obrigatória:
 Se houver conflito entre a Política do Turno e qualquer outra orientação, siga a Política do Turno.
+
+FORMATO ESPERADO DA RESPOSTA NESTE TURNO:
+${preSdrConsultantAdvice?.formatoResposta === "breve"
+  ? "BREVE — 1-2 frases curtas, até 120 caracteres. Sem convite condicional. Sem retomada de explicação. Sem bordão de despedida."
+  : preSdrConsultantAdvice?.formatoResposta === "expansivo"
+  ? "EXPANSIVO — sem limite estrito de tamanho. Estruturar em parágrafos curtos se passar de 600 caracteres. Evitar paredão sem necessidade."
+  : "MÉDIO — 2-4 frases, até 300 caracteres. Estruturada mas concisa."}
+
+Respeitar este formato é prioridade nesta resposta. A regra de fechamento conversacional descrita mais abaixo tem precedência sobre tudo quando se aplica.
 
 REGRA DE HIERARQUIA:
 A SDR não deve decidir sozinha a condução comercial.
