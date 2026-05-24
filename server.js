@@ -21265,6 +21265,15 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
       `Esta NÃO é uma resposta a uma mensagem do lead.`,
       `É uma mensagem de retomada/reengajamento porque o lead parou de responder.`,
       `O lead está inativo. A SDR deve enviar UMA mensagem curta e consultiva para reengajar.`,
+      step === 1
+        ? `📌 IMPORTANTE — INCLUIR NO FINAL DA MENSAGEM:
+     Adicione no FINAL da mensagem (sem alterar o conteúdo principal) este aviso de opt-out, exatamente como aparece abaixo, em uma nova linha após o conteúdo principal:
+
+     ---
+     💬 Se preferir não receber mais MENSAGENS AUTOMÁTICAS de acompanhamento, é só responder *PARAR* (não afeta seu cadastro nem qualquer outro contato com a IQG, só estas mensagens automáticas).
+
+     IMPORTANTE: este aviso só aparece nesta primeira mensagem de cadência. Não repita em futuros toques.`
+        : null,
       "",
       "REGRAS DA CADÊNCIA:",
       "- Mensagem CURTA: MÁXIMO 280 caracteres E máximo 2-3 frases",
@@ -21978,8 +21987,15 @@ async function sendAutomaticFollowupIfStillValid({
     const padraoDespedida = /\b(obrigad[oa](\s+pela\s+aten[çc][ãa]o)?|at[ée]\s+(mais|logo|breve)|fui|tchau|falou|abra[çc]os?)\b\s*[.!]*\s*$/i;
     const padraoAguardar = /\b(vou\s+aguardar|vou\s+esperar|aguardar\s+um\s+pouco|me\s+d[êe]\s+um\s+tempo|depois\s+te\s+falo|depois\s+eu\s+(falo|retorno|respondo)|preciso\s+pensar|deixa\s+eu\s+pensar|vou\s+pensar|pensar\s+mais)\b/i;
     const padraoLinhaProduto = /\b(n[ãa]o\s+(quero|trabalho|atuo|tenho\s+interesse)\s+(com\s+)?(em\s+)?(linha\s+de\s+)?(piscina|ordenha|dipping|cosm[ée]ticos?\s*vet|agro))\b/i;
+    // Opt-out explícito — palavra isolada (^...$): captura só "PARAR"/"SAIR"/etc
+    // sozinhas (ou quase) na mensagem, NÃO "vou parar de fumar amanhã".
+    const padraoOptOut = /^\s*(parar|sair|cancelar|remover?|n[ãa]o\s+enviar(\s+mais)?|chega|stop|unsubscribe|me\s+remova|sair\s+da\s+lista)\s*[.!]?\s*$/i;
 
-    if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
+    // Ordem de detecção: opt-out > saida_explicita > aguardar > objecao_linha
+    if (padraoOptOut.test(txt)) {
+      intentDetectado = "opt_out_explicito";
+      acaoIntent = "encerrar_com_breakup";
+    } else if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
       intentDetectado = "saida_explicita";
       acaoIntent = "encerrar_com_breakup";
     } else if (padraoAguardar.test(txt)) {
@@ -22879,22 +22895,30 @@ setInterval(() => {
     - followupVersionDb:  Number — versão de segurança (substitui state.followupVersion)
 */
 
-/*
-  Configuração dos follow-ups.
-  Mantida idêntica ao modelo anterior pra preservar a lógica de cadência.
-
-  - step 1: 30 minutos depois (qualquer horário)
-  - step 2: 12 horas (só em horário comercial)
-  - step 3: 18 horas (só em horário comercial)
-  - step 4: 24 horas (só em horário comercial)
-  - step 5: 30 horas (só em horário comercial, encerra conversa)
-*/
+// ============================================================
+// FOLLOWUP_CONFIG — Espaçamento da cadência de reaquecimento
+// Atualizado em F5.5-3 (24/05/2026): re-espaçamento conservador
+// para mitigar risco de denúncia/ban no WhatsApp.
+//
+// Deltas cumulativos entre steps:
+//   step 1: 1 dia    (primeiro toque após silêncio)
+//   step 2: +2 dias  (~3d total — segundo toque)
+//   step 3: +4 dias  (~7d total — terceiro toque)
+//   step 4: +4 dias  (~11d total — última tentativa antes de despedir)
+//   step 5: +1 dia   (~12d total — BREAK-UP Afiliado, closeAfter:true)
+//
+// Justificativa: diagnóstico 24/05/2026 dos 199 mornos mostrou 46%
+// travados no step 3 — leads que não responderam em 3 toques quase
+// nunca respondem nos 4º e 5º. Cadência anterior diária era spam;
+// 55 dias seria longo demais e gera 5 oportunidades de denúncia.
+// 12 dias com 5 toques (4 mensagens + 1 break-up) é janela cirúrgica.
+// ============================================================
 const FOLLOWUP_CONFIG = [
-  { step: 1, delayMs: 30 * 60 * 1000,                businessOnly: false, closeAfter: false },
-  { step: 2, delayMs: 12 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
-  { step: 3, delayMs: 18 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
-  { step: 4, delayMs: 24 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: false },
-  { step: 5, delayMs: 30 * 60 * 60 * 1000,           businessOnly: true,  closeAfter: true  }
+  { step: 1, delayMs: 1 * 24 * 60 * 60 * 1000,       businessOnly: false, closeAfter: false }, // 1 dia (primeiro toque)
+  { step: 2, delayMs: 2 * 24 * 60 * 60 * 1000,       businessOnly: true,  closeAfter: false }, // +2 dias (~3d total)
+  { step: 3, delayMs: 4 * 24 * 60 * 60 * 1000,       businessOnly: true,  closeAfter: false }, // +4 dias (~7d total)
+  { step: 4, delayMs: 4 * 24 * 60 * 60 * 1000,       businessOnly: true,  closeAfter: false }, // +4 dias (~11d total — última tentativa)
+  { step: 5, delayMs: 1 * 24 * 60 * 60 * 1000,       businessOnly: true,  closeAfter: true  }  // +1 dia (~12d — break-up Afiliado, closeAfter:true PRESERVADO)
 ];
 
 /*
