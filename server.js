@@ -30747,7 +30747,7 @@ app.get("/auditoria/forense-48h", async (req, res) => {
       primeiroLojistaPatternNovo:
         auditEvents.find(e => {
           if (e.eventType !== "lead_declarou_revendedor_lojista") return false;
-          const motivo = e.payload?.motivo || "";
+          const motivo = e.payload?.motivoHeuristica || "";
           const match = motivo.match(/^pattern_(\d+)/);
           return match && parseInt(match[1]) >= 13;
         })?.timestamp || null
@@ -30880,7 +30880,8 @@ app.get("/auditoria/forense-48h", async (req, res) => {
       supervisorExecucoes: auditEvents.filter(e => e.eventType === "supervisor_invocado").length,
       supervisorNotaMedia: null,
       handoffLojistaTotal: auditEvents.filter(e => e.eventType === "lead_declarou_revendedor_lojista").length,
-      handoffLojistaPorPattern: {}
+      handoffLojistaPorPattern: {},
+      handoffLojistaPorOrigem: {}
     };
 
     // formatoResposta distribuição (puxar do payload do gpt_pre_sdr_consultant)
@@ -30903,11 +30904,14 @@ app.get("/auditoria/forense-48h", async (req, res) => {
       estatisticasGlobais.supervisorNotaMedia = notasSup.reduce((a, b) => a + b, 0) / notasSup.length;
     }
 
-    // Lojista por pattern
+    // Lojista por pattern (motivoHeuristica = "pattern_N") + por origem
     for (const e of auditEvents.filter(e => e.eventType === "lead_declarou_revendedor_lojista")) {
-      const motivo = e.payload?.motivo || "desconhecido";
-      estatisticasGlobais.handoffLojistaPorPattern[motivo] =
-        (estatisticasGlobais.handoffLojistaPorPattern[motivo] || 0) + 1;
+      const pattern = e.payload?.motivoHeuristica || "sem_pattern";
+      const origem = e.payload?.origem || "sem_origem";
+      estatisticasGlobais.handoffLojistaPorPattern[pattern] =
+        (estatisticasGlobais.handoffLojistaPorPattern[pattern] || 0) + 1;
+      estatisticasGlobais.handoffLojistaPorOrigem[origem] =
+        (estatisticasGlobais.handoffLojistaPorOrigem[origem] || 0) + 1;
     }
 
     const resposta = {
