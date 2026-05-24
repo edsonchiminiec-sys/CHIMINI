@@ -4689,6 +4689,9 @@ otherProductLineTopics: [],
     schedulingTime: "",
     mensagemParecesTruncada: false,
     leadDeclareSerRevendedorOuLojista: false,
+    pediuAguardar: false,
+    objecaoLinhaProduto: false,
+    despedidaDoLead: false,
     confidence: "baixa",
     reason: "Fallback local. Classificador semântico não executado ou falhou."
   };
@@ -4882,6 +4885,12 @@ wantsAffiliate = false
 wantsBoth = false, salvo se o lead pedir comparação explicitamente
 requestedFile só deve ser preenchido se ele pedir material, catálogo, folder ou PDF
 humanRequest = false, salvo se ele pedir pessoa/atendente/consultor
+
+pediuAguardar = true se o lead pediu explicitamente para aguardar/esperar/pensar mais (ex: "vou aguardar", "depois te falo", "preciso pensar"). DIFERENTE de delayOrAbandonment (que é querer PARAR de vez).
+
+objecaoLinhaProduto = true se o lead disse que NÃO quer trabalhar com uma linha de produtos específica (ex: "não quero piscina", "não trabalho com ordenha"). Indica que o pitch atual não serve mas pode haver outra abordagem.
+
+despedidaDoLead = true se o lead se despediu educadamente (ex: "até mais", "obrigado pela atenção", "foi um prazer", "tchau"). Encerramento educado da conversa.
 
 Não mantenha wantsAffiliate = true apenas porque Afiliado apareceu antes na conversa.
 
@@ -20960,6 +20969,47 @@ function getDelayUntilNextBusinessTime() {
   return Math.max(next.getTime() - now.getTime(), 0);
 }
 
+// ============================================================
+// F5.5e — Template UNIFICADO de break-up (Afiliado + despedida + disposição)
+// Regra IQG: nunca encerrar em silêncio. Sempre oferecer Afiliado
+// como alternativa antes de despedir.
+// Usado em 2 situações pelo caller (sendAutomaticFollowupIfStillValid):
+//   1. Lead pediu pra parar/recusou explicitamente (F5.5a saida_explicita)
+//   2. Step 5 natural da cadência (F5.5e)
+// ============================================================
+function buildBreakupAffiliateMessage(lead, motivo = "step5") {
+  const nome = lead?.nomeWhatsApp || lead?.nome || "";
+  const saudacao = nome ? `${nome}, ` : "";
+
+  let intro;
+  switch (motivo) {
+    case "saida_explicita":
+      intro = `${saudacao}entendi sua posição e respeito sua decisão.`;
+      break;
+    case "objecao_linha_total":
+      intro = `${saudacao}entendi que a linha de piscina não é o que você procura no momento.`;
+      break;
+    case "step5":
+    default:
+      intro = `${saudacao}conversamos um pouco e ainda não recebi uma resposta definitiva — quero respeitar seu tempo.`;
+      break;
+  }
+
+  const blocoAfiliado = `
+
+Antes de me despedir, quero deixar uma alternativa que pode fazer mais sentido pra você: o *Programa de Afiliados IQG*. É mais leve — você indica nossos produtos e ganha comissão, sem precisar comprar estoque, sem taxa de adesão, sem responsabilidade comercial direta.
+
+Para conhecer e se cadastrar: https://minhaiqg.com.br/`;
+
+  const blocoDespedida = `
+
+Se mais pra frente fizer sentido conversarmos sobre o Programa Parceiro Homologado, é só me chamar por aqui — fico à disposição.
+
+Sucesso na sua jornada! 🙏`;
+
+  return intro + blocoAfiliado + blocoDespedida;
+}
+
 function buildFollowupGreetingPrefix(lead = {}) {
   const candidato = lead?.nomeWhatsApp || lead?.nome || "";
   if (isInvalidLooseNameCandidate(candidato)) {
@@ -21199,7 +21249,7 @@ function historyOrLeadIndicatesResponsibilitiesExplained(lead = {}, history = []
   Em vez de texto hardcoded, os GPTs analisam o histórico completo
   e geram uma mensagem contextual de reengajamento.
 */
-async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
+async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
   try {
     const history = await loadConversation(from);
     const auditTraceId = generateTraceId();
@@ -21210,6 +21260,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1) {
 
     // Montar contexto de cadência para o Pré-SDR
     const contextoCadencia = [
+      opts?.avisoIntent ? opts.avisoIntent : null,
       `CONTEXTO DE CADÊNCIA AUTOMÁTICA (Step ${step} de 5):`,
       `Esta NÃO é uma resposta a uma mensagem do lead.`,
       `É uma mensagem de retomada/reengajamento porque o lead parou de responder.`,
@@ -21726,7 +21777,7 @@ async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {
   {
     role: "assistant",
     content: cleanMessage,
-    origem: "followup_automatico",
+    origem: meta.origem || "followup_automatico",
     followupStep: meta.step || null,
     createdAt: new Date()
   }
@@ -21898,19 +21949,164 @@ async function sendAutomaticFollowupIfStillValid({
 
   const latestHistory = await loadConversation(from);
 
-  // Tentar gerar a mensagem via GPTs (contextual, baseada no histórico)
-  // Se falhar, cair no fallback hardcoded
-  let messageToSend = await generateFollowupViaGPTs(
-    from,
-    latestLead,
-    followup.step || 1
+  // ============================================================
+  // F5.5a — Detector de intenção do lead ANTES do disparo (no caller)
+  // COM FILTRO TEMPORAL: só ativa se última msg do user é POSTERIOR à
+  // última cadência enviada (origem "followup_automatico"). Evita falso
+  // positivo capturando despedida antiga.
+  // ============================================================
+  const lastUserMsg = [...latestHistory].reverse().find(m => m.role === "user");
+  const lastCadenciaMsg = [...latestHistory].reverse().find(m =>
+    m.role === "assistant" &&
+    (m.origem === "followup_automatico" || (m.followupStep && m.followupStep > 0))
   );
+
+  const aplicarDetector = lastUserMsg && lastUserMsg.content && (
+    !lastCadenciaMsg ||
+    new Date(lastUserMsg.createdAt) > new Date(lastCadenciaMsg.createdAt)
+  );
+
+  let intentDetectado = null;
+  let acaoIntent = "continuar"; // "continuar" | "encerrar_com_breakup" | "adiar"
+  let avisoIntent = null;
+
+  if (aplicarDetector) {
+    const txt = String(lastUserMsg.content).toLowerCase().trim();
+
+    // Padrões hardcoded — cobrem 95% dos casos óbvios sem custo de GPT
+    const padraoParar = /\b(n[ãa]o\s+quero|n[ãa]o\s+tenho\s+interesse|desisto|n[ãa]o\s+vou\s+(querer|seguir|continuar)|fora\s+disso|n[ãa]o\s+me\s+interessa|n[ãa]o\s+obrigad[oa])\b/i;
+    const padraoDespedida = /\b(obrigad[oa](\s+pela\s+aten[çc][ãa]o)?|at[ée]\s+(mais|logo|breve)|fui|tchau|falou|abra[çc]os?)\b\s*[.!]*\s*$/i;
+    const padraoAguardar = /\b(vou\s+aguardar|vou\s+esperar|aguardar\s+um\s+pouco|me\s+d[êe]\s+um\s+tempo|depois\s+te\s+falo|depois\s+eu\s+(falo|retorno|respondo)|preciso\s+pensar|deixa\s+eu\s+pensar|vou\s+pensar|pensar\s+mais)\b/i;
+    const padraoLinhaProduto = /\b(n[ãa]o\s+(quero|trabalho|atuo|tenho\s+interesse)\s+(com\s+)?(em\s+)?(linha\s+de\s+)?(piscina|ordenha|dipping|cosm[ée]ticos?\s*vet|agro))\b/i;
+
+    if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
+      intentDetectado = "saida_explicita";
+      acaoIntent = "encerrar_com_breakup";
+    } else if (padraoAguardar.test(txt)) {
+      intentDetectado = "aguardar";
+      acaoIntent = "adiar";
+    } else if (padraoLinhaProduto.test(txt)) {
+      intentDetectado = "objecao_linha";
+      avisoIntent = `⚠️ INTENÇÃO RECENTE DO LEAD: o lead recusou explicitamente a linha de produtos principal. NÃO insista nessa linha. Pivotar: ofereça outras linhas IQG (ordenha, agro, cosméticos) OU mencione Programa de Afiliados como caminho mais leve.`;
+    }
+  }
+
+  // AÇÃO 1: lead pediu pra parar → dispara break-up Afiliado + encerra cadência
+  if (acaoIntent === "encerrar_com_breakup") {
+    const breakupMsg = buildBreakupAffiliateMessage(latestLead, "saida_explicita");
+
+    try {
+      await sendWhatsAppMessage(from, breakupMsg);
+    } catch (err) {
+      console.error(`[F5.5a] Falha ao enviar break-up para ${from}:`, err?.message);
+      await auditFollowupEvent("followup_breakup_send_failure", "high", { from, step: followup.step, motivo: intentDetectado, error: String(err?.message || err) });
+      return false;
+    }
+
+    try {
+      await saveAutomaticFollowupToHistory(from, breakupMsg, { step: followup.step || 0, origem: "followup_breakup_saida_explicita" });
+    } catch (err) {
+      console.error(`[F5.5a] Falha ao salvar break-up no histórico para ${from}:`, err?.message);
+    }
+
+    await saveLeadProfile(from, {
+      proximoFollowupEm: null,
+      followupStep: 0,
+      cadenciaPausadaPorCliente: true,
+      cadenciaPausadaEm: new Date(),
+      cadenciaPausadaMotivo: `lead_pediu_${intentDetectado}`,
+      ultimaCadenciaAbertura: breakupMsg.substring(0, 30).trim(),
+      ultimoMotivoBreakup: "saida_explicita",
+      status: "perdido",
+      statusOperacional: "perdido_por_pedido_explicito",
+      faseQualificacao: "perdido",
+      motivoPerda: "pedido_explicito_do_lead",
+      encerradoPor: "ia_cadencia_f55a"
+    });
+
+    try { clearTimers(from); } catch (err) { /* não-crítico */ }
+
+    await auditFollowupEvent("followup_breakup_saida_explicita", "medium", { from, step: followup.step, intent: intentDetectado });
+    console.log(`[F5.5a] Break-up Afiliado enviado a ${from} — intent: ${intentDetectado}`);
+    return true;
+  }
+
+  // AÇÃO 2: lead pediu aguardar → adia 7 dias, sem mensagem, sem advance
+  if (acaoIntent === "adiar") {
+    const SETE_DIAS_MS = 7 * 24 * 60 * 60 * 1000;
+    const novoProximo = new Date(Date.now() + SETE_DIAS_MS);
+
+    await saveLeadProfile(from, {
+      proximoFollowupEm: novoProximo,
+      cadenciaPausadaMotivo: "lead_pediu_aguardar_adiada_7d"
+    });
+
+    await auditFollowupEvent("followup_adiado_por_aguardar", "low", { from, step: followup.step, novoProximoFollowupEm: novoProximo.toISOString() });
+    console.log(`[F5.5a] Cadência adiada 7d para ${from} — lead pediu aguardar`);
+    return false; // não enviou, não avança step
+  }
+
+  // AÇÃO 3: continuar — segue fluxo normal (com avisoIntent se aplicável)
+  // ============================================================
+  // F5.5e — Bypass step 5 (template em vez de geração via GPT)
+  // ============================================================
+  let isBreakupStep5 = false;
+  let messageToSend;
+
+  if ((followup.step || 0) === 5) {
+    messageToSend = buildBreakupAffiliateMessage(latestLead, "step5");
+    isBreakupStep5 = true;
+    console.log(`[F5.5e] Step 5 bypass — usando break-up template para ${from}`);
+  } else {
+    // Continua fluxo normal: gera via GPT (com avisoIntent se aplicável)
+    messageToSend = await generateFollowupViaGPTs(from, latestLead, followup.step || 1, { avisoIntent });
+  }
 
   // Fallback: se GPTs falharam, usar mensagem hardcoded
   if (!messageToSend) {
     messageToSend = followup.getMessage
       ? followup.getMessage(latestLead, latestHistory)
       : getSafeStageFollowupMessage(latestLead, followup.step || 1, latestHistory);
+  }
+
+  // ============================================================
+  // F5.5c — Enforcement programático da regra "varie a abertura"
+  // (Regra texto na linha 21222 era ignorada pelo gpt-4o-mini a temp 0.5)
+  // Skip se for break-up step 5 (template tem padrão próprio).
+  // ============================================================
+  if (!isBreakupStep5 && messageToSend) {
+    const ultimaAbertura = (latestLead?.ultimaCadenciaAbertura || "").trim().toLowerCase();
+    const novaAberturaCompleta = String(messageToSend).trim();
+
+    const aberturaRepetida = (antiga, nova) => {
+      if (!antiga || !nova) return false;
+      const inicioA = antiga.split(/[\s,!?.]/)[0];
+      const inicioN = nova.toLowerCase().substring(0, 20).split(/[\s,!?.]/)[0];
+      if (!inicioA || !inicioN) return false;
+      if (inicioA === inicioN) return true;
+      const saudacoes = ["oi", "olá", "ola", "oi!", "olá!", "ola!", "ei"];
+      if (saudacoes.includes(inicioA) && saudacoes.includes(inicioN)) return true;
+      return false;
+    };
+
+    if (aberturaRepetida(ultimaAbertura, novaAberturaCompleta)) {
+      console.log(`[F5.5c] Abertura repetida detectada para ${from}: "${ultimaAbertura}" -> "${novaAberturaCompleta.substring(0, 30)}". Substituindo.`);
+
+      const nome = latestLead?.nomeWhatsApp || latestLead?.nome || "";
+      const variantes = [
+        nome ? `${nome}, vou ser direto:` : "Vou ser direto:",
+        nome ? `${nome}, pensando no que conversamos,` : "Pensando no que conversamos,",
+        nome ? `${nome}, uma última coisa importante:` : "Uma última coisa importante:",
+        nome ? `${nome}, voltei rapidinho aqui.` : "Voltei rapidinho aqui.",
+        nome ? `${nome}, antes de seguir,` : "Antes de seguir,"
+      ];
+      const variante = variantes[((followup.step || 1) - 1) % variantes.length];
+
+      const semAbertura = novaAberturaCompleta
+        .replace(/^[^\n,.!?]{1,30}[\s,!?.]+/, "")
+        .trim();
+      messageToSend = `${variante} ${semAbertura.charAt(0).toLowerCase() + semAbertura.slice(1)}`;
+    }
   }
 
   /*
@@ -22039,6 +22235,8 @@ async function sendAutomaticFollowupIfStillValid({
         motivoPerda: "cadencia_completa_sem_resposta",
         encerradoPor: "ia", origemEncerramento: "ia_cadencia_completa",
         perdidoEm: new Date(),
+        ultimaCadenciaAbertura: messageToSend.substring(0, 30).trim(),
+        ultimoMotivoBreakup: isBreakupStep5 ? "step5" : null,
         ultimoFollowupEm: new Date()
       });
        
@@ -22062,6 +22260,8 @@ await auditSystemEvent("ciclo_followup", "medium", from, {
         proximoFollowupEm: nextDate,
         followupStep: nextConfig.step,
         followupLockEm: null,
+        ultimaCadenciaAbertura: messageToSend.substring(0, 30).trim(),
+        ultimoMotivoBreakup: null,
         ultimoFollowupEm: new Date()
       });
 
