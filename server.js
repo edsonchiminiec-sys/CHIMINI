@@ -35632,6 +35632,210 @@ app.get("/diagnostico-22-05-2026-ter", async (req, res) => {
   }
 });
 
+// ============================================================
+// 🔍 DIAGNÓSTICO TEMPORÁRIO — Estado da cadência dos leads mornos
+// Adicionado em 2026-05-24 para subsidiar F5.5 (Cadência reaquecimento).
+// REMOVER junto com cleanup das outras rotas diagnósticas temporárias.
+// ============================================================
+app.get("/diagnostico-cadencia-mornos", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    // Replicação local de getVisualStatus (cópia verbatim do dashboard ~32910).
+    // Garante bater EXATAMENTE os mornos que o dashboard conta.
+    function getVisualStatusLocal(lead) {
+      const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+      const fase = lead.faseQualificacao || "";
+      const status = lead.status || "";
+      const etapas = lead.etapas || {};
+      const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+
+      if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+
+      if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+
+      if (fase === "qualificando") return "qualificando";
+
+      if (etapasConcluidas >= 3) return "qualificando";
+
+      if (fase === "morno" || fase === "afiliado") return "morno";
+      if (etapasConcluidas >= 1) return "morno";
+      if (status === "morno") return "morno";
+
+      return status || "novo";
+    }
+
+    // Bucketização de cadência (prioridade: pausada > ativa > encerrada > nunca_rodou).
+    function bucketCadencia(lead) {
+      if (lead.cadenciaPausadaPorCliente === true) return "pausada";
+      if (lead.proximoFollowupEm !== null && lead.proximoFollowupEm !== undefined) return "ativa";
+      if ((lead.followupStep || 0) > 0) return "encerrada";
+      return "nunca_rodou";
+    }
+
+    function diasParado(lead) {
+      const ref = lead.updatedAt || lead.createdAt;
+      if (!ref) return null;
+      const refDate = ref instanceof Date ? ref : new Date(ref);
+      return (Date.now() - refDate.getTime()) / 86400000;
+    }
+
+    function userMascarado(user) {
+      const s = String(user || "");
+      if (s.length <= 8) return s.replace(/.(?=.{2})/g, "*");
+      return s.substring(0, 6) + "***" + s.substring(s.length - 2);
+    }
+
+    function etapasConcluidasCount(lead) {
+      const e = lead.etapas || {};
+      return [e.programa, e.beneficios, e.estoque, e.responsabilidades, e.investimento].filter(Boolean).length;
+    }
+
+    const allLeads = await db.collection("leads").find({}).toArray();
+    const mornos = allLeads.filter(l => getVisualStatusLocal(l) === "morno");
+
+    // Totais gerais
+    const totaisGerais = {
+      totalMornos: mornos.length,
+      porBucket: { pausada: 0, ativa: 0, encerrada: 0, nunca_rodou: 0 },
+      diasParado: { media: 0, min: Infinity, max: 0 },
+      followupStepDistribution: {}
+    };
+
+    const diasParadoArr = [];
+    for (const lead of mornos) {
+      const bucket = bucketCadencia(lead);
+      totaisGerais.porBucket[bucket]++;
+
+      const d = diasParado(lead);
+      if (d !== null) {
+        diasParadoArr.push(d);
+        if (d < totaisGerais.diasParado.min) totaisGerais.diasParado.min = d;
+        if (d > totaisGerais.diasParado.max) totaisGerais.diasParado.max = d;
+      }
+
+      const step = lead.followupStep || 0;
+      totaisGerais.followupStepDistribution[step] = (totaisGerais.followupStepDistribution[step] || 0) + 1;
+    }
+    totaisGerais.diasParado.media = diasParadoArr.length > 0
+      ? diasParadoArr.reduce((a, b) => a + b, 0) / diasParadoArr.length
+      : 0;
+    if (totaisGerais.diasParado.min === Infinity) totaisGerais.diasParado.min = 0;
+
+    // Distribuição cruzada (bucket × followupStep × faseQualificacao)
+    const distribuicao = {};
+    for (const lead of mornos) {
+      const key = JSON.stringify({
+        bucket: bucketCadencia(lead),
+        followupStep: lead.followupStep || 0,
+        faseQualificacao: lead.faseQualificacao || "N/A"
+      });
+      if (!distribuicao[key]) {
+        distribuicao[key] = { ...JSON.parse(key), count: 0, diasMedio: 0, _soma: 0, _n: 0 };
+      }
+      distribuicao[key].count++;
+      const d = diasParado(lead);
+      if (d !== null) {
+        distribuicao[key]._soma += d;
+        distribuicao[key]._n++;
+      }
+    }
+    const distribuicaoArr = Object.values(distribuicao).map(g => {
+      const out = { ...g };
+      out.diasMedio = g._n > 0 ? g._soma / g._n : 0;
+      delete out._soma;
+      delete out._n;
+      return out;
+    }).sort((a, b) => b.count - a.count);
+
+    // Amostra qualitativa de 10 leads (auditoria getVisualStatus + mensagens reais)
+    const amostraIdx = [];
+    const total = mornos.length;
+    if (total > 0) {
+      const passo = Math.max(1, Math.floor(total / 10));
+      for (let i = 0; i < 10 && i * passo < total; i++) {
+        amostraIdx.push(i * passo);
+      }
+    }
+    const amostra = await Promise.all(amostraIdx.map(async idx => {
+      const lead = mornos[idx];
+
+      const etapas = lead.etapas || {};
+      const camposClassificacao = {
+        statusDashboard: lead.statusDashboard || null,
+        statusVisualDashboard: lead.statusVisualDashboard || null,
+        faseQualificacao: lead.faseQualificacao || null,
+        status: lead.status || null,
+        etapas: {
+          programa: !!etapas.programa,
+          beneficios: !!etapas.beneficios,
+          estoque: !!etapas.estoque,
+          responsabilidades: !!etapas.responsabilidades,
+          investimento: !!etapas.investimento
+        },
+        etapasConcluidas: etapasConcluidasCount(lead)
+      };
+
+      let ultimasMensagens;
+      try {
+        const historico = await loadConversation(lead.user);
+        ultimasMensagens = Array.isArray(historico)
+          ? historico.slice(-5).map(m => ({
+              role: m.role || "?",
+              content: typeof m.content === "string" ? m.content.substring(0, 200) : "<não-texto>",
+              createdAt: m.createdAt || null
+            }))
+          : [];
+      } catch (e) {
+        ultimasMensagens = "<erro_ao_carregar_conversa>";
+      }
+
+      return {
+        userMascarado: userMascarado(lead.user),
+        statusVisualCalculado: getVisualStatusLocal(lead),
+        camposClassificacao,
+        cadencia: {
+          bucket: bucketCadencia(lead),
+          followupStep: lead.followupStep || 0,
+          proximoFollowupEm: lead.proximoFollowupEm || null,
+          cadenciaPausadaPorCliente: lead.cadenciaPausadaPorCliente === true,
+          cadenciaPausadaMotivo: lead.cadenciaPausadaMotivo || null
+        },
+        diasParado: diasParado(lead),
+        createdAt: lead.createdAt || null,
+        updatedAt: lead.updatedAt || null,
+        ultimasMensagens
+      };
+    }));
+
+    return res.json({
+      timestamp: new Date().toISOString(),
+      objetivo: "Subsidiar F5.5 (Cadência reaquecimento PNL) com dados reais dos mornos. Inclui auditoria do getVisualStatus (campos crus na amostra) e últimas mensagens (validação qualitativa).",
+      base: {
+        totalLeadsBanco: allLeads.length,
+        totalMornos: mornos.length
+      },
+      totaisGerais,
+      distribuicaoBucketStepFase: distribuicaoArr,
+      amostraQualitativa: amostra
+    });
+  } catch (error) {
+    console.error("[/diagnostico-cadencia-mornos] erro:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
