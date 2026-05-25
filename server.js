@@ -29636,89 +29636,114 @@ app.get("/auditoria", async (req, res) => {
           '<a class="btn" href="/auditoria' + senhaQuery + '">Limpar</a>' +
        '</form>' +
       '<div style="margin-bottom:18px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 55%,#172554 100%);border-radius:14px;padding:20px;color:#fff;box-shadow:0 12px 34px rgba(15,23,42,0.20);border:1px solid rgba(255,255,255,0.08);">' +
-          '<div style="display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:rgba(59,130,246,0.18);color:#bfdbfe;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">C-Level Auditor GPT</div>' +
-          '<h3 style="margin:0 0 8px;font-size:22px;font-weight:900;">Auditor IA — Análise dos Eventos</h3>' +
-          '<p style="margin:0 0 18px;color:#cbd5e1;font-size:14px;">Analisa padrões, qualidade dos GPTs, gargalos e sugestões de melhoria com base nos eventos de auditoria.</p>' +
-          '<div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;">' +
-            '<div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
-              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:6px;color:#e2e8f0;">Filtrar por lead específico <span style="font-weight:500;color:#94a3b8;">(opcional — deixe vazio para análise geral)</span>:</label>' +
-              '<input id="auditorLeadFilter" type="text" style="width:100%;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;margin-bottom:12px;font-family:monospace;" placeholder="Ex: 5554*****75 — cole o telefone mascarado do lead que aparece na lista">' +
-              '<label style="display:block;font-size:13px;font-weight:800;margin-bottom:9px;color:#e2e8f0;">Pergunte ao Auditor:</label>' +
-              '<textarea id="auditorQuestion" style="width:100%;min-height:100px;resize:vertical;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:12px;font-size:13px;line-height:1.45;outline:none;" placeholder="Ex: Quais GPTs estão gerando mais erros? Tem algum padrão de falha?"></textarea>' +
-              '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
-                '<button type="button" id="askAuditorBtn" onclick="askAuditor()" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Perguntar ao Auditor</button>' +
-                '<button type="button" onclick="document.getElementById(\'auditorLeadFilter\').value=\'\';document.getElementById(\'auditorLeadFilter\').focus();" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:700;cursor:pointer;background:transparent;color:#cbd5e1;">Limpar filtro de lead</button>' +
-                '<button type="button" onclick="askAuditor(\'Analise os eventos recentes. Quais GPTs estão funcionando bem, quais precisam de atenção e existe algum padrão de erro?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Diagnóstico geral</button>' +
-                '<button type="button" onclick="askAuditor(\'Existem eventos de alta severidade? Se sim, o que causou e como corrigir?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Erros críticos</button>' +
-                '<button type="button" onclick="askAuditor(\'Quais melhorias nos prompts ou travas do backend você sugere com base nos eventos?\')" style="border:0;border-radius:999px;height:36px;padding:0 13px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Sugestões</button>' +
-              '</div>' +
-            '</div>' +
-            '<div id="auditorResponse" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
-              '<div style="font-size:13px;font-weight:900;color:#bfdbfe;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Resposta do Auditor</div>' +
-              '<p style="color:#e2e8f0;font-size:13px;">Faça uma pergunta para receber uma análise técnica dos eventos de auditoria.</p>' +
-            '</div>' +
+          '<div style="display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:rgba(59,130,246,0.18);color:#bfdbfe;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Sales Master Auditor IQG (gpt-4o)</div>' +
+          '<h3 style="margin:0 0 8px;font-size:22px;font-weight:900;">Auditor Comercial — Análise de Conversas</h3>' +
+          '<p style="margin:0 0 16px;color:#cbd5e1;font-size:14px;">Audita as conversas dos leads numa janela de tempo com profundidade comercial (Voss, Cialdini, SPIN, Challenger, MEDDIC, PNL, DISC). Notas por 7 eixos, reescritas prontas e aderência ao prompt da SDR.</p>' +
+          '<div id="janelaBtns" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">' +
+            '<button type="button" data-janela="24h" onclick="setJanela(this)" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 14px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">24h</button>' +
+            '<button type="button" data-janela="48h" onclick="setJanela(this)" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 14px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">48h</button>' +
+            '<button type="button" data-janela="7d" onclick="setJanela(this)" style="border:0;border-radius:999px;height:36px;padding:0 14px;font-size:12px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">7 dias</button>' +
+            '<button type="button" data-janela="custom" onclick="setJanela(this)" style="border:1px solid rgba(255,255,255,0.16);border-radius:999px;height:36px;padding:0 14px;font-size:12px;font-weight:800;cursor:pointer;background:rgba(255,255,255,0.12);color:#e2e8f0;">Custom</button>' +
+          '</div>' +
+          '<div id="customRange" style="display:none;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<input id="dataInicio" type="datetime-local" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
+            '<input id="dataFim" type="datetime-local" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
+          '</div>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">' +
+            '<input id="auditorLeadFilter" type="text" style="flex:1;min-width:200px;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;font-family:monospace;" placeholder="Filtrar por user (opcional)">' +
+            '<label style="font-size:12px;color:#94a3b8;">Máx leads:</label>' +
+            '<input id="auditorMaxLeads" type="number" value="50" min="1" max="100" style="width:80px;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;">' +
+            '<button type="button" id="askAuditorBtn" onclick="askSalesMasterAuditor()" style="border:0;border-radius:999px;height:38px;padding:0 18px;font-size:13px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Auditar conversas</button>' +
+          '</div>' +
+          '<div id="auditorResponse" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
+            '<p style="color:#e2e8f0;font-size:13px;">Escolha uma janela e clique em <strong>Auditar conversas</strong>. Custo estimado: ~$0.15-0.40 por lead (gpt-4o).</p>' +
           '</div>' +
         '</div>' +
         '<script>' +
         'var auditorSenha = ' + JSON.stringify(String(req.query.senha || "")) + ';' +
-        'async function askAuditor(qOverride) {' +
-          'var qBox = document.getElementById("auditorQuestion");' +
-          'var leadBox = document.getElementById("auditorLeadFilter");' +
+        'var smJanela = "7d";' +
+        'window.__smAuditorias = [];' +
+        'function setJanela(btn){' +
+          'smJanela = btn.getAttribute("data-janela");' +
+          'document.querySelectorAll("#janelaBtns button").forEach(function(b){ var on = (b===btn); b.style.background = on ? "#60a5fa" : "rgba(255,255,255,0.12)"; b.style.color = on ? "#0f172a" : "#e2e8f0"; b.style.border = on ? "0" : "1px solid rgba(255,255,255,0.16)"; });' +
+          'document.getElementById("customRange").style.display = (smJanela === "custom") ? "flex" : "none";' +
+        '}' +
+        'function smEsc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }' +
+        'function smLista(t, items){ if(!Array.isArray(items)||!items.length) return ""; return `<h6 style="margin:10px 0 5px;font-size:12px;color:#bfdbfe;text-transform:uppercase;letter-spacing:0.04em;">${t}</h6><ul style="margin:0;padding-left:18px;color:#cbd5e1;font-size:12px;line-height:1.55;">` + items.map(function(x){ return `<li>${smEsc(x)}</li>`; }).join("") + `</ul>`; }' +
+        'function smEixo(label, v){ return `<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><span>${label}</span><strong style="color:#fff;">${(v==null?"—":v)}</strong></div>`; }' +
+        'function smCard(a, idx){' +
+          'if(a.pulado){ return `<div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px;margin-bottom:12px;font-size:13px;"><strong style="color:#fca5a5;">${smEsc(a.userMascarado)}</strong> — pulado: ${smEsc(a.erro)}</div>`; }' +
+          'var n = a.notas6Eixos || {};' +
+          'var ad = a.aderenciaSystemPromptIQG || {};' +
+          'var h = `<div style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:14px;margin-bottom:14px;">`;' +
+          'h += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong style="font-size:15px;color:#fff;">${smEsc(a.userMascarado)}</strong><span style="background:#60a5fa;color:#0f172a;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:900;">Média ${(n.media==null?"—":n.media)}</span></div>`;' +
+          'h += `<div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Estágio: ${smEsc(a.estagio)} · Resultado: ${smEsc(a.resultado)}</div>`;' +
+          'h += `<p style="color:#e2e8f0;font-size:13px;line-height:1.45;">${smEsc(a.resumoExecutivo)}</p>`;' +
+          'h += smEixo("Abertura e rapport", n.aberturaRapport) + smEixo("Qualificação / dor", n.qualificacaoDescobertaDor) + smEixo("Apresentação de valor", n.apresentacaoValor) + smEixo("Tratamento de objeções", n.tratamentoObjecoes) + smEixo("Condução / fechamento", n.conducaoFechamento) + smEixo("Tom, ritmo e adaptação", n.tomRitmoAdaptacao) + smEixo("Gatilhos de persuasão", n.usoGatilhosPersuasao);' +
+          'h += smLista("Pontos fortes", a.pontosFortes);' +
+          'h += smLista("Pontos fracos", a.pontosFracos);' +
+          'h += smLista("Oportunidades perdidas", a.oportunidadesPerdidas);' +
+          'h += smLista("Recomendações p/ prompt da SDR", a.recomendacoesPromptSDR);' +
+          'h += smLista("Regras IQG respeitadas", ad.regrasRespeitadas);' +
+          'h += smLista("Regras IQG violadas", ad.regrasVioladas);' +
+          'h += smLista("Onde corrigir no prompt da SDR", ad.ondeCorrigirNoPrompt);' +
+          'h += smLista("Plano de ação (top 3)", a.planoAcao3Prioridades);' +
+          'if(Array.isArray(a.analiseMensagemAMensagem) && a.analiseMensagemAMensagem.length){' +
+            'h += `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#bfdbfe;font-size:12px;font-weight:800;">Análise mensagem a mensagem (${a.analiseMensagemAMensagem.length})</summary>`;' +
+            'a.analiseMensagemAMensagem.forEach(function(m){ h += `<div style="border-left:3px solid #475569;padding:6px 10px;margin:8px 0;font-size:12px;color:#cbd5e1;"><div style="color:#93c5fd;">SDR: ${smEsc(m.mensagemSDR)}</div><div style="margin-top:3px;">Diagnóstico: ${smEsc(m.diagnostico)}</div><div style="color:#fca5a5;margin-top:3px;">Técnica ausente: ${smEsc(m.tecnicaAusente || m.tecnicaIdentificada || "—")}</div><div style="color:#86efac;margin-top:3px;">Reescrita: ${smEsc(m.reescritaSugerida)}</div></div>`; });' +
+            'h += `</details>`;' +
+          '}' +
+          'h += `<button type="button" onclick="smBaixarMd(${idx})" style="margin-top:10px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:#cbd5e1;border-radius:999px;height:32px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;">Baixar MD</button>`;' +
+          'h += `</div>`;' +
+          'return h;' +
+        '}' +
+        'async function smBaixarMd(idx){' +
+          'try {' +
+            'var a = window.__smAuditorias[idx];' +
+            'if(!a) return;' +
+            'var url = "/auditoria/sales-master/download-md" + (auditorSenha ? "?senha=" + encodeURIComponent(auditorSenha) : "");' +
+            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auditoria: a }) });' +
+            'if(!resp.ok) throw new Error("Falha no download");' +
+            'var blob = await resp.blob();' +
+            'var link = document.createElement("a");' +
+            'link.href = URL.createObjectURL(blob);' +
+            'link.download = "auditoria-" + (a.userMascarado || "lead") + ".md";' +
+            'document.body.appendChild(link); link.click(); document.body.removeChild(link);' +
+          '} catch(err){ alert("Erro ao baixar MD: " + (err.message || err)); }' +
+        '}' +
+        'async function askSalesMasterAuditor(){' +
           'var rBox = document.getElementById("auditorResponse");' +
           'var btn = document.getElementById("askAuditorBtn");' +
-          'var pergunta = String(qOverride || qBox.value || "").trim();' +
-          'var leadFiltro = leadBox ? String(leadBox.value || "").trim() : "";' +
-          'if (!pergunta || pergunta.length < 8) { rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">Digite uma pergunta mais completa.</p>"; return; }' +
-          'qBox.value = pergunta;' +
-          'if (btn) { btn.disabled = true; btn.textContent = leadFiltro ? "Analisando lead..." : "Analisando..."; }' +
-          'var loadingMsg = leadFiltro ? ("Analisando eventos do lead <strong>" + leadFiltro + "</strong>...") : "Analisando eventos de auditoria (todos os leads)...";' +
-          'rBox.innerHTML = "<p style=\\"color:#e2e8f0;\\">" + loadingMsg + "</p>";' +
+          'var leadFiltro = String((document.getElementById("auditorLeadFilter")||{}).value || "").trim();' +
+          'var maxLeads = parseInt((document.getElementById("auditorMaxLeads")||{}).value || "50", 10) || 50;' +
+          'var corpo = { janela: smJanela, maxLeads: maxLeads };' +
+          'if(leadFiltro) corpo.leadFilter = leadFiltro;' +
+          'if(smJanela === "custom"){' +
+            'var di = (document.getElementById("dataInicio")||{}).value; var df = (document.getElementById("dataFim")||{}).value;' +
+            'if(!di || !df){ rBox.innerHTML = `<p style="color:#fca5a5;">Para janela custom, preencha data início e fim.</p>`; return; }' +
+            'corpo.dataInicio = new Date(di).toISOString(); corpo.dataFim = new Date(df).toISOString();' +
+          '}' +
+          'if(btn){ btn.disabled = true; btn.textContent = "Auditando..."; }' +
+          'rBox.innerHTML = `<p style="color:#e2e8f0;">Auditando conversas (janela ${smJanela})... isso pode levar um tempo conforme o nº de leads.</p>`;' +
           'try {' +
             'var url = "/auditoria/c-level-auditor" + (auditorSenha ? "?senha=" + encodeURIComponent(auditorSenha) : "");' +
-            'var body = { pergunta: pergunta };' +
-            'if (leadFiltro) { body.lead = leadFiltro; }' +
-            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });' +
+            'var resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) });' +
             'var data = await resp.json();' +
-            'if (!resp.ok || !data.ok) throw new Error(data.error || "Falha na análise.");' +
-            'var a = data.analysis || {};' +
-            'var snap = data.auditSnapshot || {};' +
-            'var modoBadge = "";' +
-            'if (snap.modoAnalise === "lead_especifico") {' +
-              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(245,158,11,0.18);color:#fde68a;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(245,158,11,0.35);\\">🎯 Análise de lead específico: " + (snap.leadAnalisado || leadFiltro) + " · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
-            '} else {' +
-              'modoBadge = "<div style=\\"display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:rgba(96,165,250,0.18);color:#dbeafe;font-size:12px;font-weight:800;margin-bottom:10px;border:1px solid rgba(96,165,250,0.35);\\">🌐 Análise geral do sistema · " + (snap.eventosAnalisados || 0) + " eventos</div>";' +
-            '}' +
-            'var html = modoBadge + "<h4 style=\\"margin:0 0 10px;font-size:18px;color:#fff;\\">" + (a.tituloDiagnostico || "Diagnóstico") + "</h4>";' +
-            'if (a.qualidadeGpts) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">GPTs: " + (a.qualidadeGpts.status || "-") + "</span>";' +
-            'if (a.qualidadeBackend) html += "<span style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(96,165,250,0.16);color:#dbeafe;font-size:12px;font-weight:800;margin:4px 8px 8px 0;\\">Backend: " + (a.qualidadeBackend.status || "-") + "</span>";' +
-            'if (a.prioridadeExecutiva) html += "<div style=\\"display:inline-flex;padding:5px 9px;border-radius:999px;background:rgba(250,204,21,0.16);color:#fef3c7;font-size:12px;font-weight:800;margin-bottom:10px;\\">Prioridade: " + a.prioridadeExecutiva + "</div>";' +
-            'html += "<p style=\\"color:#e2e8f0;font-size:13px;line-height:1.45;\\">" + (a.resumoExecutivo || "") + "</p>";' +
-            'if (a.qualidadeGpts && a.qualidadeGpts.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade GPTs</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeGpts.analise + "</p>";' +
-            'if (a.qualidadeBackend && a.qualidadeBackend.analise) html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">Qualidade Backend</h5><p style=\\"color:#cbd5e1;font-size:13px;\\">" + a.qualidadeBackend.analise + "</p>";' +
-            'if (Array.isArray(a.diagnosticosAcionaveis) && a.diagnosticosAcionaveis.length > 0) {' +
-              'html += "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;text-transform:uppercase;\\">Diagnósticos acionáveis</h5>";' +
-              'a.diagnosticosAcionaveis.forEach(function(d, i) {' +
-                'var pc = d.prioridade === "critica" ? "#ef4444" : d.prioridade === "alta" ? "#f59e0b" : d.prioridade === "media" ? "#3b82f6" : "#6b7280";' +
-                'html += "<div style=\\"background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:12px;margin-bottom:10px;border-left:4px solid " + pc + ";\\">";' +
-                'html += "<div style=\\"display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;\\"><strong style=\\"font-size:13px;color:#fff;\\">#" + (i+1) + " — " + (d.problema || "-") + "</strong><span style=\\"background:" + pc + ";color:white;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;\\">" + (d.prioridade || "-") + "</span></div>";' +
-                'html += "<div style=\\"font-size:12px;color:#94a3b8;margin-bottom:4px;\\">📍 Onde: " + (d.onde || "-") + "</div>";' +
-                'html += "<div style=\\"font-size:12px;color:#fca5a5;margin-bottom:4px;\\">⚠️ Por quê: " + (d.porqueEProblema || "-") + "</div>";' +
-                'html += "<div style=\\"font-size:12px;color:#86efac;margin-bottom:4px;\\">✅ Correção: " + (d.comoCorrigir || "-") + "</div>";' +
-                'html += "<div style=\\"font-size:11px;color:#6b7280;\\">🔧 Componente: " + (d.componente || "-") + "</div>";' +
-                'html += "</div>";' +
-              '});' +
-            '}' +
-            'function rl(t, items) { if (!Array.isArray(items) || !items.length) return ""; return "<h5 style=\\"margin:14px 0 7px;font-size:13px;color:#bfdbfe;\\">" + t + "</h5><ul style=\\"margin:0;padding-left:18px;color:#cbd5e1;font-size:13px;line-height:1.55;\\">" + items.map(function(x){return "<li>"+x+"</li>";}).join("") + "</ul>"; }' +
-            'html += rl("Padrões observados", a.padroesObservados);' +
-            'html += rl("Gargalos", a.gargalos);' +
-            'html += rl("Oportunidades de melhoria", a.oportunidadesMelhoria);' +
-            'html += rl("Plano de ação", a.planoAcao);' +
-            'if (a.observacaoSobreAmostra) html += "<p style=\\"color:#94a3b8;font-size:12px;margin-top:12px;\\">" + a.observacaoSobreAmostra + "</p>";' +
+            'if(!resp.ok || !data.ok) throw new Error(data.error || data.erro || "Falha na auditoria.");' +
+            'window.__smAuditorias = data.auditorias || [];' +
+            'var m = data.mediasPorEixo || {};' +
+            'var html = `<div style="background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.3);border-radius:12px;padding:14px;margin-bottom:16px;">`;' +
+            'html += `<div style="font-size:13px;font-weight:900;color:#bfdbfe;text-transform:uppercase;margin-bottom:8px;">Resumo do batch</div>`;' +
+            'html += `<div style="font-size:13px;color:#e2e8f0;">Leads na janela: <strong>${data.totalLeads}</strong> · Auditados: <strong>${data.auditoriasValidas}</strong> · Pulados: <strong>${data.auditoriasPuladas}</strong> · Custo estimado: <strong>$${data.custoTotalUSD}</strong></div>`;' +
+            'html += `<div style="margin-top:8px;">` + smEixo("Média geral", m.mediaGeral) + smEixo("Abertura e rapport", m.aberturaRapport) + smEixo("Qualificação / dor", m.qualificacaoDescobertaDor) + smEixo("Apresentação de valor", m.apresentacaoValor) + smEixo("Tratamento de objeções", m.tratamentoObjecoes) + smEixo("Condução / fechamento", m.conducaoFechamento) + smEixo("Tom, ritmo e adaptação", m.tomRitmoAdaptacao) + smEixo("Gatilhos de persuasão", m.usoGatilhosPersuasao) + `</div>`;' +
+            'html += `</div>`;' +
+            'if(!window.__smAuditorias.length){ html += `<p style="color:#94a3b8;font-size:13px;">${smEsc(data.resumoGeral || "Nenhuma auditoria gerada.")}</p>`; }' +
+            'window.__smAuditorias.forEach(function(a, i){ html += smCard(a, i); });' +
             'rBox.innerHTML = html;' +
-          '} catch (err) {' +
-            'rBox.innerHTML = "<p style=\\"color:#fca5a5;\\">" + (err.message || "Erro ao gerar análise.") + "</p>";' +
+          '} catch(err){' +
+            'rBox.innerHTML = `<p style="color:#fca5a5;">${smEsc(err.message || "Erro ao gerar auditoria.")}</p>`;' +
           '} finally {' +
-            'if (btn) { btn.disabled = false; btn.textContent = "Perguntar ao Auditor"; }' +
+            'if(btn){ btn.disabled = false; btn.textContent = "Auditar conversas"; }' +
           '}' +
         '}' +
         '</script>' +
@@ -29735,242 +29760,654 @@ app.get("/auditoria", async (req, res) => {
    C-LEVEL AUDITOR GPT — ANÁLISE DOS EVENTOS DE AUDITORIA
 ========================= */
 
-const CLEVEL_AUDITOR_SYSTEM_PROMPT = `
-Você é o C-Level Auditor GPT da IQG.
+const SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG = `# IDENTIDADE
 
-Você analisa eventos de auditoria do sistema de SDR IA no WhatsApp e gera diagnósticos detalhados e acionáveis.
+Você é o SALES MASTER AUDITOR IQG, consultor sênior de vendas com mais de 25 anos de atuação prática em vendas consultivas complexas, treinamento de equipes comerciais de alta performance e auditoria de conversas comerciais. Você foi recrutado especificamente para auditar a SDR (Sales Development Representative) de IA da Indústria Química Gaúcha — IQG.
 
-Seu papel é:
-- Identificar padrões de erro nos GPTs (Classificador, Historiador, Pré-SDR, Supervisor, SDR).
-- Detectar decisões incorretas dos agentes.
-- Apontar gargalos de conversão, repetição ou perda de leads.
-- Avaliar a qualidade geral do atendimento automatizado.
-- Gerar recomendações PRÁTICAS e ESPECÍFICAS de correção.
+Sua formação combina:
+- Vendas B2B e B2C de alto valor (ticket alto, ciclos longos e curtos).
+- Negociação avançada — Harvard Negotiation Project, Chris Voss (FBI/Never Split the Difference), Jim Camp (Start with No).
+- Psicologia da persuasão — Robert Cialdini (7 princípios), Daniel Kahneman (vieses cognitivos, Sistema 1/Sistema 2).
+- PNL aplicada a vendas — Bandler, Grinder, Tony Robbins, Anthony Jacquin.
+- Metodologias estruturadas: SPIN Selling (Rackham), Sandler, Challenger Sale (Dixon/Adamson), Solution Selling, Value Selling, MEDDIC/MEDDPICC, BANT, GPCTBA/C&I, Jobs to be Done.
+- Copywriting persuasivo e gatilhos mentais (Cialdini, Eugene Schwartz, Gary Halbert).
+- Análise comportamental (DISC textual, sistema representacional VAK, níveis de consciência de Schwartz).
 
-Você NÃO altera leads, NÃO manda WhatsApp, NÃO envia CRM, NÃO gera código.
+Você fala como mentor experiente: direto, técnico, sem rodeios, didático e brutalmente honesto, mas sempre construtivo. Não suaviza problemas críticos para agradar. Sua função é elevar a SDR IQG a níveis de elite.
 
-Contexto técnico da IQG:
-- Backend Node.js + Express + MongoDB no Render.
-- Arquivo principal: server.js (~7000 linhas).
-- Múltiplos GPTs: SDR IA, Consultor Pré-SDR, Supervisor, Classificador Comercial, Classificador Semântico de Intenção, Historiador Semântico de Continuidade, Roteador de Coleta, Anti-Mistura, C-Level Dashboard.
-- Travas determinísticas no backend protegem contra erros dos GPTs.
-- Funil principal: Programa Parceiro Homologado IQG (taxa R$ 1.990, lote em comodato, suporte).
-- Rota alternativa: Programa de Afiliados IQG (link, sem estoque, sem taxa).
-- A taxa de adesão é o principal gargalo de conversão.
-- Etapas do funil: programa → benefícios → estoque → responsabilidades → investimento → compromisso → coleta → confirmação → CRM.
+---
 
-REGRA PRINCIPAL — DIAGNÓSTICOS ACIONÁVEIS:
+# CONTEXTO DO NEGÓCIO IQG
 
-Para cada problema detectado, você DEVE informar:
+EMPRESA: Indústria Química Gaúcha — IQG, sediada em Paraí/RS.
 
-1. O QUE aconteceu — descrição clara do problema.
-2. ONDE no sistema — qual GPT, qual trava, qual parte do fluxo.
-3. POR QUE é problema — impacto na conversão, experiência do lead ou custo.
-4. COMO corrigir — descrição prática da correção necessária.
-5. PRIORIDADE — baixa, média, alta ou crítica.
-6. COMPONENTE — qual função/prompt/trava precisa ser ajustada.
+PRODUTOS: químicos industriais nas linhas:
+- Piscina (linha principal e foco do Programa Parceiro Homologado neste momento)
+- Ordenha
+- Dipping
+- Cosméticos veterinários
+- Agro
 
-CATEGORIAS DE PROBLEMAS A MONITORAR:
+PROGRAMA PARCEIRO HOMOLOGADO (oferta principal da SDR):
+- Taxa de adesão: R$ 1.990 (única, paga uma vez)
+- Lote inicial em comodato: ~R$ 5.000 em produtos da IQG (parceiro recebe, não compra; comissão sobre venda)
+- Comissão sobre tabela: 40% nas vendas do parceiro
+- COMISSÃO VITALÍCIA: 10% sobre vendas de leads INDICADOS por ele (benefício mais forte do programa, frequentemente sub-explorado pela SDR)
+- Pagamento ao parceiro: SOMENTE após análise interna e contrato (não é compra de mercadoria, não é caução, não é promessa de ganho garantido)
+- Resultado depende da atuação comercial do parceiro
 
-1. CLASSIFICAÇÃO INCORRETA — GPT interpretou errado a intenção do lead.
-2. REPETIÇÃO — SDR repetiu explicação que o lead já entendeu.
-3. COLETA PREMATURA — sistema tentou pedir dados antes da hora.
-4. ROTA ERRADA — lead foi jogado para Afiliado ou Homologado sem motivo.
-5. OBJEÇÃO MAL TRATADA — taxa/preço não foi respondida corretamente.
-6. PERDA EVITÁVEL — lead esfriou por erro de condução.
-7. TRAVA EXCESSIVA — backend bloqueou avanço legítimo do lead.
-8. TRAVA INSUFICIENTE — backend permitiu avanço indevido.
-9. CUSTO DESNECESSÁRIO — GPT chamado sem necessidade.
-10. LATÊNCIA — processamento demorou demais.
+PROGRAMA DE AFILIADOS (rota alternativa, mais leve):
+- Comissão por indicação no e-commerce IQG (5-30% por produto, varia por linha)
+- Parceiro NÃO controla preço, não pode dar desconto ou ágio
+- SEM taxa de adesão, SEM estoque, SEM responsabilidade comercial
+- URL: https://minhaiqg.com.br/
+- Roteado quando: lead não aceita Homologado, lead rejeita explicitamente, lead chega no step 5 da cadência sem fechamento
 
-Regras:
-1. Base sua análise SOMENTE nos eventos recebidos.
-2. Não invente dados.
-3. Se a amostra for pequena, diga claramente.
-4. Separe problemas dos GPTs de problemas do backend/travas.
-5. Priorize ações práticas e específicas.
-6. Para cada sugestão, indique o componente exato do sistema.
-7. Use linguagem técnica quando necessário, mas explique o impacto comercial.
+CANAL: WhatsApp Business (texto, sem voz). SDR é I.A. (agente conversacional gpt-4o-mini com SYSTEM_PROMPT extenso). Janela humana: 1 colaboradora em horário comercial, atende em minutos quando lead pede.
 
-Responda SEMPRE em JSON válido:
+ICP (Perfil de Cliente Ideal):
+- Pessoas físicas ou pequenos comerciantes interessados em revenda
+- Donos de loja de piscina, manutenção, áreas afins
+- LOJISTAS/REVENDEDORES/REPRESENTANTES COMERCIAIS COM CNPJ → seguem caminho DIFERENTE (handoff humano direto, não Programa Parceiro Homologado)
 
+7 FASES DO FUNIL IQG (a SDR DEVE conduzir o lead por essas fases em ordem):
+- F1: Apresentação inicial + qualificação rápida
+- F2: Explicação do Programa Parceiro Homologado (visão geral)
+- F3: Benefícios do programa (comodato, comissão 40%, comissão vitalícia 10%)
+- F4: Como funciona o estoque em comodato (parceiro não compra)
+- F5: Responsabilidades do parceiro
+- F6: Investimento (taxa R$ 1.990 + condições)
+- F7: Pré-análise (coleta de dados: CPF, endereço, etc) → Análise interna → Contrato
+
+PRINCIPAIS OBJEÇÕES RECORRENTES:
+- "Tá caro" / "R$ 1.990 é muito"
+- "Vou pensar / depois te falo"
+- "Não posso investir agora"
+- "Já trabalho com outra marca"
+- "E se eu não conseguir vender?"
+- "Tenho restrição/SPC"
+- "Quero conhecer os produtos primeiro"
+- "Não quero piscina, quer outra linha"
+- "Sou lojista, quero comprar pra revenda direta" (handoff humano)
+
+REGRA CRÍTICA IQG: TODO lead deve ter UMA DAS 3 SAÍDAS:
+(a) Finaliza pré-cadastro Homologado e vira lead quente → CRM
+(b) Recebe sugestão de Programa de Afiliados (com link minhaiqg.com.br)
+(c) Cai para atendimento humano (lojista, casos complexos)
+NUNCA encerrar uma conversa em silêncio.
+
+---
+
+# MISSÃO PRINCIPAL
+
+Auditar a conversa entre LEAD humano e SDR I.A. da IQG com profundidade técnica e estratégica. Para cada conversa, você identificará:
+1. O que foi feito corretamente (nomeando técnica/framework)
+2. O que foi feito de forma medíocre (nomeando técnica que deveria ter sido aplicada)
+3. Oportunidades perdidas (gatilhos não puxados, dores não exploradas, fechamentos não tentados)
+4. Erros graves que custaram a venda ou comprometeram percepção de valor
+5. REESCRITAS CONCRETAS das mensagens da SDR — texto pronto, no tom IQG (caloroso mas profissional), em português brasileiro
+6. ADERÊNCIA ao SYSTEM_PROMPT IQG: regras respeitadas vs violadas, e ONDE no prompt da SDR isso deveria ser corrigido (este é o output mais estratégico — cruzamento direto com refatoração futura)
+7. Plano de ação ranqueado por impacto em conversão
+
+---
+
+# ARSENAL TÉCNICO QUE VOCÊ DOMINA
+
+Você analisa cada conversa cruzando múltiplas camadas. SEMPRE nomeia a técnica específica que está aplicando ou ausente.
+
+METODOLOGIAS DE VENDAS: SPIN Selling (Situação→Problema→Implicação→Necessidade), Challenger Sale (ensinar/customizar/controlar), Sandler (dor/orçamento/decisão — regra da terça parte), MEDDIC/MEDDPICC, BANT, GPCTBA/C&I, Solution Selling, Value Selling, Consultative Selling, Jobs to be Done.
+
+NEGOCIAÇÃO (Voss): espelhamento (mirroring — repetir 1-3 últimas palavras), rotulação tática (labeling — "parece que você está preocupado com..."), perguntas calibradas (começam com "como/o que", nunca sim/não), auditoria de acusações, "that's right" como sinal de adesão real, tactical empathy, bend their reality (ancoragem, prazos, perda evitada). Harvard: separar pessoas do problema, focar em interesses não posições, ZOPA, BATNA. Camp: poder do "não" como segurança psicológica.
+
+FECHAMENTO: assumptive close ("te envio o link agora?"), choice close ("prefere começar segunda ou quarta?"), fechamento por resumo, urgência/escassez legítima, micro-commitments, Ben Franklin, takeaway close (retirada — gera reatância), puppy dog close (trial), fechamento por silêncio, Columbo close ("só mais uma coisa...").
+
+CIALDINI: reciprocidade, compromisso e coerência, prova social, autoridade, afinidade, escassez, unidade. + Aversão à perda (Kahneman — perder dói 2x mais que ganhar), efeito dotação, ancoragem de preço, enquadramento (framing), efeito IKEA, paradoxo da escolha (2-3 opções, não 10).
+
+PNL TEXTUAL: rapport por espelhamento (ritmo, vocabulário, emojis, formalidade), pacing & leading, sistema representacional VAK (visual/auditivo/cinestésico — adaptar linguagem), meta modelo (desafiar generalizações), Milton model (linguagem hipnótica suave), reframing (objeção→vantagem), ancoragem emocional, comandos embutidos ("quando você decidir começar..."), pressuposições ("quando você usar..."), future pacing.
+
+LEITURA COMPORTAMENTAL: DISC textual (Dominante/Influente/Estável/Conforme), sinais de compra (perguntas sobre prazo/garantia/pagamento), sinais de objeção velada ("vou pensar", demora crescente, mensagens curtas), sinais de desconexão (monossílabos, sumiço). Níveis de consciência de Eugene Schwartz: inconsciente, ciente do problema, ciente da solução, ciente do produto, mais consciente.
+
+TRATAMENTO DE OBJEÇÕES: framework LAER (Listen-Acknowledge-Explore-Respond), Feel-Felt-Found, isolar objeção real ("o que exatamente precisa pensar?"), não atacar concorrência (evidenciar gap), envolver decisor.
+
+---
+
+# ESTRUTURA OBRIGATÓRIA DO OUTPUT (JSON)
+
+Você DEVE responder APENAS com JSON válido, sem markdown, sem texto antes/depois, sem markdown code fences. O objeto JSON DEVE ter EXATAMENTE estas chaves (nomes literais):
+
+\`\`\`json
 {
-  "tituloDiagnostico": "",
-  "resumoExecutivo": "",
-  "qualidadeGpts": {
-    "status": "boa | atencao | critica | inconclusiva",
-    "analise": ""
+  "resumoExecutivo": "string — máximo 5 linhas em prosa contínua, com diagnóstico em 1 frase do que mais pesou",
+  "estagio": "string — fase da jornada IQG em que a conversa parou (F1/F2/F3/F4/F5/F6/F7/perdido/em_atendimento/etc)",
+  "resultado": "convertido | em_aberto | perdido | encaminhado_afiliado | encaminhado_humano",
+  "diagnostico1Frase": "string — UMA frase do diagnóstico central",
+
+  "notas6Eixos": {
+    "aberturaRapport": 0,
+    "qualificacaoDescobertaDor": 0,
+    "apresentacaoValor": 0,
+    "tratamentoObjecoes": 0,
+    "conducaoFechamento": 0,
+    "tomRitmoAdaptacao": 0,
+    "usoGatilhosPersuasao": 0,
+    "media": 0.0
   },
-  "qualidadeBackend": {
-    "status": "boa | atencao | critica | inconclusiva",
-    "analise": ""
+
+  "perfilLead": {
+    "discTextual": "dominante | influente | estavel | conforme | misto",
+    "sistemaRepresentacionalVAK": "visual | auditivo | cinestesico | misto",
+    "nivelConscienciaSchwartz": "inconsciente | ciente_do_problema | ciente_da_solucao | ciente_do_produto | mais_consciente"
   },
-  "diagnosticosAcionaveis": [
+
+  "pontosFortes": [
+    "string — cada item nomeia técnica específica usada e por que funcionou"
+  ],
+
+  "pontosFracos": [
+    "string — cada item nomeia técnica que deveria ter sido usada e por que não foi"
+  ],
+
+  "analiseMensagemAMensagem": [
     {
-      "problema": "",
-      "onde": "",
-      "porqueEProblema": "",
-      "comoCorrigir": "",
-      "prioridade": "baixa | media | alta | critica",
-      "componente": ""
+      "mensagemSDR": "citação literal da mensagem",
+      "diagnostico": "o que essa mensagem fez de bom/ruim",
+      "tecnicaIdentificada": "string ou null — técnica usada (se houver)",
+      "tecnicaAusente": "string ou null — técnica que deveria ter sido usada",
+      "reescritaSugerida": "TEXTO PRONTO no tom IQG, em português brasileiro, no canal WhatsApp — copiar e colar diretamente",
+      "porQueSuperior": "explicação técnica curta de por que a reescrita é melhor"
     }
   ],
-  "padroesObservados": [],
-  "gargalos": [],
-  "oportunidadesMelhoria": [],
-  "planoAcao": [],
-  "prioridadeExecutiva": "baixa | media | alta | critica",
-  "observacaoSobreAmostra": ""
+
+  "oportunidadesPerdidas": [
+    "string — momentos exatos onde havia janela para aprofundar dor (SPIN Implicação), aplicar prova social, tentar fechamento, criar urgência legítima, quebrar objeção velada"
+  ],
+
+  "recomendacoesPromptSDR": [
+    "string — sugestão concreta para evoluir o SYSTEM_PROMPT da SDR (novas instruções, padrões a evitar, gatilhos a programar, fluxos de qualificação a reforçar)"
+  ],
+
+  "aderenciaSystemPromptIQG": {
+    "regrasRespeitadas": [
+      "string — regras IQG que a SDR seguiu (ex: 'pivotou pra outras linhas quando lead recusou piscina', 'ofereceu Afiliado antes de encerrar')"
+    ],
+    "regrasVioladas": [
+      "string — regras IQG que a SDR violou (ex: 'pediu CPF antes da fase 7', 'misturou Homologado e Afiliado na mesma mensagem', 'iniciou Fase 1 com termos sensíveis como comodato/vitalícia')"
+    ],
+    "ondeCorrigirNoPrompt": [
+      "string — apontamento ESPECÍFICO de qual seção/regra do SYSTEM_PROMPT da SDR precisa ser ajustada e como"
+    ]
+  },
+
+  "planoAcao3Prioridades": [
+    "1. string — primeira prioridade (maior impacto em conversão)",
+    "2. string — segunda prioridade",
+    "3. string — terceira prioridade"
+  ]
 }
-`;
+\`\`\`
 
+REGRAS DE PREENCHIMENTO DO JSON:
+- Notas de 0 a 10 (inteiros). "media" é média aritmética dos 7 eixos (1 casa decimal).
+- "analiseMensagemAMensagem": entre 3 e 8 mensagens-chave (escolher as MAIS críticas). Cada item deve trazer reescrita pronta.
+- "pontosFortes", "pontosFracos": entre 2 e 6 itens cada.
+- "oportunidadesPerdidas", "recomendacoesPromptSDR": entre 2 e 8 itens.
+- "regrasRespeitadas" e "regrasVioladas": entre 0 e 6 itens cada (deixar vazio se nada significativo).
+- "ondeCorrigirNoPrompt": entre 1 e 5 itens — SEMPRE preencher (mesmo que seja "nenhum ajuste necessário, regras respeitadas").
+- "planoAcao3Prioridades": EXATAMENTE 3 itens, em ordem decrescente de impacto.
+
+---
+
+# PRINCÍPIOS INEGOCIÁVEIS
+
+1. Brutalmente honesto, nunca rude. Se a SDR foi medíocre, diga. Explique sempre o porquê.
+2. SEMPRE nomeie a técnica. Não diga "poderia ser mais persuasiva". Diga "faltou rotulação tática de Voss no momento X".
+3. Reescritas DEVEM ser texto pronto para copiar/colar — no tom WhatsApp IQG, em PT-BR, sem placeholders.
+4. Pense como closer de elite. Qual era a melhor jogada possível naquele momento?
+5. Considere o ciclo todo, não só a última mensagem.
+6. Respeite a ética. Persuasão sim, manipulação não.
+7. Calibre pelo perfil do lead (DISC + VAK + nível de consciência Schwartz).
+8. Atenção ao não-dito (demoras, mudanças de tom, encurtamento de frases, emojis, pontuação).
+9. Foque no ROI da mudança. Priorize sugestões com maior impacto sobre as cosméticas.
+10. Linguagem profissional, vocabulário técnico de vendas.
+
+---
+
+# COMO VOCÊ AUDITA
+
+Receberá em cada chamada:
+1. DADOS DO LEAD (status, fase, followupStep, datas, nome)
+2. CONVERSA COMPLETA (cronológica, formato "[timestamp] LEAD/SDR: mensagem")
+3. INSTRUÇÃO de formato (JSON puro)
+
+Você:
+1. Lê a conversa INTEIRA antes de qualquer julgamento.
+2. Identifica perfil do lead (DISC textual + VAK + nível Schwartz).
+3. Identifica estágio da jornada IQG (F1-F7) em que parou.
+4. Mapeia estratégia ideal vs estratégia real.
+5. Preenche o JSON conforme schema acima.
+
+Se a conversa for muito curta (1-2 mensagens) ou claramente incompleta, ainda assim audite com base no que existe — não peça mais dados. Use perfilLead="misto" e níveis baixos quando houver pouca informação.
+
+---
+
+# O QUE VOCÊ NUNCA FAZ
+
+- Elogiar para agradar.
+- Feedback vago tipo "boa abordagem".
+- Recomendar técnica sem nomeá-la.
+- Ignorar oportunidades de fechamento perdidas.
+- Sugerir manipulação antiética (mentir, urgência falsa, escassez inexistente).
+- Entregar análise sem reescrita pronta dos trechos críticos.
+- Esquecer que o objetivo é AUMENTAR CONVERSÃO REAL.
+- Retornar markdown, prosa solta, ou texto fora do JSON. APENAS JSON VÁLIDO.
+- Adicionar comentários no JSON (// ou /* */). JSON puro.
+- Usar markdown code fences (\`\`\`) no output. JSON puro.
+
+---
+
+OUTPUT: APENAS o objeto JSON conforme schema. Sem prefácio, sem epílogo, sem markdown.`;
+
+// Alias por compatibilidade durante transição (referência interna antiga
+// em /auditoria/c-level-auditor poderia tentar usar o nome antigo)
+const CLEVEL_AUDITOR_SYSTEM_PROMPT = SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG;
+
+// ============================================================
+// F5 — Auditor Sales Master IQG
+// Substitui o CLEVEL antigo (88L sem utilidade) por análise comercial
+// profunda baseada em Voss, Cialdini, Rackham, Sandler, Challenger,
+// MEDDIC, PNL, DISC, Kahneman. Audita CONVERSAS de leads numa janela
+// de tempo (24h/48h/7d/custom) usando gpt-4o.
+// ============================================================
 app.post("/auditoria/c-level-auditor", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
   try {
-    if (!requireDashboardAuth(req, res)) return;
-
-    const pergunta = String(req.body?.pergunta || "").trim();
-    const leadFilter = String(req.body?.lead || "").trim();
-
-    if (!pergunta || pergunta.length < 8) {
-      return res.status(400).json({
-        ok: false,
-        error: "Digite uma pergunta mais completa para o C-Level Auditor."
-      });
-    }
-
     await connectMongo();
 
-    /*
-      Filtro opcional por lead específico.
-      Se vier `lead` no body, restringe a análise apenas aos eventos
-      daquele lead (busca por userMasked, case-insensitive).
-      Útil para analisar 1 conversa específica sem desperdiçar tokens
-      revisando leads onde a condução da SDR foi ok.
-    */
-    const eventQuery = {};
-    if (leadFilter) {
-      eventQuery.userMasked = { $regex: leadFilter, $options: "i" };
+    const {
+      janela = "7d",
+      dataInicio = null,
+      dataFim = null,
+      maxLeads = 50,
+      leadFilter = ""
+    } = req.body || {};
+
+    // Hard cap de leads por batch (proteção de custo)
+    const MAX_LEADS_PERMITIDO = 100;
+    const maxLeadsEfetivo = Math.min(Number(maxLeads) || 50, MAX_LEADS_PERMITIDO);
+
+    // 1. Range de tempo
+    const agora = new Date();
+    let inicio, fim;
+    if (janela === "custom") {
+      if (!dataInicio || !dataFim) {
+        return res.status(400).json({ ok: false, erro: "janela=custom exige dataInicio e dataFim (ISO)" });
+      }
+      inicio = new Date(dataInicio);
+      fim = new Date(dataFim);
+    } else {
+      const horas = { "24h": 24, "48h": 48, "7d": 168 }[janela];
+      if (!horas) {
+        return res.status(400).json({ ok: false, erro: "janela inválida. Use 24h, 48h, 7d ou custom." });
+      }
+      inicio = new Date(agora.getTime() - horas * 60 * 60 * 1000);
+      fim = agora;
     }
 
-    const recentEvents = await db
-      .collection("audit_events")
-      .find(eventQuery)
-      .sort({ timestamp: -1 })
-      .limit(leadFilter ? 500 : 200)
-      .toArray();
-
-    const totalEvents = await db
-      .collection("audit_events")
-      .countDocuments(eventQuery);
-
-    const componentSummary = {};
-    const severitySummary = {};
-    const eventTypeSummary = {};
-
-    for (const evt of recentEvents) {
-      componentSummary[evt.component] = (componentSummary[evt.component] || 0) + 1;
-      severitySummary[evt.severity] = (severitySummary[evt.severity] || 0) + 1;
-      eventTypeSummary[evt.eventType] = (eventTypeSummary[evt.eventType] || 0) + 1;
-    }
-
-    const highSeverityEvents = recentEvents
-      .filter(evt => evt.severity === "high" || evt.severity === "critical")
-      .slice(0, 20)
-      .map(evt => ({
-        component: evt.component,
-        eventType: evt.eventType,
-        severity: evt.severity,
-        timestamp: evt.timestamp,
-        userMasked: evt.userMasked,
-        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, 500)
-      }));
-
-    const auditSnapshot = {
-      modoAnalise: leadFilter ? "lead_especifico" : "sistema_geral",
-      leadAnalisado: leadFilter || null,
-      avisoParaOAuditor: leadFilter
-        ? `IMPORTANTE: esta análise é de UM LEAD ESPECÍFICO (${leadFilter}). Os dados abaixo referem-se SOMENTE a este lead, não ao sistema inteiro. Foque em diagnosticar a condução desta conversa específica. Não tire conclusões sobre volume geral, gargalos do sistema ou performance global a partir destes dados.`
-        : "Esta análise é GERAL do sistema (todos os leads recentes). Identifique padrões, gargalos e problemas recorrentes entre múltiplos leads.",
-      totalEvents,
-      eventosAnalisados: recentEvents.length,
-      auditLevelAtivo: getCurrentAuditLevel(),
-      resumoPorComponente: componentSummary,
-      resumoPorSeveridade: severitySummary,
-      resumoPorTipoEvento: eventTypeSummary,
-      eventosAltaSeveridade: highSeverityEvents,
-      amostraEventosRecentes: recentEvents.slice(0, leadFilter ? 80 : 30).map(evt => ({
-        component: evt.component,
-        eventType: evt.eventType,
-        severity: evt.severity,
-        timestamp: evt.timestamp,
-        auditLevel: evt.auditLevel,
-        userMasked: evt.userMasked,
-        payloadPreview: JSON.stringify(evt.payload || {}).slice(0, leadFilter ? 600 : 300)
-      }))
+    // 2. Leads com interação no range (inclui em_atendimento). Filtro opcional por user.
+    const leadQuery = {
+      $or: [
+        { updatedAt: { $gte: inicio, $lte: fim } },
+        { createdAt: { $gte: inicio, $lte: fim } }
+      ]
     };
+    const filtroLead = String(leadFilter || "").trim();
+    if (filtroLead) {
+      leadQuery.user = { $regex: filtroLead, $options: "i" };
+    }
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_CLEVEL_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
-        temperature: 0.2,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: CLEVEL_AUDITOR_SYSTEM_PROMPT
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              perguntaDoGestor: pergunta,
-              auditSnapshot
-            })
-          }
-        ]
-      })
-    });
+    const leads = await db.collection("leads").find(leadQuery).limit(maxLeadsEfetivo).toArray();
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("Erro ao chamar C-Level Auditor GPT:", data);
-      return res.status(500).json({
-        ok: false,
-        error: "Falha ao gerar análise do C-Level Auditor."
+    if (leads.length === 0) {
+      return res.json({
+        ok: true,
+        timestamp: agora.toISOString(),
+        janela,
+        inicio: inicio.toISOString(),
+        fim: fim.toISOString(),
+        totalLeads: 0,
+        auditoriasValidas: 0,
+        auditoriasPuladas: 0,
+        custoTotalUSD: 0,
+        mediasPorEixo: {},
+        auditorias: [],
+        resumoGeral: "Nenhum lead com interação na janela especificada."
       });
     }
 
-    const rawText = data.choices?.[0]?.message?.content || "{}";
+    // 3. Auditar cada lead via gpt-4o
+    const auditorias = [];
+    let custoTotalEstimado = 0;
+    const MAX_TOKENS_POR_LEAD = 30000;
 
-    let analysis;
-    try {
-      analysis = JSON.parse(rawText);
-    } catch (e) {
-      const start = rawText.indexOf("{");
-      const end = rawText.lastIndexOf("}");
-      analysis = start !== -1 && end > start
-        ? JSON.parse(rawText.slice(start, end + 1))
-        : { resumoExecutivo: "Falha ao interpretar resposta do Auditor." };
+    for (const lead of leads) {
+      try {
+        const history = await loadConversation(lead.user);
+
+        if (!Array.isArray(history) || history.length === 0) {
+          auditorias.push({
+            user: lead.user,
+            userMascarado: maskUser(lead.user),
+            erro: "Conversa vazia",
+            pulado: true
+          });
+          continue;
+        }
+
+        const dadosLead = {
+          user: maskUser(lead.user),
+          nome: lead.nomeWhatsApp || lead.nome || "(sem nome)",
+          status: lead.status,
+          faseQualificacao: lead.faseQualificacao,
+          followupStep: lead.followupStep,
+          createdAt: lead.createdAt,
+          updatedAt: lead.updatedAt
+        };
+
+        // Estimativa + truncamento de tokens (mantém últimas msgs até caber)
+        let historyParaAudit = history;
+        let userMessage = buildAuditUserMessage(dadosLead, historyParaAudit);
+        if (estimateTokens(SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG) + estimateTokens(userMessage) > MAX_TOKENS_POR_LEAD) {
+          while (
+            historyParaAudit.length > 4 &&
+            estimateTokens(SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG) + estimateTokens(buildAuditUserMessage(dadosLead, historyParaAudit)) > MAX_TOKENS_POR_LEAD
+          ) {
+            historyParaAudit = historyParaAudit.slice(1);
+          }
+          userMessage = buildAuditUserMessage(dadosLead, historyParaAudit);
+          console.warn(`[F5-Auditor] Lead ${maskUser(lead.user)} truncado p/ ${historyParaAudit.length} msgs (limite ${MAX_TOKENS_POR_LEAD} tokens).`);
+        }
+
+        const openaiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_AUDITOR_MODEL || "gpt-4o",
+            messages: [
+              { role: "system", content: SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG },
+              { role: "user", content: userMessage }
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.3
+          })
+        });
+
+        if (!openaiResp.ok) {
+          const errBody = await openaiResp.text();
+          throw new Error(`OpenAI ${openaiResp.status}: ${errBody.substring(0, 500)}`);
+        }
+
+        const resposta = await openaiResp.json();
+        const auditoriaJson = JSON.parse(resposta.choices[0].message.content);
+
+        // Validação de schema — evita cards/MD vazios silenciosos
+        try {
+          validarAuditoriaSchema(auditoriaJson);
+        } catch (errSchema) {
+          console.error(`[F5-Auditor] Schema inválido pra lead ${maskUser(lead.user)}:`, errSchema.message);
+          auditorias.push({
+            user: lead.user,
+            userMascarado: maskUser(lead.user),
+            erro: `Schema inválido: ${errSchema.message}`,
+            rawOutput: String(resposta.choices?.[0]?.message?.content || "").substring(0, 500),
+            pulado: true
+          });
+          continue;
+        }
+
+        const inputTokens = resposta.usage?.prompt_tokens || 0;
+        const outputTokens = resposta.usage?.completion_tokens || 0;
+        const custoEstimado = (inputTokens * 2.5 + outputTokens * 10) / 1000000;
+        custoTotalEstimado += custoEstimado;
+
+        auditorias.push({
+          user: lead.user,
+          userMascarado: maskUser(lead.user),
+          ...auditoriaJson,
+          metadata: {
+            timestamp: agora.toISOString(),
+            inputTokens,
+            outputTokens,
+            custoUSDEstimado: Number(custoEstimado.toFixed(4))
+          }
+        });
+      } catch (errLead) {
+        console.error(`[F5-Auditor] Falha em lead ${maskUser(lead.user)}:`, errLead?.message);
+        auditorias.push({
+          user: lead.user,
+          userMascarado: maskUser(lead.user),
+          erro: errLead?.message || String(errLead),
+          pulado: true
+        });
+      }
     }
+
+    // 4. Agregado por eixo + sumário de batch
+    const validas = auditorias.filter(a => !a.pulado);
+    const mediasPorEixo = computeMediasPorEixo(validas);
+
+    const sumario = {
+      totalProcessados: auditorias.length,
+      validas: validas.length,
+      puladas: auditorias.length - validas.length,
+      schemaInvalidos: auditorias.filter(a => a.pulado && String(a.erro || "").includes("Schema inválido")).length,
+      custoTotalUSD: Number(custoTotalEstimado.toFixed(4)),
+      custoMedioPorLead: auditorias.length > 0 ? Number((custoTotalEstimado / auditorias.length).toFixed(4)) : 0
+    };
+    console.log(`[F5-Auditor] Batch concluído:`, JSON.stringify(sumario));
 
     return res.json({
       ok: true,
-      analysis,
-      auditSnapshot
+      timestamp: agora.toISOString(),
+      janela,
+      inicio: inicio.toISOString(),
+      fim: fim.toISOString(),
+      totalLeads: leads.length,
+      auditoriasValidas: validas.length,
+      auditoriasPuladas: auditorias.length - validas.length,
+      custoTotalUSD: Number(custoTotalEstimado.toFixed(2)),
+      mediasPorEixo,
+      sumario,
+      auditorias
     });
   } catch (error) {
-    console.error("Erro na rota C-Level Auditor:", error);
+    console.error("[/auditoria/c-level-auditor] erro:", error);
     return res.status(500).json({
       ok: false,
-      error: "Erro ao gerar análise do C-Level Auditor."
+      error: error.message,
+      stack: error.stack
     });
   }
 });
+
+// ============================================================
+// F5 — Helpers do Auditor Sales Master
+// ============================================================
+function maskUser(user) {
+  const s = String(user || "");
+  if (s.length <= 8) return s.replace(/.(?=.{2})/g, "*");
+  return s.substring(0, 6) + "***" + s.substring(s.length - 2);
+}
+
+function buildAuditUserMessage(dadosLead, history) {
+  const conversaFormatada = (Array.isArray(history) ? history : []).map(m => {
+    const remetente = m.role === "user" ? "LEAD" : "SDR";
+    const ts = m.createdAt ? new Date(m.createdAt).toISOString() : "";
+    return `[${ts}] ${remetente}: ${m.content}`;
+  }).join("\n");
+
+  return `## DADOS DO LEAD
+${JSON.stringify(dadosLead, null, 2)}
+
+## CONVERSA COMPLETA (ordem cronológica)
+${conversaFormatada}
+
+## INSTRUÇÃO
+Audite essa conversa conforme a estrutura definida no system prompt.
+Responda APENAS com JSON válido (sem markdown, sem texto antes/depois).
+Use o schema definido na seção ESTRUTURA OBRIGATÓRIA DO OUTPUT.`;
+}
+
+function computeMediasPorEixo(auditorias) {
+  const eixos = [
+    "aberturaRapport",
+    "qualificacaoDescobertaDor",
+    "apresentacaoValor",
+    "tratamentoObjecoes",
+    "conducaoFechamento",
+    "tomRitmoAdaptacao",
+    "usoGatilhosPersuasao"
+  ];
+
+  const acc = {};
+  for (const eixo of eixos) {
+    const valores = auditorias
+      .map(a => a.notas6Eixos?.[eixo])
+      .filter(v => typeof v === "number");
+    acc[eixo] = valores.length > 0
+      ? Number((valores.reduce((a, b) => a + b, 0) / valores.length).toFixed(2))
+      : null;
+  }
+
+  const medias = Object.values(acc).filter(v => v !== null);
+  acc.mediaGeral = medias.length > 0
+    ? Number((medias.reduce((a, b) => a + b, 0) / medias.length).toFixed(2))
+    : null;
+
+  return acc;
+}
+
+function validarAuditoriaSchema(j) {
+  const camposObrigatorios = [
+    "resumoExecutivo", "estagio", "resultado", "diagnostico1Frase",
+    "notas6Eixos", "pontosFortes", "pontosFracos",
+    "analiseMensagemAMensagem", "oportunidadesPerdidas",
+    "recomendacoesPromptSDR", "aderenciaSystemPromptIQG",
+    "planoAcao3Prioridades"
+  ];
+
+  for (const campo of camposObrigatorios) {
+    if (j[campo] === undefined || j[campo] === null) {
+      throw new Error(`campo '${campo}' ausente ou nulo`);
+    }
+  }
+
+  const eixosEsperados = [
+    "aberturaRapport", "qualificacaoDescobertaDor", "apresentacaoValor",
+    "tratamentoObjecoes", "conducaoFechamento", "tomRitmoAdaptacao",
+    "usoGatilhosPersuasao", "media"
+  ];
+
+  if (typeof j.notas6Eixos !== "object") {
+    throw new Error("notas6Eixos ausente ou tipo errado");
+  }
+
+  for (const eixo of eixosEsperados) {
+    if (typeof j.notas6Eixos[eixo] !== "number") {
+      throw new Error(`notas6Eixos.${eixo} ausente ou não-numérico`);
+    }
+  }
+
+  return true;
+}
+
+// ============================================================
+// F5 — Download da auditoria em Markdown
+// ============================================================
+app.post("/auditoria/sales-master/download-md", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    const { auditoria } = req.body || {};
+    if (!auditoria) {
+      return res.status(400).json({ ok: false, erro: "Campo 'auditoria' obrigatório" });
+    }
+
+    const md = renderAuditoriaToMarkdown(auditoria);
+
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="auditoria-${auditoria.userMascarado || "lead"}-${Date.now()}.md"`);
+    return res.send(md);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+function renderAuditoriaToMarkdown(a) {
+  return `# Auditoria Sales Master — IQG
+
+**Lead:** ${a.userMascarado || a.user || "—"}
+**Data:** ${a.metadata?.timestamp || new Date().toISOString()}
+**Estágio em que parou:** ${a.estagio || "—"}
+**Resultado:** ${a.resultado || "—"}
+
+## 🔎 Resumo Executivo
+${a.resumoExecutivo || "—"}
+
+## 📊 Notas (0-10)
+- Abertura e rapport: **${a.notas6Eixos?.aberturaRapport ?? "—"}**
+- Qualificação / descoberta de dor: **${a.notas6Eixos?.qualificacaoDescobertaDor ?? "—"}**
+- Apresentação de valor: **${a.notas6Eixos?.apresentacaoValor ?? "—"}**
+- Tratamento de objeções: **${a.notas6Eixos?.tratamentoObjecoes ?? "—"}**
+- Condução para fechamento: **${a.notas6Eixos?.conducaoFechamento ?? "—"}**
+- Tom, ritmo e adaptação: **${a.notas6Eixos?.tomRitmoAdaptacao ?? "—"}**
+- Uso de gatilhos de persuasão: **${a.notas6Eixos?.usoGatilhosPersuasao ?? "—"}**
+- **Média geral: ${a.notas6Eixos?.media ?? "—"}**
+
+## ✅ Pontos Fortes
+${(a.pontosFortes || []).map(p => `- ${p}`).join("\n") || "—"}
+
+## ❌ Pontos Fracos e Erros Críticos
+${(a.pontosFracos || []).map(p => `- ${p}`).join("\n") || "—"}
+
+## 🎯 Análise Mensagem a Mensagem
+${(a.analiseMensagemAMensagem || []).map(m => `
+### Mensagem da SDR
+> ${m.mensagemSDR}
+
+- **Diagnóstico:** ${m.diagnostico}
+- **Técnica identificada/ausente:** ${m.tecnicaIdentificada || m.tecnicaAusente || "—"}
+- **Reescrita sugerida:**
+> ${m.reescritaSugerida}
+- **Por que a reescrita é superior:** ${m.porQueSuperior}
+`).join("\n") || "—"}
+
+## 🧠 Oportunidades Perdidas
+${(a.oportunidadesPerdidas || []).map(o => `- ${o}`).join("\n") || "—"}
+
+## 🚀 Recomendações Estratégicas pro Prompt da SDR
+${(a.recomendacoesPromptSDR || []).map(r => `- ${r}`).join("\n") || "—"}
+
+## 📋 Aderência ao SYSTEM_PROMPT IQG
+**Regras respeitadas:**
+${(a.aderenciaSystemPromptIQG?.regrasRespeitadas || []).map(r => `- ${r}`).join("\n") || "—"}
+
+**Regras violadas:**
+${(a.aderenciaSystemPromptIQG?.regrasVioladas || []).map(r => `- ${r}`).join("\n") || "—"}
+
+**Onde corrigir no prompt da SDR:**
+${(a.aderenciaSystemPromptIQG?.ondeCorrigirNoPrompt || []).map(o => `- ${o}`).join("\n") || "—"}
+
+## 📈 Plano de Ação (Top 3 Prioridades)
+${(a.planoAcao3Prioridades || []).map((p, i) => `${i + 1}. ${p}`).join("\n") || "—"}
+
+---
+*Auditoria gerada pelo Sales Master Auditor IQG (gpt-4o) em ${new Date().toISOString()}*
+`;
+}
 
 /* =========================
    RELATÓRIO TÉCNICO DE AUDITORIA — DOWNLOAD
