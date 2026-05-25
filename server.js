@@ -36918,6 +36918,280 @@ app.get("/admin-purga-mornos-retroativa", async (req, res) => {
   }
 });
 
+// ============================================================
+// F5.5g — Rota diagnóstica TEMPORÁRIA pós-purga (read-only)
+//
+// REMOVER junto com outras rotas temporárias no cleanup futuro.
+//
+// 3 modos via ?modo=:
+//   purgados — Lista os leads purgados pela rota F5.5f em 25/05/2026
+//              com suas últimas 10 mensagens. Verifica se algum foi
+//              mal classificado pelo bug do padraoLinhaProduto.
+//   aguardar — Varre mornos procurando frases candidatas a "aguardar"
+//              que o regex atual NÃO captura. Quantifica GAP real.
+//   lojista  — Varre mornos+perdidos procurando mensagens da SDR onde
+//              ela reconheceu perfil lojista. Cruza com status atual
+//              pra quantificar Bug 8 ativo.
+// ============================================================
+app.get("/diagnostico-pos-purga-25-05", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  const modo = String(req.query.modo || "purgados").toLowerCase();
+
+  if (!["purgados", "aguardar", "lojista"].includes(modo)) {
+    return res.status(400).json({
+      erro: "modo inválido",
+      modosValidos: ["purgados", "aguardar", "lojista"],
+      uso: "?senha=...&modo=purgados|aguardar|lojista"
+    });
+  }
+
+  try {
+    await connectMongo();
+
+    function userMascarado(user) {
+      const s = String(user || "");
+      if (s.length <= 8) return s.replace(/.(?=.{2})/g, "*");
+      return s.substring(0, 6) + "***" + s.substring(s.length - 2);
+    }
+
+    // ============================================================
+    // MODO: purgados
+    // ============================================================
+    if (modo === "purgados") {
+      const purgados = await db.collection("leads").find({
+        statusOperacional: "perdido_por_purga_retroativa"
+      }).toArray();
+
+      const detalhes = [];
+      for (const lead of purgados) {
+        const conversation = await loadConversation(lead.user);
+        const history = conversation || [];
+
+        const ultimas = history.slice(-10).map(m => ({
+          role: m.role,
+          content: String(m.content || "").substring(0, 300),
+          createdAt: m.createdAt || null
+        }));
+
+        const lastUserMsg = [...history].reverse().find(m => m.role === "user");
+
+        detalhes.push({
+          userMascarado: userMascarado(lead.user),
+          motivoPerda: lead.motivoPerda || null,
+          encerradoPor: lead.encerradoPor || null,
+          cadenciaPausadaMotivo: lead.cadenciaPausadaMotivo || null,
+          cadenciaPausadaEm: lead.cadenciaPausadaEm || null,
+          ultimaMsgLeadVerbatim: lastUserMsg
+            ? String(lastUserMsg.content || "").substring(0, 400)
+            : null,
+          ultimaMsgLeadEm: lastUserMsg?.createdAt || null,
+          ultimas10MsgsConversa: ultimas
+        });
+      }
+
+      return res.json({
+        timestamp: new Date().toISOString(),
+        modo: "purgados",
+        totalPurgados: detalhes.length,
+        observacao: "Verificar manualmente cada ultimaMsgLeadVerbatim. Se algum lead disse 'não quero piscina' / 'só atendo X' (objeção de linha), foi MAL CLASSIFICADO como saida_explicita pelo bug do padraoLinhaProduto (forense 25/05). Esse lead poderia ter sido pivotado em vez de perdido.",
+        detalhes
+      });
+    }
+
+    // ============================================================
+    // MODO: aguardar — GAP do padraoAguardar atual
+    // ============================================================
+    if (modo === "aguardar") {
+      // padraoAguardarAtual: cópia VERBATIM do padraoAguardar real em
+      // detectLeadIntentFromHistory @21946 (confirmado na Fase B1 — o
+      // template original do spec divergia; substituído pelo regex de produção).
+      const padraoAguardarAtual = /\b(vou\s+aguardar|vou\s+esperar|aguardar\s+um\s+pouco|me\s+d[êe]\s+um\s+tempo|depois\s+te\s+falo|depois\s+eu\s+(falo|retorno|respondo)|preciso\s+pensar|deixa\s+eu\s+pensar|vou\s+pensar|pensar\s+mais)\b/i;
+
+      const candidatas = [
+        /vou\s+analisar/i,
+        /estou\s+analisando/i,
+        /\banalisando\b.*\b(volto|retorno|falo)/i,
+        /volto\s+a\s+(falar|conversar|chamar)/i,
+        /te\s+(chamo|falo|aviso|retorno)\s+depois/i,
+        /depois\s+(?:eu\s+)?(?:te\s+)?(?:falo|chamo|aviso)/i,
+        /me\s+d[áa]\s+um\s+tempo/i,
+        /\bvou\s+ver\b/i,
+        /deixa\s+eu\s+ver/i,
+        /vou\s+conversar\s+com/i,
+        /preciso\s+(?:de\s+)?tempo/i,
+        /\bnão\s+(?:é\s+)?(?:agora|hoje)\b/i,
+        /talvez\s+(?:mais\s+)?(?:tarde|depois)/i
+      ];
+
+      const mornos = await db.collection("leads").find({
+        $or: [{ status: "morno" }, { faseQualificacao: "morno" }]
+      }).toArray();
+
+      const achados = [];
+      const captSummary = {
+        totalMornos: mornos.length,
+        comFraseCandidata: 0,
+        capturadosPeloRegexAtual: 0,
+        gapNaoCapturados: 0
+      };
+
+      for (const lead of mornos) {
+        const conversation = await loadConversation(lead.user);
+        const history = conversation || [];
+        if (history.length === 0) continue;
+
+        for (const msg of history) {
+          if (msg.role !== "user") continue;
+          const txt = String(msg.content || "").toLowerCase().trim();
+
+          let matchedRegex = null;
+          for (const r of candidatas) {
+            if (r.test(txt)) {
+              matchedRegex = r.source;
+              break;
+            }
+          }
+
+          if (!matchedRegex) continue;
+
+          captSummary.comFraseCandidata++;
+          const capturadoPeloAtual = padraoAguardarAtual.test(txt);
+          if (capturadoPeloAtual) captSummary.capturadosPeloRegexAtual++;
+          else captSummary.gapNaoCapturados++;
+
+          if (achados.length < 30) {
+            achados.push({
+              userMascarado: userMascarado(lead.user),
+              fraseVerbatim: String(msg.content || "").substring(0, 300),
+              regexDiagnosticoQueCasou: matchedRegex,
+              regexAtualCapturou: capturadoPeloAtual,
+              createdAt: msg.createdAt || null,
+              status: lead.status,
+              faseQualificacao: lead.faseQualificacao
+            });
+          }
+          break;
+        }
+      }
+
+      return res.json({
+        timestamp: new Date().toISOString(),
+        modo: "aguardar",
+        resumo: captSummary,
+        observacao: 'GAP = leads "morno" com frase candidata que o padraoAguardar atual NÃO capturou. Se gapNaoCapturados > 5, vale ampliar o regex em commit cirúrgico.',
+        achados
+      });
+    }
+
+    // ============================================================
+    // MODO: lojista — Bug 8 ativo (SDR detectou mas sistema não atuou)
+    // ============================================================
+    if (modo === "lojista") {
+      const candidatasSdr = [
+        /você\s+quer\s+revender/i,
+        /quer\s+revender\s+(?:em|na)\s+(?:sua\s+)?loja/i,
+        /sua\s+loja/i,
+        /\brevender\s+os?\s+produtos?\s+(?:em|na)\s+(?:sua\s+)?loja/i,
+        /\blojista\b/i,
+        /ponto\s+comercial/i,
+        /estabelecimento\s+comercial/i
+      ];
+
+      const candidatosBug8 = await db.collection("leads").find({
+        $or: [
+          { status: "morno" },
+          { faseQualificacao: "morno" },
+          { status: "perdido" },
+          { faseQualificacao: "perdido" }
+        ]
+      }).toArray();
+
+      const achados = [];
+      let totalAnalisados = 0;
+      let totalComMencaoSdr = 0;
+      let totalBug8Ativo = 0;
+
+      for (const lead of candidatosBug8) {
+        totalAnalisados++;
+        const conversation = await loadConversation(lead.user);
+        const history = conversation || [];
+        if (history.length === 0) continue;
+
+        let mencaoSdr = null;
+        for (const msg of history) {
+          if (msg.role !== "assistant") continue;
+          const txt = String(msg.content || "").toLowerCase();
+
+          for (const r of candidatasSdr) {
+            if (r.test(txt)) {
+              mencaoSdr = {
+                regex: r.source,
+                trechoVerbatim: String(msg.content || "").substring(0, 400),
+                createdAt: msg.createdAt || null
+              };
+              break;
+            }
+          }
+          if (mencaoSdr) break;
+        }
+
+        if (!mencaoSdr) continue;
+        totalComMencaoSdr++;
+
+        const fezHandoffHumano = (
+          lead.status === "em_atendimento" ||
+          lead.faseQualificacao === "em_atendimento" ||
+          lead.perfilHandoff === "lojista" ||
+          lead.statusOperacional === "humano_atendendo"
+        );
+
+        if (!fezHandoffHumano) totalBug8Ativo++;
+
+        if (achados.length < 30) {
+          achados.push({
+            userMascarado: userMascarado(lead.user),
+            sdrDetectouVia: mencaoSdr.regex,
+            trechoSdrVerbatim: mencaoSdr.trechoVerbatim,
+            quandoSdrDetectou: mencaoSdr.createdAt,
+            statusAtual: lead.status,
+            faseQualificacaoAtual: lead.faseQualificacao,
+            statusOperacionalAtual: lead.statusOperacional || null,
+            perfilHandoff: lead.perfilHandoff || null,
+            sistemaFezHandoff: fezHandoffHumano,
+            bug8Ativo: !fezHandoffHumano
+          });
+        }
+      }
+
+      return res.json({
+        timestamp: new Date().toISOString(),
+        modo: "lojista",
+        resumo: {
+          totalAnalisados,
+          totalComMencaoSdrSugerindoLojista: totalComMencaoSdr,
+          totalBug8Ativo,
+          taxaBug8: totalAnalisados > 0
+            ? `${((totalBug8Ativo / totalAnalisados) * 100).toFixed(1)}%`
+            : "0%"
+        },
+        observacao: "Bug 8 ativo = leads onde a SDR escreveu mensagem sugerindo perfil lojista MAS o sistema não fez handoff humano. Se totalBug8Ativo > 5, justifica fix prioritário do detector.",
+        achados
+      });
+    }
+
+    return res.status(500).json({ erro: "modo não processado" });
+  } catch (error) {
+    console.error("[/diagnostico-pos-purga-25-05] erro:", error);
+    return res.status(500).json({
+      ok: false,
+      modo,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 ensureIndexes()
