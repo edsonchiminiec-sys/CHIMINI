@@ -21071,8 +21071,31 @@ function getDelayUntilNextBusinessTime() {
 //   2. Step 5 natural da cadência (F5.5e)
 // ============================================================
 function buildBreakupAffiliateMessage(lead, motivo = "step5") {
-  const nome = lead?.nomeWhatsApp || lead?.nome || "";
-  const saudacao = nome ? `${nome}, ` : "";
+  // FIX Y (25/05/2026) — Sanitização inteligente do displayName.
+  // "Scepavendas - Márcio Aurélio Scepaniuk" / "marilsonkxeiaozek" eram concatenados
+  // crus no break-up. Quando o nome não é confiável, usa saudação genérica "Oi! 😊 "
+  // (mesmo fallback de buildFollowupGreetingPrefix) em vez de chutar nome errado:
+  // "Empresa - Pessoa" pode não ser quem atende o número.
+  function isReliableName(s) {
+    if (!s || typeof s !== "string") return false;
+    const t = s.trim();
+    if (t.length < 2 || t.length > 40) return false;
+    if (/\d{3,}/.test(t)) return false;
+    if (/\s+-\s+/.test(t)) return false;
+    if (t.split(/\s+/).length > 4) return false;
+
+    const first = getFirstName(t);
+    if (!first || first.length < 2) return false;
+    if (/[bcdfghjklmnpqrstvwxyz]{5,}/i.test(first)) return false;
+    if ((first.match(/[kxz]/gi) || []).length >= 3) return false;
+
+    return true;
+  }
+
+  const rawName = lead?.nomeWhatsApp || lead?.nome || "";
+  const saudacao = isReliableName(rawName)
+    ? `${getFirstName(rawName)}, `
+    : `Oi! 😊 `;
 
   let intro;
   switch (motivo) {
@@ -21949,19 +21972,26 @@ function detectLeadIntentFromHistory(history = []) {
     // sozinhas (ou quase) na mensagem, NÃO "vou parar de fumar amanhã".
     const padraoOptOut = /^\s*(parar|sair|cancelar|remover?|n[ãa]o\s+enviar(\s+mais)?|chega|stop|unsubscribe|me\s+remova|sair\s+da\s+lista)\s*[.!]?\s*$/i;
 
-    // Ordem de detecção: opt-out > saida_explicita > aguardar > objecao_linha
+    // FIX Z (25/05/2026) — Reordenação crítica:
+    // padraoLinhaProduto testado ANTES de padraoParar/Despedida porque
+    // "não quero piscina" / "não tenho interesse em piscina" casam AMBOS os
+    // regex, mas representam OBJEÇÃO DE LINHA (pivotável) e não SAÍDA TOTAL
+    // (break-up). Antes: padraoParar capturava primeiro → break-up errado.
+    // Forense 25/05/2026 (6 eixos) identificou. optout continua PRIMEIRO
+    // (LGPD / política WhatsApp — F5.5-3).
+    // Ordem: opt-out > objecao_linha > saida_explicita > aguardar
     if (padraoOptOut.test(txt)) {
       intentDetectado = "opt_out_explicito";
       acaoIntent = "encerrar_com_breakup";
+    } else if (padraoLinhaProduto.test(txt)) {
+      intentDetectado = "objecao_linha";
+      avisoIntent = `⚠️ INTENÇÃO RECENTE DO LEAD: o lead recusou explicitamente a linha de produtos principal. NÃO insista nessa linha. Pivotar: ofereça outras linhas IQG (ordenha, agro, cosméticos) OU mencione Programa de Afiliados como caminho mais leve.`;
     } else if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
       intentDetectado = "saida_explicita";
       acaoIntent = "encerrar_com_breakup";
     } else if (padraoAguardar.test(txt)) {
       intentDetectado = "aguardar";
       acaoIntent = "adiar";
-    } else if (padraoLinhaProduto.test(txt)) {
-      intentDetectado = "objecao_linha";
-      avisoIntent = `⚠️ INTENÇÃO RECENTE DO LEAD: o lead recusou explicitamente a linha de produtos principal. NÃO insista nessa linha. Pivotar: ofereça outras linhas IQG (ordenha, agro, cosméticos) OU mencione Programa de Afiliados como caminho mais leve.`;
     }
   }
 
