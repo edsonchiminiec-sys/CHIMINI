@@ -21912,6 +21912,68 @@ async function saveAutomaticFollowupToHistory(from, messageToSend = "", meta = {
   }
 }
 
+// ============================================================
+// F5.5a — Detector de intenção do lead (helper compartilhado)
+// Extraído de sendAutomaticFollowupIfStillValid (F5.5-2) para
+// reutilização na purga retroativa (/admin-purga-mornos-retroativa).
+// COM FILTRO TEMPORAL: só ativa se última msg do user é POSTERIOR à
+// última cadência enviada (origem "followup_automatico"). Evita falso
+// positivo capturando despedida antiga.
+// Retorna { intentDetectado, acaoIntent, avisoIntent, aplicouFiltroTemporal, lastUserMsg }.
+// ============================================================
+function detectLeadIntentFromHistory(history = []) {
+  const lastUserMsg = [...history].reverse().find(m => m.role === "user");
+  const lastCadenciaMsg = [...history].reverse().find(m =>
+    m.role === "assistant" &&
+    (m.origem === "followup_automatico" || (m.followupStep && m.followupStep > 0))
+  );
+
+  const aplicarDetector = lastUserMsg && lastUserMsg.content && (
+    !lastCadenciaMsg ||
+    new Date(lastUserMsg.createdAt) > new Date(lastCadenciaMsg.createdAt)
+  );
+
+  let intentDetectado = null;
+  let acaoIntent = "continuar"; // "continuar" | "encerrar_com_breakup" | "adiar"
+  let avisoIntent = null;
+
+  if (aplicarDetector) {
+    const txt = String(lastUserMsg.content).toLowerCase().trim();
+
+    // Padrões hardcoded — cobrem 95% dos casos óbvios sem custo de GPT
+    const padraoParar = /\b(n[ãa]o\s+quero|n[ãa]o\s+tenho\s+interesse|desisto|n[ãa]o\s+vou\s+(querer|seguir|continuar)|fora\s+disso|n[ãa]o\s+me\s+interessa|n[ãa]o\s+obrigad[oa])\b/i;
+    const padraoDespedida = /\b(obrigad[oa](\s+pela\s+aten[çc][ãa]o)?|at[ée]\s+(mais|logo|breve)|fui|tchau|falou|abra[çc]os?)\b\s*[.!]*\s*$/i;
+    const padraoAguardar = /\b(vou\s+aguardar|vou\s+esperar|aguardar\s+um\s+pouco|me\s+d[êe]\s+um\s+tempo|depois\s+te\s+falo|depois\s+eu\s+(falo|retorno|respondo)|preciso\s+pensar|deixa\s+eu\s+pensar|vou\s+pensar|pensar\s+mais)\b/i;
+    const padraoLinhaProduto = /\b(n[ãa]o\s+(quero|trabalho|atuo|tenho\s+interesse)\s+(com\s+)?(em\s+)?(linha\s+de\s+)?(piscina|ordenha|dipping|cosm[ée]ticos?\s*vet|agro))\b/i;
+    // Opt-out explícito — palavra isolada (^...$): captura só "PARAR"/"SAIR"/etc
+    // sozinhas (ou quase) na mensagem, NÃO "vou parar de fumar amanhã".
+    const padraoOptOut = /^\s*(parar|sair|cancelar|remover?|n[ãa]o\s+enviar(\s+mais)?|chega|stop|unsubscribe|me\s+remova|sair\s+da\s+lista)\s*[.!]?\s*$/i;
+
+    // Ordem de detecção: opt-out > saida_explicita > aguardar > objecao_linha
+    if (padraoOptOut.test(txt)) {
+      intentDetectado = "opt_out_explicito";
+      acaoIntent = "encerrar_com_breakup";
+    } else if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
+      intentDetectado = "saida_explicita";
+      acaoIntent = "encerrar_com_breakup";
+    } else if (padraoAguardar.test(txt)) {
+      intentDetectado = "aguardar";
+      acaoIntent = "adiar";
+    } else if (padraoLinhaProduto.test(txt)) {
+      intentDetectado = "objecao_linha";
+      avisoIntent = `⚠️ INTENÇÃO RECENTE DO LEAD: o lead recusou explicitamente a linha de produtos principal. NÃO insista nessa linha. Pivotar: ofereça outras linhas IQG (ordenha, agro, cosméticos) OU mencione Programa de Afiliados como caminho mais leve.`;
+    }
+  }
+
+  return {
+    intentDetectado,
+    acaoIntent,
+    avisoIntent,
+    aplicouFiltroTemporal: !!aplicarDetector,
+    lastUserMsg
+  };
+}
+
 /*
   ===========================================================
   sendAutomaticFollowupIfStillValid (V2 — LOCK + AUDIT)
@@ -22053,51 +22115,12 @@ async function sendAutomaticFollowupIfStillValid({
 
   // ============================================================
   // F5.5a — Detector de intenção do lead ANTES do disparo (no caller)
-  // COM FILTRO TEMPORAL: só ativa se última msg do user é POSTERIOR à
-  // última cadência enviada (origem "followup_automatico"). Evita falso
-  // positivo capturando despedida antiga.
+  // Lógica extraída para detectLeadIntentFromHistory (F5.5-2), reutilizada
+  // pela purga retroativa. Comportamento idêntico ao inline anterior.
   // ============================================================
-  const lastUserMsg = [...latestHistory].reverse().find(m => m.role === "user");
-  const lastCadenciaMsg = [...latestHistory].reverse().find(m =>
-    m.role === "assistant" &&
-    (m.origem === "followup_automatico" || (m.followupStep && m.followupStep > 0))
-  );
-
-  const aplicarDetector = lastUserMsg && lastUserMsg.content && (
-    !lastCadenciaMsg ||
-    new Date(lastUserMsg.createdAt) > new Date(lastCadenciaMsg.createdAt)
-  );
-
-  let intentDetectado = null;
-  let acaoIntent = "continuar"; // "continuar" | "encerrar_com_breakup" | "adiar"
-  let avisoIntent = null;
-
-  if (aplicarDetector) {
-    const txt = String(lastUserMsg.content).toLowerCase().trim();
-
-    // Padrões hardcoded — cobrem 95% dos casos óbvios sem custo de GPT
-    const padraoParar = /\b(n[ãa]o\s+quero|n[ãa]o\s+tenho\s+interesse|desisto|n[ãa]o\s+vou\s+(querer|seguir|continuar)|fora\s+disso|n[ãa]o\s+me\s+interessa|n[ãa]o\s+obrigad[oa])\b/i;
-    const padraoDespedida = /\b(obrigad[oa](\s+pela\s+aten[çc][ãa]o)?|at[ée]\s+(mais|logo|breve)|fui|tchau|falou|abra[çc]os?)\b\s*[.!]*\s*$/i;
-    const padraoAguardar = /\b(vou\s+aguardar|vou\s+esperar|aguardar\s+um\s+pouco|me\s+d[êe]\s+um\s+tempo|depois\s+te\s+falo|depois\s+eu\s+(falo|retorno|respondo)|preciso\s+pensar|deixa\s+eu\s+pensar|vou\s+pensar|pensar\s+mais)\b/i;
-    const padraoLinhaProduto = /\b(n[ãa]o\s+(quero|trabalho|atuo|tenho\s+interesse)\s+(com\s+)?(em\s+)?(linha\s+de\s+)?(piscina|ordenha|dipping|cosm[ée]ticos?\s*vet|agro))\b/i;
-    // Opt-out explícito — palavra isolada (^...$): captura só "PARAR"/"SAIR"/etc
-    // sozinhas (ou quase) na mensagem, NÃO "vou parar de fumar amanhã".
-    const padraoOptOut = /^\s*(parar|sair|cancelar|remover?|n[ãa]o\s+enviar(\s+mais)?|chega|stop|unsubscribe|me\s+remova|sair\s+da\s+lista)\s*[.!]?\s*$/i;
-
-    // Ordem de detecção: opt-out > saida_explicita > aguardar > objecao_linha
-    if (padraoOptOut.test(txt)) {
-      intentDetectado = "opt_out_explicito";
-      acaoIntent = "encerrar_com_breakup";
-    } else if (padraoParar.test(txt) || padraoDespedida.test(txt)) {
-      intentDetectado = "saida_explicita";
-      acaoIntent = "encerrar_com_breakup";
-    } else if (padraoAguardar.test(txt)) {
-      intentDetectado = "aguardar";
-      acaoIntent = "adiar";
-    } else if (padraoLinhaProduto.test(txt)) {
-      intentDetectado = "objecao_linha";
-      avisoIntent = `⚠️ INTENÇÃO RECENTE DO LEAD: o lead recusou explicitamente a linha de produtos principal. NÃO insista nessa linha. Pivotar: ofereça outras linhas IQG (ordenha, agro, cosméticos) OU mencione Programa de Afiliados como caminho mais leve.`;
-    }
+  const { intentDetectado, acaoIntent, avisoIntent } = detectLeadIntentFromHistory(latestHistory);
+  if (intentDetectado) {
+    console.log(`[F5.5a] Intent detectado para ${from}: ${intentDetectado} (ação: ${acaoIntent})`);
   }
 
   // AÇÃO 1: lead pediu pra parar → dispara break-up Afiliado + encerra cadência
@@ -36688,6 +36711,205 @@ app.get("/diagnostico-cadencia-mornos", async (req, res) => {
     });
   } catch (error) {
     console.error("[/diagnostico-cadencia-mornos] erro:", error);
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      stack: error.stack
+    });
+  }
+});
+
+// ============================================================
+// F5.5f — Purga retroativa dos mornos (ROTA TEMPORÁRIA)
+// Aplica o detector F5.5a (detectLeadIntentFromHistory) retroativamente
+// aos leads "morno", encerrando a cadência e marcando perdido com campos
+// DISTINTOS do caminho ao vivo (rastreabilidade da purga):
+//   - saida_explicita / despedida → envia break-up Afiliado via WhatsApp.
+//   - opt_out_explicito → encerra SILENCIOSAMENTE (sem WhatsApp, sem gravar
+//     mensagem no histórico). Respeita o opt-out (WhatsApp Business Policy / LGPD).
+// Salvaguarda: execução REAL só dentro do horário comercial (reusa
+// isBusinessTime — fuso BR, dia útil). dryRun é permitido a qualquer hora.
+// Default SEGURO: dryRun=true. Só executa de verdade com ?dryRun=false.
+// REMOVER esta rota após a purga única (salvaguarda temporária F5.5f).
+// ============================================================
+app.get("/admin-purga-mornos-retroativa", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  // Default SEGURO: só aplica alterações com ?dryRun=false explícito.
+  const dryRun = String(req.query.dryRun || "true").toLowerCase() !== "false";
+
+  // Salvaguarda F5.5f: execução REAL envia WhatsApp → só em horário comercial.
+  const ehHorarioComercial = isBusinessTime();
+  if (!dryRun && !ehHorarioComercial) {
+    return res.status(200).json({
+      ok: false,
+      rota: "/admin-purga-mornos-retroativa",
+      bloqueado: "fora_do_horario_comercial",
+      mensagem: "Execução real bloqueada fora do horário comercial (a purga envia WhatsApp). Rode com dryRun=true para simular, ou aguarde o horário comercial.",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    await connectMongo();
+
+    // Replicação local de getVisualStatus (verbatim de /diagnostico-cadencia-mornos).
+    function getVisualStatusLocal(lead) {
+      const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+      const fase = lead.faseQualificacao || "";
+      const status = lead.status || "";
+      const etapas = lead.etapas || {};
+      const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+
+      if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+
+      if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+
+      if (fase === "qualificando") return "qualificando";
+
+      if (etapasConcluidas >= 3) return "qualificando";
+
+      if (fase === "morno" || fase === "afiliado") return "morno";
+      if (etapasConcluidas >= 1) return "morno";
+      if (status === "morno") return "morno";
+
+      return status || "novo";
+    }
+
+    function userMascarado(user) {
+      const s = String(user || "");
+      if (s.length <= 8) return s.replace(/.(?=.{2})/g, "*");
+      return s.substring(0, 6) + "***" + s.substring(s.length - 2);
+    }
+
+    const allLeads = await db.collection("leads").find({}).toArray();
+    const mornos = allLeads.filter(l => getVisualStatusLocal(l) === "morno");
+
+    const resumo = {
+      totalMornos: mornos.length,
+      porIntent: { saida_explicita: 0, opt_out_explicito: 0, aguardar: 0, objecao_linha: 0, sem_intent: 0 },
+      elegiveisPurga: 0,
+      purgados: 0,
+      erros: 0
+    };
+    const detalhes = [];
+
+    for (const lead of mornos) {
+      let history = [];
+      try {
+        history = await loadConversation(lead.user);
+        if (!Array.isArray(history)) history = [];
+      } catch (e) {
+        resumo.erros++;
+        detalhes.push({ userMascarado: userMascarado(lead.user), erro: "loadConversation_falhou" });
+        continue;
+      }
+
+      const { intentDetectado, acaoIntent, aplicouFiltroTemporal } = detectLeadIntentFromHistory(history);
+
+      const intentKey = intentDetectado || "sem_intent";
+      if (resumo.porIntent[intentKey] !== undefined) resumo.porIntent[intentKey]++;
+
+      // Só purga quem sinalizou SAÍDA (break-up): saida_explicita / opt_out_explicito.
+      // aguardar/objecao_linha NÃO são saídas → não purga (só conta no resumo).
+      if (acaoIntent !== "encerrar_com_breakup") continue;
+
+      resumo.elegiveisPurga++;
+
+      const ehOptOut = intentDetectado === "opt_out_explicito";
+
+      const registro = {
+        userMascarado: userMascarado(lead.user),
+        intentDetectado,
+        aplicouFiltroTemporal,
+        followupStepAtual: lead.followupStep || 0,
+        cadenciaPausadaAntes: lead.cadenciaPausadaPorCliente === true,
+        tipoAcao: ehOptOut ? "encerrar_silencioso_opt_out" : "break_up_whatsapp",
+        enviaWhatsApp: !ehOptOut,
+        acao: dryRun ? "DRY_RUN_nao_aplicado" : "pendente"
+      };
+
+      if (!dryRun) {
+        try {
+          if (ehOptOut) {
+            // CAMINHO SILENCIOSO (opt_out_explicito): respeita o opt-out do lead
+            // (WhatsApp Business Policy / LGPD). NÃO envia WhatsApp e NÃO grava
+            // mensagem no histórico (nada foi enviado). Só encerra + marca perdido.
+            await saveLeadProfile(lead.user, {
+              proximoFollowupEm: null,
+              followupStep: 0,
+              cadenciaPausadaPorCliente: true,
+              cadenciaPausadaEm: new Date(),
+              cadenciaPausadaMotivo: "purga_retroativa_silenciosa_opt_out",
+              status: "perdido",
+              statusOperacional: "perdido_por_purga_retroativa",
+              faseQualificacao: "perdido",
+              motivoPerda: "opt_out_explicito_retroativo",
+              encerradoPor: "ia_purga_retroativa_f55f_silenciosa"
+            });
+
+            try { clearTimers(lead.user); } catch (e) { /* não-crítico */ }
+
+            console.log(`[F5.5f] Purga retroativa — encerramento SILENCIOSO (opt-out) de ${userMascarado(lead.user)}`);
+            registro.acao = "encerrar_silencioso_opt_out";
+            resumo.purgados++;
+          } else {
+            // CAMINHO COM ENVIO (saida_explicita / despedida). Mesma ordem do caminho
+            // ao vivo: envia → grava histórico → atualiza lead. Se o envio falhar, o
+            // catch impede marcar perdido sem mensagem entregue.
+            const breakupMsg = buildBreakupAffiliateMessage(lead, "saida_explicita");
+
+            await sendWhatsAppMessage(lead.user, breakupMsg);
+
+            await saveAutomaticFollowupToHistory(lead.user, breakupMsg, {
+              step: lead.followupStep || 0,
+              origem: "followup_breakup_purga_retroativa"
+            });
+
+            await saveLeadProfile(lead.user, {
+              proximoFollowupEm: null,
+              followupStep: 0,
+              cadenciaPausadaPorCliente: true,
+              cadenciaPausadaEm: new Date(),
+              cadenciaPausadaMotivo: `purga_retroativa_${intentDetectado}`,
+              status: "perdido",
+              statusOperacional: "perdido_por_purga_retroativa",
+              faseQualificacao: "perdido",
+              motivoPerda: `${intentDetectado}_retroativo`,
+              encerradoPor: "ia_purga_retroativa_f55f"
+            });
+
+            try { clearTimers(lead.user); } catch (e) { /* não-crítico */ }
+
+            console.log(`[F5.5f] Purga retroativa — break-up enviado a ${userMascarado(lead.user)} (intent: ${intentDetectado})`);
+            registro.acao = "break_up_enviado";
+            resumo.purgados++;
+          }
+        } catch (e) {
+          resumo.erros++;
+          registro.acao = "erro_ao_purgar";
+          registro.erro = e.message;
+        }
+      }
+
+      detalhes.push(registro);
+    }
+
+    return res.json({
+      timestamp: new Date().toISOString(),
+      rota: "/admin-purga-mornos-retroativa",
+      modo: dryRun ? "DRY_RUN (nenhuma alteração aplicada)" : "EXECUÇÃO REAL (alterações aplicadas)",
+      observacao: "Purga só atinge mornos com intent de SAÍDA. saida_explicita/despedida: envia break-up Afiliado via WhatsApp + encerra + marca perdido. opt_out_explicito: encerra SILENCIOSAMENTE (sem WhatsApp, respeita opt-out LGPD/WhatsApp Policy) + marca perdido. Campos distintos de rastreabilidade. Salvaguarda: execução real só em horário comercial. Rota TEMPORÁRIA — remover após a purga.",
+      resumo,
+      detalhes
+    });
+  } catch (error) {
+    console.error("[/admin-purga-mornos-retroativa] erro:", error);
     return res.status(500).json({
       ok: false,
       error: error.message,
