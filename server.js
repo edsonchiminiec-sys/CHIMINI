@@ -29671,6 +29671,35 @@ app.get("/auditoria", async (req, res) => {
         'function smEsc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }' +
         'function smLista(t, items){ if(!Array.isArray(items)||!items.length) return ""; return `<h6 style="margin:10px 0 5px;font-size:12px;color:#bfdbfe;text-transform:uppercase;letter-spacing:0.04em;">${t}</h6><ul style="margin:0;padding-left:18px;color:#cbd5e1;font-size:12px;line-height:1.55;">` + items.map(function(x){ return `<li>${smEsc(x)}</li>`; }).join("") + `</ul>`; }' +
         'function smEixo(label, v){ return `<div style="display:flex;justify-content:space-between;font-size:12px;color:#cbd5e1;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><span>${label}</span><strong style="color:#fff;">${(v==null?"—":v)}</strong></div>`; }' +
+        'function smRenderTranscript(transcript){' +
+          'if(!Array.isArray(transcript) || !transcript.length){ return `<p style="color:#94a3b8;font-size:12px;">Sem transcript disponível.</p>`; }' +
+          'return transcript.map(function(m){' +
+            'var ts = m.timestamp ? new Date(m.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", hour12: false }) : "(sem hora)";' +
+            'var isLead = m.remetente === "LEAD";' +
+            'var corBg = isLead ? "#1e293b" : "#0f172a";' +
+            'var corBorda = isLead ? "#475569" : "#334155";' +
+            'var alinhamento = isLead ? "flex-start" : "flex-end";' +
+            'var emoji = isLead ? "🧑" : "🤖";' +
+            'var label = isLead ? "LEAD" : "SDR";' +
+            'var html = `<div style="display:flex;justify-content:${alinhamento};margin:8px 0;"><div style="max-width:82%;background:${corBg};border:1px solid ${corBorda};border-radius:8px;padding:10px 12px;"><div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">${emoji} <strong>${label}</strong> · ${smEsc(ts)}</div><div style="white-space:pre-wrap;color:#f1f5f9;font-size:13px;">${smEsc(m.mensagem || "")}</div></div></div>`;' +
+            'if(m.anotacaoAuditor){' +
+              'var an = m.anotacaoAuditor;' +
+              'var critico = an.momentoCritico ? `<span style="background:#dc2626;color:white;padding:2px 8px;border-radius:4px;font-size:11px;margin-left:8px;">🚨 MOMENTO CRÍTICO</span>` : "";' +
+              'html += `<div style="background:#1e1b4b;border-left:4px solid #f59e0b;border-radius:6px;padding:12px;margin:4px 0 16px 20px;">`;' +
+              'html += `<div style="font-size:12px;color:#fbbf24;font-weight:700;margin-bottom:8px;">⚠️ ANOTAÇÃO DO AUDITOR · Score desta mensagem: <strong>${(an.scoreMensagem!=null?an.scoreMensagem:"—")}/10</strong>${critico}</div>`;' +
+              'html += `<div style="font-size:13px;color:#e2e8f0;line-height:1.5;">`;' +
+              'html += `<p style="margin:4px 0;"><strong>Diagnóstico:</strong> ${smEsc(an.diagnostico || "—")}</p>`;' +
+              'if(an.tecnicaIdentificada){ html += `<p style="margin:4px 0;"><strong>Técnica identificada:</strong> ${smEsc(an.tecnicaIdentificada)}</p>`; }' +
+              'if(an.tecnicaAusente){ html += `<p style="margin:4px 0;"><strong>Técnica ausente:</strong> ${smEsc(an.tecnicaAusente)}</p>`; }' +
+              'html += `<p style="margin:4px 0;"><strong>Reescrita sugerida:</strong></p><div style="background:#0f172a;border-left:3px solid #10b981;padding:8px 12px;margin:4px 0;border-radius:4px;white-space:pre-wrap;">${smEsc(an.reescritaSugerida || "—")}</div>`;' +
+              'html += `<p style="margin:4px 0;"><strong>Por que é superior:</strong> ${smEsc(an.porQueSuperior || "—")}</p>`;' +
+              'html += `<p style="margin:4px 0;"><strong>Impacto nas notas:</strong> ${smEsc(an.impactoNasNotas || "—")}</p>`;' +
+              'html += `<p style="margin:4px 0;"><strong>Resposta provável do lead:</strong> ${smEsc(an.respostaProvavelDoLead || "—")}</p>`;' +
+              'html += `</div></div>`;' +
+            '}' +
+            'return html;' +
+          '}).join("");' +
+        '}' +
         'function smCard(a, idx){' +
           'if(a.pulado){ return `<div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px;margin-bottom:12px;font-size:13px;"><strong style="color:#fca5a5;">${smEsc(a.userMascarado)}</strong> — pulado: ${smEsc(a.erro)}</div>`; }' +
           'var n = a.notas6Eixos || {};' +
@@ -29688,10 +29717,9 @@ app.get("/auditoria", async (req, res) => {
           'h += smLista("Regras IQG violadas", ad.regrasVioladas);' +
           'h += smLista("Onde corrigir no prompt da SDR", ad.ondeCorrigirNoPrompt);' +
           'h += smLista("Plano de ação (top 3)", a.planoAcao3Prioridades);' +
-          'if(Array.isArray(a.analiseMensagemAMensagem) && a.analiseMensagemAMensagem.length){' +
-            'h += `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#bfdbfe;font-size:12px;font-weight:800;">Análise mensagem a mensagem (${a.analiseMensagemAMensagem.length})</summary>`;' +
-            'a.analiseMensagemAMensagem.forEach(function(m){ h += `<div style="border-left:3px solid #475569;padding:6px 10px;margin:8px 0;font-size:12px;color:#cbd5e1;"><div style="color:#93c5fd;">SDR: ${smEsc(m.mensagemSDR)}</div><div style="margin-top:3px;">Diagnóstico: ${smEsc(m.diagnostico)}</div><div style="color:#fca5a5;margin-top:3px;">Técnica ausente: ${smEsc(m.tecnicaAusente || m.tecnicaIdentificada || "—")}</div><div style="color:#86efac;margin-top:3px;">Reescrita: ${smEsc(m.reescritaSugerida)}</div></div>`; });' +
-            'h += `</details>`;' +
+          'if(Array.isArray(a.transcriptAnotado) && a.transcriptAnotado.length){' +
+            'var nAnot = a.transcriptAnotado.filter(function(m){ return m.anotacaoAuditor; }).length;' +
+            'h += `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#bfdbfe;font-size:12px;font-weight:800;padding:8px;background:#0f172a;border-radius:4px;">🎯 Transcript Anotado da Conversa (${a.transcriptAnotado.length} mensagens, ${nAnot} anotações)</summary><div style="padding:12px;">` + smRenderTranscript(a.transcriptAnotado) + `</div></details>`;' +
           '}' +
           'h += `<button type="button" onclick="smBaixarMd(${idx})" style="margin-top:10px;border:1px solid rgba(255,255,255,0.2);background:transparent;color:#cbd5e1;border-radius:999px;height:32px;padding:0 14px;font-size:12px;font-weight:700;cursor:pointer;">Baixar MD</button>`;' +
           'h += `</div>`;' +
@@ -29907,14 +29935,30 @@ Você DEVE responder APENAS com JSON válido, sem markdown, sem texto antes/depo
     "string — cada item nomeia técnica que deveria ter sido usada e por que não foi"
   ],
 
-  "analiseMensagemAMensagem": [
+  "transcriptAnotado": [
     {
-      "mensagemSDR": "citação literal da mensagem",
-      "diagnostico": "o que essa mensagem fez de bom/ruim",
-      "tecnicaIdentificada": "string ou null — técnica usada (se houver)",
-      "tecnicaAusente": "string ou null — técnica que deveria ter sido usada",
-      "reescritaSugerida": "TEXTO PRONTO no tom IQG, em português brasileiro, no canal WhatsApp — copiar e colar diretamente",
-      "porQueSuperior": "explicação técnica curta de por que a reescrita é melhor"
+      "ordem": 1,
+      "timestamp": "ISO string vinda da conversa (ex: 2026-05-25T13:42:10Z)",
+      "remetente": "LEAD",
+      "mensagem": "texto literal da mensagem do lead",
+      "anotacaoAuditor": null
+    },
+    {
+      "ordem": 2,
+      "timestamp": "ISO string vinda da conversa",
+      "remetente": "SDR",
+      "mensagem": "texto literal da mensagem da SDR",
+      "anotacaoAuditor": {
+        "scoreMensagem": 0,
+        "momentoCritico": false,
+        "diagnostico": "OBRIGATÓRIO: mínimo 2 frases completas. Frase 1: o que a SDR fez (ou deixou de fazer), citando técnica específica. Frase 2: qual o impacto comercial dessa escolha — o que o lead perdeu/ganhou.",
+        "tecnicaIdentificada": "string ou null — técnica usada (se houver)",
+        "tecnicaAusente": "string ou null — técnica que deveria ter sido usada",
+        "reescritaSugerida": "TEXTO PRONTO E COMPLETO. Sem reticências (...), sem placeholders [Nome] ou [adapte]. Pronto pra copy/paste no WhatsApp. No tom IQG (caloroso mas profissional). Em PT-BR.",
+        "porQueSuperior": "Explicação técnica completa em 2-3 frases. NUNCA terminar com reticências. SEMPRE fechar o raciocínio.",
+        "impactoNasNotas": "Qual eixo foi reduzido por causa dessa mensagem e em quantos pontos. Frase completa.",
+        "respostaProvavelDoLead": "Considerando o perfil DISC e VAK identificado, qual seria a resposta provável do lead à reescrita sugerida vs à mensagem original. Frase completa explicando a diferença."
+      }
     }
   ],
 
@@ -29939,21 +29983,21 @@ Você DEVE responder APENAS com JSON válido, sem markdown, sem texto antes/depo
   },
 
   "planoAcao3Prioridades": [
-    "1. string — primeira prioridade (maior impacto em conversão)",
-    "2. string — segunda prioridade",
-    "3. string — terceira prioridade"
+    "string SEM prefixo numérico — primeira prioridade (maior impacto em conversão). NÃO começar com '1.' ou '1)' — o sistema adiciona numeração automaticamente.",
+    "string SEM prefixo numérico — segunda prioridade.",
+    "string SEM prefixo numérico — terceira prioridade."
   ]
 }
 \`\`\`
 
 REGRAS DE PREENCHIMENTO DO JSON:
 - Notas de 0 a 10 (inteiros). "media" é média aritmética dos 7 eixos (1 casa decimal).
-- "analiseMensagemAMensagem": entre 3 e 8 mensagens-chave (escolher as MAIS críticas). Cada item deve trazer reescrita pronta.
+- "transcriptAnotado": TODAS as mensagens da conversa em ordem cronológica. Mensagens do LEAD têm anotacaoAuditor=null. Mensagens da SDR têm anotacaoAuditor preenchida se forem analiticamente relevantes (mínimo 3, máximo todas), ou null se forem puramente operacionais. Timestamps EXATAMENTE como aparecem nos dados da conversa.
 - "pontosFortes", "pontosFracos": entre 2 e 6 itens cada.
 - "oportunidadesPerdidas", "recomendacoesPromptSDR": entre 2 e 8 itens.
 - "regrasRespeitadas" e "regrasVioladas": entre 0 e 6 itens cada (deixar vazio se nada significativo).
 - "ondeCorrigirNoPrompt": entre 1 e 5 itens — SEMPRE preencher (mesmo que seja "nenhum ajuste necessário, regras respeitadas").
-- "planoAcao3Prioridades": EXATAMENTE 3 itens, em ordem decrescente de impacto.
+- "planoAcao3Prioridades": EXATAMENTE 3 itens, em ordem decrescente de impacto. CADA STRING NÃO COMEÇA com numeração (sem "1.", "1)", "Primeira:", etc). A numeração é adicionada pelo render automaticamente.
 
 ---
 
@@ -29969,6 +30013,8 @@ REGRAS DE PREENCHIMENTO DO JSON:
 8. Atenção ao não-dito (demoras, mudanças de tom, encurtamento de frases, emojis, pontuação).
 9. Foque no ROI da mudança. Priorize sugestões com maior impacto sobre as cosméticas.
 10. Linguagem profissional, vocabulário técnico de vendas.
+11. EXPLICAÇÃO COMPLETA, NÃO SUPERFICIAL. Cada justificativa de nota deve ter no MÍNIMO 2 frases completas: (a) o que a SDR fez ou deixou de fazer, citando técnica específica; (b) qual seria o impacto comercial dessa escolha. Exemplo RUIM: "Faltou rapport." Exemplo BOM: "A SDR não fez espelhamento textual quando o lead disse 'to pensando em começar'. Espelhar essa frase teria criado microadesão (Voss) e dado tempo pra ele revelar mais do contexto, mas ela partiu pra apresentação genérica e perdeu janela de qualificação."
+12. REESCRITAS SÃO TEXTO PRONTO PARA WHATSAPP. Não são templates. Não têm placeholders. Não têm reticências. Devem ser copiáveis e colaveis diretamente, considerando o nome real do lead, os dados reais que ele compartilhou na conversa, e o tom da IQG (caloroso mas profissional, PT-BR coloquial). Se a reescrita seria muito longa, divide em 2-3 mensagens (formato WhatsApp).
 
 ---
 
@@ -30002,6 +30048,9 @@ Se a conversa for muito curta (1-2 mensagens) ou claramente incompleta, ainda as
 - Retornar markdown, prosa solta, ou texto fora do JSON. APENAS JSON VÁLIDO.
 - Adicionar comentários no JSON (// ou /* */). JSON puro.
 - Usar markdown code fences (\`\`\`) no output. JSON puro.
+- NUNCA truncar frases com "..." ou reticências. Toda reescrita sugerida deve ser TEXTO PRONTO E COMPLETO, formatado pra copy/paste direto no WhatsApp. Se a mensagem da SDR for longa, tu reescreves longa também. Se for curta, curta. Reticências são proibidas tanto na reescrita quanto nas justificativas.
+- NUNCA usar frases incompletas em "diagnostico", "porQueSuperior", "impactoNasNotas", "respostaProvavelDoLead". Cada campo deve ser frase completa com sujeito, verbo e complemento. Mínimo 2 frases em "diagnostico".
+- NUNCA usar placeholders nas reescritas. PROIBIDO: [Nome do lead], [mencionar benefício], [dados específicos], (adapte conforme contexto), (preencher), etc. Use os DADOS REAIS que aparecem na conversa, ou omita o trecho.
 
 ---
 
@@ -30294,7 +30343,7 @@ function validarAuditoriaSchema(j) {
   const camposObrigatorios = [
     "resumoExecutivo", "estagio", "resultado", "diagnostico1Frase",
     "notas6Eixos", "pontosFortes", "pontosFracos",
-    "analiseMensagemAMensagem", "oportunidadesPerdidas",
+    "transcriptAnotado", "oportunidadesPerdidas",
     "recomendacoesPromptSDR", "aderenciaSystemPromptIQG",
     "planoAcao3Prioridades"
   ];
@@ -30318,6 +30367,42 @@ function validarAuditoriaSchema(j) {
   for (const eixo of eixosEsperados) {
     if (typeof j.notas6Eixos[eixo] !== "number") {
       throw new Error(`notas6Eixos.${eixo} ausente ou não-numérico`);
+    }
+  }
+
+  // F5.1 — validação do transcriptAnotado
+  if (!Array.isArray(j.transcriptAnotado)) {
+    throw new Error("transcriptAnotado não é array");
+  }
+  if (j.transcriptAnotado.length === 0) {
+    throw new Error("transcriptAnotado vazio");
+  }
+
+  const mensagensSDRAnotadas = j.transcriptAnotado.filter(
+    m => m && m.remetente === "SDR" && m.anotacaoAuditor !== null && m.anotacaoAuditor !== undefined
+  );
+  if (mensagensSDRAnotadas.length === 0) {
+    throw new Error("nenhuma mensagem da SDR tem anotacaoAuditor preenchida");
+  }
+
+  for (const msg of mensagensSDRAnotadas) {
+    const an = msg.anotacaoAuditor;
+    const camposAnotacao = [
+      "scoreMensagem", "momentoCritico", "diagnostico",
+      "reescritaSugerida", "porQueSuperior",
+      "impactoNasNotas", "respostaProvavelDoLead"
+    ];
+    for (const c of camposAnotacao) {
+      if (an[c] === undefined) {
+        throw new Error(`anotacaoAuditor.${c} ausente em mensagem ordem=${msg.ordem}`);
+      }
+    }
+    // Anti-truncamento: só registra warning, não falha o schema
+    const camposTexto = ["diagnostico", "reescritaSugerida", "porQueSuperior", "impactoNasNotas", "respostaProvavelDoLead"];
+    for (const c of camposTexto) {
+      if (typeof an[c] === "string" && /\.\.\.\s*$/.test(an[c].trim())) {
+        console.warn(`[F5-Auditor] Truncamento detectado em msg ordem=${msg.ordem}, campo=${c}: "${an[c].substring(Math.max(0, an[c].length - 50))}"`);
+      }
     }
   }
 
@@ -30347,6 +30432,28 @@ app.post("/auditoria/sales-master/download-md", async (req, res) => {
 });
 
 function renderAuditoriaToMarkdown(a) {
+  const transcriptMd = (a.transcriptAnotado || []).map(m => {
+    const ts = m.timestamp ? new Date(m.timestamp).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "(sem timestamp)";
+    const emoji = m.remetente === "LEAD" ? "🧑" : "🤖";
+    const labelRem = m.remetente === "LEAD" ? "LEAD" : "SDR";
+
+    let bloco = `### [${ts}] ${emoji} ${labelRem}\n> ${(m.mensagem || "").split("\n").join("\n> ")}\n`;
+
+    if (m.anotacaoAuditor) {
+      const an = m.anotacaoAuditor;
+      const critico = an.momentoCritico ? " 🚨 **MOMENTO CRÍTICO**" : "";
+      bloco += `\n⚠️ **Anotação do Auditor** (score desta mensagem: ${an.scoreMensagem ?? "—"}/10)${critico}\n\n`;
+      bloco += `- **Diagnóstico:** ${an.diagnostico || "—"}\n`;
+      if (an.tecnicaIdentificada) bloco += `- **Técnica identificada:** ${an.tecnicaIdentificada}\n`;
+      if (an.tecnicaAusente) bloco += `- **Técnica ausente:** ${an.tecnicaAusente}\n`;
+      bloco += `- **Reescrita sugerida:**\n  > ${(an.reescritaSugerida || "—").split("\n").join("\n  > ")}\n`;
+      bloco += `- **Por que a reescrita é superior:** ${an.porQueSuperior || "—"}\n`;
+      bloco += `- **Impacto nas notas:** ${an.impactoNasNotas || "—"}\n`;
+      bloco += `- **Resposta provável do lead:** ${an.respostaProvavelDoLead || "—"}\n`;
+    }
+    return bloco;
+  }).join("\n---\n\n");
+
   return `# Auditoria Sales Master — IQG
 
 **Lead:** ${a.userMascarado || a.user || "—"}
@@ -30356,6 +30463,8 @@ function renderAuditoriaToMarkdown(a) {
 
 ## 🔎 Resumo Executivo
 ${a.resumoExecutivo || "—"}
+
+**Diagnóstico em 1 frase:** ${a.diagnostico1Frase || "—"}
 
 ## 📊 Notas (0-10)
 - Abertura e rapport: **${a.notas6Eixos?.aberturaRapport ?? "—"}**
@@ -30367,23 +30476,20 @@ ${a.resumoExecutivo || "—"}
 - Uso de gatilhos de persuasão: **${a.notas6Eixos?.usoGatilhosPersuasao ?? "—"}**
 - **Média geral: ${a.notas6Eixos?.media ?? "—"}**
 
+## 👤 Perfil do Lead
+- DISC textual: ${a.perfilLead?.discTextual || "—"}
+- Sistema representacional VAK: ${a.perfilLead?.sistemaRepresentacionalVAK || "—"}
+- Nível consciência (Schwartz): ${a.perfilLead?.nivelConscienciaSchwartz || "—"}
+
 ## ✅ Pontos Fortes
 ${(a.pontosFortes || []).map(p => `- ${p}`).join("\n") || "—"}
 
 ## ❌ Pontos Fracos e Erros Críticos
 ${(a.pontosFracos || []).map(p => `- ${p}`).join("\n") || "—"}
 
-## 🎯 Análise Mensagem a Mensagem
-${(a.analiseMensagemAMensagem || []).map(m => `
-### Mensagem da SDR
-> ${m.mensagemSDR}
+## 🎯 Transcript Anotado da Conversa
 
-- **Diagnóstico:** ${m.diagnostico}
-- **Técnica identificada/ausente:** ${m.tecnicaIdentificada || m.tecnicaAusente || "—"}
-- **Reescrita sugerida:**
-> ${m.reescritaSugerida}
-- **Por que a reescrita é superior:** ${m.porQueSuperior}
-`).join("\n") || "—"}
+${transcriptMd || "—"}
 
 ## 🧠 Oportunidades Perdidas
 ${(a.oportunidadesPerdidas || []).map(o => `- ${o}`).join("\n") || "—"}
