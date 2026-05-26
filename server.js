@@ -4679,6 +4679,29 @@ const REVENDEDOR_LOJISTA_PATTERNS = [
   /\binforma[cç][oõ]es.{0,40}revender/i
 ];
 
+// ============================================================
+// FIX B (25/05/2026) — Padrões da fala da SDR que indicam reconhecimento
+// de perfil lojista pela própria SDR (caso Marilson 554699 em 25/05/2026):
+// SDR escreveu "Entendi, você quer revender os produtos na sua loja!"
+// mas o handoff não disparou porque a heurística antiga só lia falas
+// do lead.
+//
+// PRESERVAÇÃO Bug 21: NÃO reativamos o classifier-only (LLM sozinho)
+// que tem alta taxa de falso-positivo. Adicionamos apenas heurística
+// REGEX conservadora pra texto da SDR — padrões previsíveis e auditáveis.
+//
+// 3 padrões aprovados (caminho B pragmático, forense 25/05/2026).
+// EXCLUÍDOS por risco de falso-positivo:
+//   - /sua\s+loja\b/i (pode pegar "conta sobre sua loja" investigativo)
+//   - /\blojista\b/i (pode pegar "diferente de ser lojista" comparativo)
+//   - /ponto\s+comercial/i, /estabelecimento\s+comercial/i (broad)
+// ============================================================
+const REVENDEDOR_SDR_PATTERNS = [
+  /você\s+quer\s+revender/i,
+  /quer\s+revender\s+(?:os?\s+produtos?\s+)?(?:em|na)\s+(?:sua\s+)?loja/i,
+  /revender\s+os?\s+produtos?\s+(?:em|na)\s+(?:sua\s+)?loja/i,
+];
+
 function detectRevendedorOuLojistaPretendido(text = "") {
   const raw = String(text || "").trim();
   if (!raw) return { detected: false, motivo: null, trecho: null };
@@ -4696,6 +4719,37 @@ function detectRevendedorOuLojistaPretendido(text = "") {
   }
 
   return { detected: false, motivo: null, trecho: null };
+}
+
+/**
+ * FIX B (25/05/2026) — Detector via fala da SDR.
+ * Espelha detectRevendedorOuLojistaPretendido mas aplica padrões a TEXTO DA SDR
+ * (não do lead). Usado em PARALELO com a heurística do lead — qualquer detecção
+ * dispara handoff. Retorna `trecho` (contexto ao redor do match) pra audit útil.
+ *
+ * Bug 21 fix preservado: este NÃO é o classifier LLM, é regex restrita auditável.
+ */
+function detectRevendedorViaSdr(sdrText) {
+  if (!sdrText || typeof sdrText !== "string") {
+    return { detected: false, padrao: null, trecho: null, via: "sdr" };
+  }
+  const txt = sdrText.toLowerCase();
+  for (const padrao of REVENDEDOR_SDR_PATTERNS) {
+    const match = padrao.exec(txt);
+    if (match) {
+      // Captura contexto ao redor do match (50 chars antes/depois) pra audit útil
+      const start = Math.max(0, match.index - 50);
+      const end = Math.min(txt.length, match.index + match[0].length + 50);
+      const trecho = sdrText.substring(start, end).trim();
+      return {
+        detected: true,
+        padrao: padrao.source,
+        trecho: trecho.substring(0, 200),
+        via: "sdr"
+      };
+    }
+  }
+  return { detected: false, padrao: null, trecho: null, via: "sdr" };
 }
 
 function detectMessageTruncation(text = "") {
@@ -25374,7 +25428,33 @@ if (devePularGptsNaColeta) {
     Padrão de early return cirúrgico, similar a isHumanAssumedLead
     (linha 23085) mas com mensagem de handoff enviada ao lead.
   */
-  const revendedorHeuristica = detectRevendedorOuLojistaPretendido(text);
+  // Heurística LEAD (existente, intacta — Bug 8 original):
+  const revendedorHeuristicaLead = detectRevendedorOuLojistaPretendido(text);
+
+  // FIX B (25/05/2026) — Heurística SDR (nova): lê o texto da última mensagem
+  // da SDR pra detectar quando a própria SDR reconheceu perfil lojista.
+  // Bug 21 fix preservado — não reativamos classifier-only LLM, apenas regex paralela.
+  const revendedorHeuristicaSdr = detectRevendedorViaSdr(lastSdrTextForClassifiers);
+
+  // Combina: handoff dispara se QUALQUER heurística detectar. Preserva .motivo/.trecho
+  // consumidos downstream (flagLeadAsRevendedorLojista + console.log).
+  const revendedorHeuristica = {
+    detected: revendedorHeuristicaLead.detected || revendedorHeuristicaSdr.detected,
+    viaLead: revendedorHeuristicaLead.detected,
+    viaSdr: revendedorHeuristicaSdr.detected,
+    motivo: revendedorHeuristicaLead.motivo
+      || (revendedorHeuristicaSdr.detected ? `sdr:${revendedorHeuristicaSdr.padrao}` : null),
+    trecho: revendedorHeuristicaLead.trecho
+      || revendedorHeuristicaSdr.trecho
+      || null
+  };
+
+  // Audit log diferenciado quando o trigger foi APENAS via SDR (não via lead)
+  // → permite monitorar falso-positivo em produção nas próximas 24-48h:
+  if (revendedorHeuristicaSdr.detected && !revendedorHeuristicaLead.detected) {
+    console.log(`[Fix B] Handoff disparado via heurística SDR (padrão: ${revendedorHeuristicaSdr.padrao}) — lead ${from}`);
+  }
+
   const revendedorClassifier = semanticIntent?.leadDeclareSerRevendedorOuLojista === true;
   const leadEhRevendedor = revendedorHeuristica.detected;
 
