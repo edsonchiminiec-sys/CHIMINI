@@ -21500,6 +21500,29 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
       "- A EXCEÇÃO À REGRA DE BREVIDADE da Fase 6 NÃO se aplica aqui — cadência sempre 2-3 frases.",
       "- A mensagem-base obrigatória da Fase 6 NÃO se aplica aqui — use apenas retomada curta.",
       "",
+      // ════════ BLOCO NOVO 1 — PROIBIÇÕES ANTI-BORDÃO (F5.5-4a) ════════
+      "🚫 PROIBIÇÕES ABSOLUTAS (F5.5-4a — auditoria 26/05 detectou bordão em 70% das cadências):",
+      "- PROIBIDO usar a frase 'Quer que eu te explique de forma simples como funciona' (e variantes: 'te explico de forma simples', 'explicar de forma simples', 'de forma simples como funciona').",
+      "- PROIBIDO abrir com 'vi que você demonstrou interesse' ou 'percebi seu interesse' ou variantes que reapresentem o que o lead já sabe.",
+      "- PROIBIDO encerrar com 'fico à disposição' ou 'estou aqui para ajudar' como única chamada à ação.",
+      "- PROIBIDO usar PERGUNTA RETÓRICA ('fez sentido?', 'ficou alguma dúvida?') como ÚNICA pergunta — se usar, acompanhar de pergunta calibrada sobre algo específico.",
+      "",
+      // ════════ BLOCO NOVO 2 — INSPECIONE O HISTÓRICO ════════
+      "📋 INSPECIONE O HISTÓRICO ANTES DE ESCREVER:",
+      "- Leia as ÚLTIMAS 3 mensagens da SDR no histórico desta conversa.",
+      "- Identifique abertura, estrutura e fechamento usados.",
+      "- A nova mensagem DEVE ter abertura DIFERENTE, estrutura DIFERENTE e fechamento DIFERENTE.",
+      "- Se a última cadência usou pergunta retórica → use pergunta calibrada agora.",
+      "- Se a última usou 'Oi! 😊' → varie a abertura.",
+      "- Se já mencionou taxa/comodato/R$5.000/R$1.990 → busque ângulo diferente (suporte, treinamento, comissão vitalícia, prova social genérica).",
+      "",
+      // ════════ BLOCO NOVO 3 — VARIE A ABORDAGEM (4 modos) ════════
+      "🎯 VARIE A ABORDAGEM ENTRE STEPS (escolha 1 dos 4 modos, alternando):",
+      "  • MODO 1 (pergunta calibrada Voss): 'Como X se encaixa no que você tinha em mente?' / 'O que mais pesa pra você?'",
+      "  • MODO 2 (rotulação tática Voss): 'Parece que [hipótese sobre o silêncio]...' / 'Pelo que conversamos, [observação]...'",
+      "  • MODO 3 (micro-compromisso Cialdini): 'Posso te enviar [algo específico]?' / 'Topa fazer 1 pergunta breve?'",
+      "  • MODO 4 (observação contextual): 'Lembrei de algo que pode te interessar...' / 'Surgiu informação nova que talvez ajude...'",
+      "",
       "ORIENTAÇÃO DO CONSULTOR PRÉ-SDR:",
       `Estratégia: ${preSdrResult?.estrategiaRecomendada || "manter_nutricao"}`,
       `Próxima ação: ${preSdrResult?.proximaMelhorAcao || "-"}`,
@@ -21767,15 +21790,15 @@ async function flagLeadAsRevendedorLojista(from, contexto = {}) {
 const FOLLOWUP_STEP_MESSAGES = {
   programa: {
     1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
-    2: "um ponto do Programa que costuma fazer diferença: você começa com o lote de produtos da IQG em comodato, sem precisar comprar estoque. Quer que eu te explique como funciona?",
+    2: "um ponto do Programa que costuma fazer diferença: você começa com o lote de produtos da IQG em comodato, sem precisar comprar estoque. Como esse modelo se encaixa no que você tinha em mente?",
     3: "uma dúvida que costuma aparecer nessa fase é se o Programa exige experiência prévia com vendas. Não exige — a IQG oferece treinamento e acompanhamento desde o começo. Posso te explicar melhor?",
     4: "se o Programa fizer sentido pra você, o próximo passo é conhecer os benefícios que a IQG oferece a quem é Parceiro Homologado. Quer que eu te apresente?"
   },
   beneficios: {
     1: "ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?",
     2: "um ponto importante: o suporte da IQG é contínuo — você tem acompanhamento durante toda a sua atuação como Parceiro, não só no início. Quer saber mais sobre como funciona?",
-    3: "uma dúvida comum nessa fase é se vale a pena sem já ter uma carteira de clientes. O treinamento da IQG cobre justamente como construir isso do zero. Quer que eu te explique?",
-    4: "se os benefícios estão fazendo sentido pra você, o próximo passo é entender como funciona o lote de produtos em comodato. Quer que eu te explique?"
+    3: "uma dúvida comum nessa fase é se vale a pena sem já ter uma carteira de clientes. O treinamento da IQG cobre justamente como construir isso do zero. Onde você está hoje em relação a isso — começando do zero ou já tem alguma base de contatos?",
+    4: "se os benefícios estão fazendo sentido pra você, o próximo passo é entender como funciona o lote de produtos em comodato. Posso seguir nesse tema ou tem algum ponto dos benefícios que ainda quer esclarecer antes?"
   },
   estoque: {
     1: "ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?",
@@ -21811,7 +21834,7 @@ const FOLLOWUP_STEP_MESSAGES = {
     1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
     2: "sobre a atuação como Parceiro Homologado: a IQG estrutura cada etapa pra que você atue com clareza, mesmo sem experiência prévia. Faz sentido pra você esse formato?",
     3: "uma dúvida frequente sobre a atuação é como a rotina se encaixa no dia a dia. Posso te explicar como isso funciona na prática. Quer conversar sobre?",
-    4: "se quiser, posso te explicar agora como funciona a atuação como Parceiro — é o que falta pra gente seguir. Quer ver?"
+    4: "pra gente seguir, falta só entender como é a atuação como Parceiro no dia a dia. Pelo que conversamos, faz sentido eu te apresentar isso agora?"
   },
   fallbackNeutro: {
     1: "ficou alguma dúvida sobre o que conversamos até aqui? 😊",
