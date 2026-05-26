@@ -29904,6 +29904,14 @@ app.get("/auditoria", async (req, res) => {
             '<input id="auditorMaxLeads" type="number" value="50" min="1" max="100" style="width:80px;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;">' +
             '<button type="button" id="askAuditorBtn" onclick="askSalesMasterAuditor()" style="border:0;border-radius:999px;height:38px;padding:0 18px;font-size:13px;font-weight:800;cursor:pointer;background:#60a5fa;color:#0f172a;">Auditar conversas</button>' +
           '</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">' +
+            '<label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:13px;color:#94a3b8;">' +
+              '<input type="checkbox" id="auditorCadenciaRecente" />' +
+              '<span>Apenas cadência pós-fix (F5.5-4a)</span>' +
+            '</label>' +
+            '<input type="datetime-local" id="auditorDataMinima" value="2026-05-26T19:00" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
+            '<span style="font-size:11px;color:#64748b;">(default: deploy do F5.5-4a)</span>' +
+          '</div>' +
           '<div id="auditorResponse" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:16px;">' +
             '<p style="color:#e2e8f0;font-size:13px;">Escolha uma janela e clique em <strong>Auditar conversas</strong>. Custo estimado: ~$0.15-0.40 por lead (gpt-4o).</p>' +
           '</div>' +
@@ -29995,6 +30003,10 @@ app.get("/auditoria", async (req, res) => {
           'var maxLeads = parseInt((document.getElementById("auditorMaxLeads")||{}).value || "50", 10) || 50;' +
           'var corpo = { janela: smJanela, maxLeads: maxLeads };' +
           'if(leadFiltro) corpo.leadFilter = leadFiltro;' +
+          'var apenasCadenciaRecente = (document.getElementById("auditorCadenciaRecente")||{}).checked || false;' +
+          'var dataMinimaInput = (document.getElementById("auditorDataMinima")||{}).value || null;' +
+          'corpo.apenasCadenciaRecente = apenasCadenciaRecente;' +
+          'if(apenasCadenciaRecente && dataMinimaInput) corpo.dataMinima = new Date(dataMinimaInput).toISOString();' +
           'if(smJanela === "custom"){' +
             'var di = (document.getElementById("dataInicio")||{}).value; var df = (document.getElementById("dataFim")||{}).value;' +
             'if(!di || !df){ rBox.innerHTML = `<p style="color:#fca5a5;">Para janela custom, preencha data início e fim.</p>`; return; }' +
@@ -30014,6 +30026,21 @@ app.get("/auditoria", async (req, res) => {
             'html += `<div style="font-size:13px;color:#e2e8f0;">Leads na janela: <strong>${data.totalLeads}</strong> · Auditados: <strong>${data.auditoriasValidas}</strong> · Pulados: <strong>${data.auditoriasPuladas}</strong> · Custo estimado: <strong>$${data.custoTotalUSD}</strong></div>`;' +
             'html += `<div style="margin-top:8px;">` + smEixo("Média geral", m.mediaGeral) + smEixo("Abertura e rapport", m.aberturaRapport) + smEixo("Qualificação / dor", m.qualificacaoDescobertaDor) + smEixo("Apresentação de valor", m.apresentacaoValor) + smEixo("Tratamento de objeções", m.tratamentoObjecoes) + smEixo("Condução / fechamento", m.conducaoFechamento) + smEixo("Tom, ritmo e adaptação", m.tomRitmoAdaptacao) + smEixo("Gatilhos de persuasão", m.usoGatilhosPersuasao) + `</div>`;' +
             'html += `</div>`;' +
+            'if(data.metricasF55_4a){' +
+              'var mt = data.metricasF55_4a;' +
+              'var stCls = function(v, ok, warn){ return v == null ? "—" : (v < ok ? "✅" : (v < warn ? "⚠️" : "❌")); };' +
+              'html += `<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:14px;margin-bottom:16px;">`;' +
+              'html += `<div style="font-size:13px;font-weight:900;color:#bfdbfe;text-transform:uppercase;margin-bottom:8px;">📊 Métricas F5.5-4a (anti-bordão)</div>`;' +
+              'html += `<table style="width:100%;font-size:12px;color:#cbd5e1;border-collapse:collapse;">`;' +
+              'html += `<tr><th style="text-align:left;padding:4px;">KPI</th><th style="padding:4px;">Atual</th><th style="padding:4px;">Baseline</th><th style="padding:4px;">Alvo</th><th style="padding:4px;">Status</th></tr>`;' +
+              'html += `<tr><td style="padding:4px;">% bordão "Quer que eu te explique"</td><td style="text-align:center;">${mt.pctBordaoFrase}%</td><td style="text-align:center;color:#64748b;">70%</td><td style="text-align:center;color:#64748b;">&lt;30%</td><td style="text-align:center;">${stCls(mt.pctBordaoFrase,30,50)}</td></tr>`;' +
+              'html += `<tr><td style="padding:4px;">% abertura "vi que demonstrou"</td><td style="text-align:center;">${mt.pctAberturaVi}%</td><td style="text-align:center;color:#64748b;">60%</td><td style="text-align:center;color:#64748b;">&lt;20%</td><td style="text-align:center;">${stCls(mt.pctAberturaVi,20,40)}</td></tr>`;' +
+              'html += `<tr><td style="padding:4px;">% fechamento "fico à disposição"</td><td style="text-align:center;">${mt.pctFechamentoFico}%</td><td style="text-align:center;color:#64748b;">25%</td><td style="text-align:center;color:#64748b;">&lt;10%</td><td style="text-align:center;">${stCls(mt.pctFechamentoFico,10,18)}</td></tr>`;' +
+              'html += `<tr><td style="padding:4px;">% leads c/ múltiplas cadências sem variação</td><td style="text-align:center;">${mt.pctLeadsSemVariacao != null ? mt.pctLeadsSemVariacao + "%" : "N/A"}</td><td style="text-align:center;color:#64748b;">—</td><td style="text-align:center;color:#64748b;">&lt;30%</td><td style="text-align:center;">${mt.pctLeadsSemVariacao == null ? "—" : stCls(mt.pctLeadsSemVariacao,30,50)}</td></tr>`;' +
+              'html += `</table>`;' +
+              'html += `<div style="margin-top:8px;font-size:11px;color:#64748b;">Total cadências avaliadas: ${mt.totalCadenciasAvaliadas} · Leads c/ ≥2 cadências: ${mt.leadsComMultiplasCadencias}</div>`;' +
+              'html += `</div>`;' +
+            '}' +
             'if(!window.__smAuditorias.length){ html += `<p style="color:#94a3b8;font-size:13px;">${smEsc(data.resumoGeral || "Nenhuma auditoria gerada.")}</p>`; }' +
             'window.__smAuditorias.forEach(function(a, i){ html += smCard(a, i); });' +
             'rBox.innerHTML = html;' +
@@ -30316,6 +30343,65 @@ const CLEVEL_AUDITOR_SYSTEM_PROMPT = SALES_MASTER_AUDITOR_SYSTEM_PROMPT_IQG;
 // MEDDIC, PNL, DISC, Kahneman. Audita CONVERSAS de leads numa janela
 // de tempo (24h/48h/7d/custom) usando gpt-4o.
 // ============================================================
+
+// F5.5-4a-VAL: cálculo de métricas-foco do anti-bordão (sobre as cadências cruas)
+function calcularMetricasF55_4a(cadenciasPorLead) {
+  let totalCadencias = 0;
+  let bordaoFraseCount = 0;
+  let aberturaViCount = 0;
+  let fechamentoFicoCount = 0;
+  let leadsComVariacaoBaixa = 0;
+  let leadsComMultiplasCadencias = 0;
+
+  const REGEX_BORDAO_FRASE = /quer que eu te explique de forma simples como funciona/i;
+  const REGEX_ABERTURA_VI = /^[\s\S]{0,80}?vi que (?:você )?demonstrou interesse/im;
+  const REGEX_FECHAMENTO_FICO = /fico à disposição/i;
+
+  const extrairTexto = (m) => m?.content || "";
+
+  for (const { cadencias } of cadenciasPorLead) {
+    if (!cadencias || cadencias.length === 0) continue;
+    totalCadencias += cadencias.length;
+
+    for (const cad of cadencias) {
+      const texto = extrairTexto(cad);
+      if (REGEX_BORDAO_FRASE.test(texto)) bordaoFraseCount++;
+      if (REGEX_ABERTURA_VI.test(texto)) aberturaViCount++;
+      if (REGEX_FECHAMENTO_FICO.test(texto)) fechamentoFicoCount++;
+    }
+
+    if (cadencias.length >= 2) {
+      leadsComMultiplasCadencias++;
+      const aberturas = cadencias.map(c => {
+        const texto = extrairTexto(c);
+        return texto.trim().toLowerCase().split(/\s+/).slice(0, 5).join(" ");
+      });
+      const counts = {};
+      aberturas.forEach(a => { counts[a] = (counts[a] || 0) + 1; });
+      const maxCount = Math.max(...Object.values(counts));
+      if (maxCount / aberturas.length > 0.7) leadsComVariacaoBaixa++;
+    }
+  }
+
+  return {
+    totalCadenciasAvaliadas: totalCadencias,
+    leadsComMultiplasCadencias,
+    pctBordaoFrase: totalCadencias > 0 ? Number((bordaoFraseCount / totalCadencias * 100).toFixed(1)) : 0,
+    pctAberturaVi: totalCadencias > 0 ? Number((aberturaViCount / totalCadencias * 100).toFixed(1)) : 0,
+    pctFechamentoFico: totalCadencias > 0 ? Number((fechamentoFicoCount / totalCadencias * 100).toFixed(1)) : 0,
+    pctLeadsSemVariacao: leadsComMultiplasCadencias > 0 ? Number((leadsComVariacaoBaixa / leadsComMultiplasCadencias * 100).toFixed(1)) : null,
+    baselines: {
+      pctBordaoFraseBaseline: 70,
+      pctAberturaViBaseline: 60,
+      pctFechamentoFicoBaseline: 25,
+      alvoBordaoFrase: 30,
+      alvoAberturaVi: 20,
+      alvoFechamentoFico: 10
+    },
+    contagensAbsolutas: { bordaoFraseCount, aberturaViCount, fechamentoFicoCount, leadsComVariacaoBaixa }
+  };
+}
+
 app.post("/auditoria/c-level-auditor", async (req, res) => {
   if (!requireDashboardAuth(req, res)) return;
 
@@ -30353,7 +30439,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
     }
 
     // 2. Leads com interação no range (inclui em_atendimento). Filtro opcional por user.
-    const leadQuery = {
+    let leadQuery = {
       $or: [
         { updatedAt: { $gte: inicio, $lte: fim } },
         { createdAt: { $gte: inicio, $lte: fim } }
@@ -30364,7 +30450,21 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       leadQuery.user = { $regex: filtroLead, $options: "i" };
     }
 
-    const leads = await db.collection("leads").find(leadQuery).limit(maxLeadsEfetivo).toArray();
+    // F5.5-4a-VAL: filtro opcional pra cadência pós-fix (validação rigorosa do anti-bordão)
+    const apenasCadenciaRecente = !!req.body?.apenasCadenciaRecente;
+    const dataMinimaCadencia = req.body?.dataMinima ? new Date(req.body.dataMinima) : null;
+
+    if (apenasCadenciaRecente && dataMinimaCadencia && !isNaN(dataMinimaCadencia.getTime())) {
+      leadQuery = {
+        $and: [
+          leadQuery,
+          { "ultimoFollowupAutomatico.enviadoEm": { $gte: dataMinimaCadencia } }
+        ]
+      };
+    }
+
+    // F5.5-4a-VAL: sort por updatedAt desc (elimina viés de _id antigo — pega os mais recentes)
+    const leads = await db.collection("leads").find(leadQuery).sort({ updatedAt: -1 }).limit(maxLeadsEfetivo).toArray();
 
     if (leads.length === 0) {
       return res.json({
@@ -30387,10 +30487,15 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
     const auditorias = [];
     let custoTotalEstimado = 0;
     const MAX_TOKENS_POR_LEAD = 30000;
+    const cadenciasPorLead = []; // F5.5-4a-VAL: cadências (origem followup_automatico) por lead, p/ métricas
 
     for (const lead of leads) {
       try {
         const history = await loadConversation(lead.user);
+
+        // F5.5-4a-VAL: acumula as cadências GPT deste lead p/ as métricas anti-bordão
+        const cadenciasDoLead = (history || []).filter(m => m?.origem === "followup_automatico");
+        cadenciasPorLead.push({ user: lead.user, cadencias: cadenciasDoLead });
 
         if (!Array.isArray(history) || history.length === 0) {
           auditorias.push({
@@ -30496,6 +30601,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
     // 4. Agregado por eixo + sumário de batch
     const validas = auditorias.filter(a => !a.pulado);
     const mediasPorEixo = computeMediasPorEixo(validas);
+    const metricasF55_4a = calcularMetricasF55_4a(cadenciasPorLead); // F5.5-4a-VAL
 
     const sumario = {
       totalProcessados: auditorias.length,
@@ -30519,6 +30625,9 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       custoTotalUSD: Number(custoTotalEstimado.toFixed(2)),
       mediasPorEixo,
       sumario,
+      metricasF55_4a,
+      apenasCadenciaRecente,
+      dataMinima: dataMinimaCadencia ? dataMinimaCadencia.toISOString() : null,
       auditorias
     });
   } catch (error) {
