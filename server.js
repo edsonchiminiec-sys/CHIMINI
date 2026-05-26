@@ -22081,6 +22081,85 @@ function detectLeadIntentFromHistory(history = []) {
   };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// F6.2-A: Detector de pedido de tempo no FLUXO ATIVO (live)
+// Diferente de padraoAguardar (que roda só em cadência), este detector
+// roda quando lead manda mensagem ao vivo e SDR vai responder.
+// Caso real: Getúlio (552198, 14/05/2026, nota auditor 3.7/10) — silenciou
+// após "Sim, gostaria" porque SDR despejou bloco gigante sem respeitar
+// tempo de reflexão.
+// Categoria 1 (alta confiança) — 9 padrões. Categoria 2 (respostas
+// minimalistas) NÃO incluída por risco de falso positivo.
+// ════════════════════════════════════════════════════════════════════
+const REGEX_PEDIDO_TEMPO_LIVE = [
+  { padrao: /\bvou pensar\b/i, nome: "vou_pensar" },
+  { padrao: /\bpreciso pensar\b/i, nome: "preciso_pensar" },
+  { padrao: /\bdeixa eu (?:pensar|ver|analisar|avaliar)\b/i, nome: "deixa_eu" },
+  { padrao: /\bvou (?:analisar|avaliar|estudar)\b/i, nome: "vou_analisar" },
+  { padrao: /\bvou conversar com\s+(?:meu|minha|a|o|um|uma|os|as)?/i, nome: "conversar_com" },
+  { padrao: /\b(?:vou|preciso de) (?:um )?tempo\b/i, nome: "vou_tempo" },
+  { padrao: /\bme d[áa] um tempo\b/i, nome: "me_da_tempo" },
+  { padrao: /\b(?:te aviso|te falo|te respondo|te retorno)\s+(?:depois|mais tarde|amanh[ãa]|outra hora|outro dia)/i, nome: "te_aviso_depois" },
+  { padrao: /\bdepois\s+(?:eu\s+)?(?:te\s+)?(?:falo|respondo|aviso|retorno|volto)\b/i, nome: "depois_te_falo" },
+];
+
+function detectarPedidoDeTempoLive(lastUserMsg) {
+  if (!lastUserMsg || typeof lastUserMsg !== "string") {
+    return { detectado: false, padrao: null, trecho: null };
+  }
+  const texto = lastUserMsg.toLowerCase().trim();
+  if (texto.length < 5 || texto.length > 500) {
+    return { detectado: false, padrao: null, trecho: null };
+  }
+  for (const { padrao, nome } of REGEX_PEDIDO_TEMPO_LIVE) {
+    const m = lastUserMsg.match(padrao);
+    if (m) {
+      const inicio = Math.max(0, m.index - 30);
+      const fim = Math.min(lastUserMsg.length, m.index + m[0].length + 30);
+      return { detectado: true, padrao: nome, trecho: lastUserMsg.slice(inicio, fim).trim() };
+    }
+  }
+  return { detectado: false, padrao: null, trecho: null };
+}
+
+// F6.2-A: Templates de resposta ao detectar pedido de tempo (4 variantes
+// rotacionadas pra evitar virar bordão). Vocativo via getFirstName +
+// isInvalidLooseNameCandidate (globais, padrão buildFollowupGreetingPrefix).
+const TEMPLATES_RESPEITO_TEMPO = [
+  "Claro{vocativo}! Sem pressa nenhuma. Quando quiser retomar, é só me chamar. 🙏",
+  "Tranquilo{vocativo}. Toma o tempo que precisar — estarei por aqui quando quiser conversar.",
+  "Sem problema{vocativo}. Pensa com calma. Se surgir alguma dúvida no caminho, é só me chamar.",
+  "Combinado{vocativo}. Respeito totalmente o seu tempo. Quando se sentir pronto, me chama por aqui.",
+];
+
+function montarRespostaRespeitoTempo(leadOuFrom) {
+  const idx = Math.floor(Math.random() * TEMPLATES_RESPEITO_TEMPO.length);
+  const template = TEMPLATES_RESPEITO_TEMPO[idx];
+
+  // F6.2-A: usar getFirstName + isInvalidLooseNameCandidate (globais)
+  // em vez de isReliableName (que é local ao buildBreakupAffiliateMessage)
+  let nomeBruto = "";
+  if (typeof leadOuFrom === "string") {
+    nomeBruto = leadOuFrom;
+  } else if (leadOuFrom && typeof leadOuFrom === "object") {
+    nomeBruto = leadOuFrom.nome || leadOuFrom.user || "";
+  }
+
+  // Valida o nome CRU primeiro (isInvalidLooseNameCandidate exige 2+ palavras;
+  // aplicá-lo no resultado de getFirstName — que é 1 palavra — rejeitaria
+  // sempre). Mesmo padrão de buildFollowupGreetingPrefix (lição do Fix Y).
+  const nomeValido = nomeBruto &&
+    (typeof isInvalidLooseNameCandidate === "function") &&
+    !isInvalidLooseNameCandidate(nomeBruto);
+
+  const nomeOk = (nomeValido && typeof getFirstName === "function")
+    ? getFirstName(nomeBruto)
+    : null;
+
+  const vocativo = nomeOk ? `, ${nomeOk}` : "";
+  return { texto: template.replace("{vocativo}", vocativo), templateIndex: idx };
+}
+
 /*
   ===========================================================
   sendAutomaticFollowupIfStillValid (V2 — LOCK + AUDIT)
@@ -25561,6 +25640,57 @@ if (devePularGptsNaColeta) {
 
     return;
   }
+
+  // ════════════════════════════════════════════════════════════════════
+  // F6.2-A: Early-return ao detectar pedido de tempo do lead
+  // Estilo Bug 8: hook ANTES do Pré-SDR (economiza GPT) + padrão testado.
+  // Modelo "adiar" (NÃO pausar): só adia proximoFollowupEm 72h — o cron
+  // retoma após o período (cadenciaPausadaPorCliente=true excluiria do cron
+  // permanentemente, vide A.5.1).
+  // ════════════════════════════════════════════════════════════════════
+  const pedidoTempoLive = detectarPedidoDeTempoLive(text);
+
+  if (pedidoTempoLive.detectado) {
+    const { texto: respostaRespeitoTempo, templateIndex } = montarRespostaRespeitoTempo(currentLead?.nome || from);
+
+    console.log(`[F6.2-A pedido_tempo_detectado] user=${from} padrao=${pedidoTempoLive.padrao} trecho="${pedidoTempoLive.trecho}" template=${templateIndex}`);
+
+    // Modelo "adiar": só adia 72h (sem cadenciaPausadaPorCliente=true).
+    const proximo72h = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    await saveLeadProfile(from, {
+      proximoFollowupEm: proximo72h,
+      cadenciaPausadaMotivo: "lead_pediu_tempo_f62a",
+      ultimoPedidoTempoEm: new Date()
+    });
+
+    try {
+      await sendWhatsAppMessage(from, respostaRespeitoTempo);
+    } catch (sendErr) {
+      console.error("[F6.2-A] Falha ao enviar resposta de respeito ao tempo:", sendErr?.message);
+    }
+
+    history.push({ role: "user", content: text, createdAt: new Date() });
+    history.push({
+      role: "assistant",
+      content: respostaRespeitoTempo,
+      createdAt: new Date(),
+      origem: "f62a_pedido_tempo",
+      padraoDetectado: pedidoTempoLive.padrao
+    });
+    try {
+      await saveConversation(from, history);
+    } catch (saveErr) {
+      console.error("[F6.2-A] Falha ao salvar histórico (ignorado):", saveErr?.message);
+    }
+
+    // CRÍTICO (padrão Bug 8): marcar processado pra não reprocessar a mensagem.
+    if (Array.isArray(bufferedMessageIds) && bufferedMessageIds.length > 0) {
+      markMessageIdsAsProcessed(bufferedMessageIds);
+    }
+
+    return;
+  }
+  // ════════════════════════════════════════════════════════════════════
 
   console.log("🧠 Intenção semântica observada:", {
     user: from,
