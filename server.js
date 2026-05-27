@@ -12381,6 +12381,32 @@ if (palavrasTextoOriginal > 6) {
 return false;
 }
 
+// Bug E fix (F7.1): detector de razão social para uso APENAS em contextos de vocativo.
+// NÃO usar em validação de coleta (PJs podem se cadastrar com razão social legítima).
+// Lista conservadora de tokens PJ inequívocos; match por palavra completa (não substring).
+function looksLikeCorporateName(name = "") {
+  if (typeof name !== "string") return false;
+  const normalized = name
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  const tokens = normalized.split(/[\s.,\/\-]+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const CORPORATE_MARKERS = new Set([
+    "LTDA", "ME", "EPP", "EIRELI", "SA", "S/A",
+    "CIA",
+    "COMERCIAL", "COMERCIO",
+    "INDUSTRIAL", "INDUSTRIA",
+    "DISTRIBUIDORA", "DISTRIBUICAO",
+    "CONSTRUTORA", "CONSTRUCAO",
+    "SERVICOS", "SERVICO",
+    "TRANSPORTADORA", "TRANSPORTES",
+    "COMPANHIA",
+    "ATACADO", "ATACADISTA", "VAREJO", "VAREJISTA"
+  ]);
+  return tokens.some(t => CORPORATE_MARKERS.has(t));
+}
+
 function isInvalidLocationCandidate(value = "") {
    
   const raw = String(value || "").trim();
@@ -22655,7 +22681,12 @@ async function sendAutomaticFollowupIfStillValid({
     if (aberturaRepetida(ultimaAbertura, novaAberturaCompleta)) {
       console.log(`[F5.5c] Abertura repetida detectada para ${from}: "${ultimaAbertura}" -> "${novaAberturaCompleta.substring(0, 30)}". Substituindo.`);
 
-      const nome = latestLead?.nomeWhatsApp || latestLead?.nome || "";
+      // Bug E fix (F7.1): Fix Y pattern + detector PJ — evita vocativo cru.
+      // Casos: ".."/"BALA" → sem vocativo; "Jayme Klemann" → "Jayme,";
+      // "MF CONSTRUÇÃO E SERVIÇOS" → sem vocativo (razão social).
+      const candidatoNome = latestLead?.nomeWhatsApp || latestLead?.nome || "";
+      const nomeValido = !isInvalidLooseNameCandidate(candidatoNome) && !looksLikeCorporateName(candidatoNome);
+      const nome = nomeValido ? getFirstName(candidatoNome) : "";
       const variantes = [
         nome ? `${nome}, vou ser direto:` : "Vou ser direto:",
         nome ? `${nome}, pensando no que conversamos,` : "Pensando no que conversamos,",
