@@ -8724,7 +8724,8 @@ async function revalidarCriticosEstruturais({
   commercialRouteDecision,
   taxPhaseDecision,
   podeIniciarColeta,
-  coletaLiberadaPorTaxaAceita
+  coletaLiberadaPorTaxaAceita,
+  turnPolicy
 }) {
   const criticos = [];
 
@@ -8865,6 +8866,20 @@ async function revalidarCriticosEstruturais({
       prioridade: "critica",
       motivo: routeMixGuard.motivo || "",
       orientacao: "Não misturar Afiliado e Homologado na mesma resposta."
+    });
+  }
+
+  // F6.2-C1: re-check de qualificação após regeneração (convergência do loop)
+  if (
+    turnPolicy?.podeFalarTaxa === true &&
+    /(?:1[\.,]?990|taxa de ades[ãa]o|taxa de implanta[çc][ãa]o)/i.test(respostaFinal || "") &&
+    !currentLead?.taxaQualificacaoFeitaEm &&
+    !detectarOrcamentoEspontaneo(history)
+  ) {
+    criticos.push({
+      tipo: "qualificacao_taxa_omitida",
+      prioridade: "critica",
+      orientacao: "Antes de apresentar R$1.990 (ou qualquer menção à taxa), faça 1 pergunta calibrada de orçamento. Use uma destas variantes: (1) 'Antes de te passar o valor, qual faixa de investimento faz sentido pra você nesse tipo de negócio?' (2) 'Antes de entrar no valor, queria entender: você já pensou em alguma faixa de investimento que faria sentido pra esse tipo de oportunidade?' (3) 'Faz sentido eu te perguntar antes: você tem alguma faixa de investimento em mente, ou prefere eu já te passar os números pra você avaliar?' NÃO mencione o valor da taxa nesta resposta — qualifique primeiro."
     });
   }
 
@@ -9939,6 +9954,12 @@ Use a mensagem-base abaixo inteira, adaptando apenas a saudação e o nome. A me
 ⚠️ EM CADÊNCIA AUTOMÁTICA (system message contendo "CADÊNCIA AUTOMÁTICA" ou "[lead inativo]"): esta exceção NÃO se aplica. Seguir as REGRAS DA CADÊNCIA do contexto (máximo 2-3 frases, retomada leve, sem repetir o que já foi dito).
 
 APÓS a primeira apresentação completa do investimento: respostas voltam ao padrão BREVIDADE da regra geral. Se o lead pediu detalhe específico (margem, ágio, parcelamento, contexto operacional), responder pontualmente sem repetir a mensagem-base inteira.
+
+QUALIFICAÇÃO FINANCEIRA (F6.2-C1):
+Antes de apresentar o valor da taxa pela primeira vez, faça 1 pergunta calibrada de orçamento se o lead ainda não mencionou faixa de investimento. Variantes (rotacionar entre conversas):
+- "Antes de te passar o valor, qual faixa de investimento faz sentido pra você nesse tipo de negócio?"
+- "Antes de entrar no valor, queria entender: você já pensou em alguma faixa de investimento que faria sentido pra esse tipo de oportunidade?"
+- "Faz sentido eu te perguntar antes: você tem alguma faixa de investimento em mente, ou prefere eu já te passar os números pra você avaliar?"
 
 Nesta fase, é obrigatório:
 
@@ -16227,6 +16248,42 @@ function enforceFunnelDiscipline({
   };
 }
 
+// ════════════════════════════════════════════════════════════════════
+// F6.2-C1: Guard de qualificação financeira antes da taxa.
+// Padrão return + caller dá push (consistência com enforceFunnelDiscipline).
+// 4 gates (todos true pra empurrar finding):
+//   1. turnPolicy.podeFalarTaxa === true (não duplica enforceFunnelDiscipline)
+//   2. Resposta menciona R$1.990 / taxa de adesão / taxa de implantação
+//   3. lead.taxaQualificacaoFeitaEm NÃO setado
+//   4. history sem menção espontânea de orçamento
+// ════════════════════════════════════════════════════════════════════
+function enforceQualificacaoTaxaPrimeiro({ respostaFinal, currentLead, history, turnPolicy } = {}) {
+  if (turnPolicy?.podeFalarTaxa !== true) {
+    return { changed: false, reason: "podeFalarTaxa_false_ou_undefined" };
+  }
+
+  const REGEX_TAXA_NA_RESPOSTA = /(?:1[\.,]?990|taxa de ades[ãa]o|taxa de implanta[çc][ãa]o)/i;
+  if (!REGEX_TAXA_NA_RESPOSTA.test(respostaFinal || "")) {
+    return { changed: false, reason: "taxa_nao_apresentada" };
+  }
+
+  if (currentLead?.taxaQualificacaoFeitaEm) {
+    return { changed: false, reason: "lead_ja_qualificado" };
+  }
+
+  if (detectarOrcamentoEspontaneo(history)) {
+    return { changed: false, reason: "orcamento_espontaneo_detectado" };
+  }
+
+  const finding = {
+    tipo: "qualificacao_taxa_omitida",
+    prioridade: "critica",
+    orientacao: "Antes de apresentar R$1.990 (ou qualquer menção à taxa), faça 1 pergunta calibrada de orçamento. Use uma destas variantes: (1) 'Antes de te passar o valor, qual faixa de investimento faz sentido pra você nesse tipo de negócio?' (2) 'Antes de entrar no valor, queria entender: você já pensou em alguma faixa de investimento que faria sentido pra esse tipo de oportunidade?' (3) 'Faz sentido eu te perguntar antes: você tem alguma faixa de investimento em mente, ou prefere eu já te passar os números pra você avaliar?' NÃO mencione o valor da taxa nesta resposta — qualifique primeiro."
+  };
+
+  return { changed: true, reason: "qualificacao_taxa_omitida", finding };
+}
+
 function getLastAssistantMessage(history = []) {
   if (!Array.isArray(history)) return "";
 
@@ -22158,6 +22215,34 @@ function montarRespostaRespeitoTempo(leadOuFrom) {
 
   const vocativo = nomeOk ? `, ${nomeOk}` : "";
   return { texto: template.replace("{vocativo}", vocativo), templateIndex: idx };
+}
+
+// ════════════════════════════════════════════════════════════════════
+// F6.2-C1: Detector de menção espontânea de orçamento no histórico
+// Padrões EXIGEM contexto de investimento explícito pra evitar falso
+// positivo (não pega "tô vendendo carro por 10 mil", "tenho 5 mil de
+// dívida", "ganho 3 mil/mês", etc).
+// Usado por enforceQualificacaoTaxaPrimeiro (e pelo re-check em
+// revalidarCriticosEstruturais) como gate de bypass.
+// ════════════════════════════════════════════════════════════════════
+const REGEX_ORCAMENTO_ESPONTANEO = [
+  /(?:posso|consigo|tenho)\s+(?:uns?\s+)?[\d.,]+\s*(?:mil|reais|k|R\$)?\s+(?:pra|para)\s+(?:investir|começar|esse|isso|essa|neg[óo]cio)/i,
+  /(?:meu|minha)\s+(?:or[çc]amento|faixa|budget)\s+(?:[éeh]|de|seria|fica|t[áa]|esta)/i,
+  /invest(?:ir|imento)\s+(?:de\s+)?(?:at[ée]\s+)?(?:uns?\s+)?[\d.,]+\s*(?:mil|reais|k|R\$)/i,
+  /(?:dispon[íi]vel|sobra(?:m|nte)?)\s+(?:uns?\s+)?[\d.,]+\s*(?:mil|reais|k|R\$)?(?:\s+(?:pra|para)\s+(?:investir|começar|esse|isso|essa|neg[óo]cio))?/i,
+];
+
+function detectarOrcamentoEspontaneo(history) {
+  if (!Array.isArray(history)) return false;
+  for (const m of history) {
+    if (m?.role !== "user") continue;
+    const texto = m?.content || "";
+    if (!texto || typeof texto !== "string") continue;
+    for (const regex of REGEX_ORCAMENTO_ESPONTANEO) {
+      if (regex.test(texto)) return true;
+    }
+  }
+  return false;
 }
 
 /*
@@ -28662,6 +28747,20 @@ if (disciplinaFunil.changed) {
   });
 }
 
+// ════════════ F6.2-C1: Guard qualificação financeira antes da taxa ════════════
+const resultadoQualificacao = enforceQualificacaoTaxaPrimeiro({
+  respostaFinal,
+  currentLead,
+  history,
+  turnPolicy
+});
+
+if (resultadoQualificacao.changed && resultadoQualificacao.finding) {
+  sdrReviewFindings.push(resultadoQualificacao.finding);
+  console.log(`[F6.2-C1 qualificacao_taxa_omitida] user=${currentLead?.user || from || "?"} podeFalarTaxa=true taxaQualificacaoFeitaEm=null orcamentoEspontaneo=false`);
+}
+// ════════════ /F6.2-C1 ════════════
+
 const routeMixGuard = await runFinalRouteMixGuard({
   lead: currentLead || {},
   leadText: text,
@@ -28892,7 +28991,8 @@ if (sdrReviewFindings.length > 0) {
       commercialRouteDecision,
       taxPhaseDecision: typeof taxPhaseDecision !== "undefined" ? taxPhaseDecision : null,
       podeIniciarColeta,
-      coletaLiberadaPorTaxaAceita
+      coletaLiberadaPorTaxaAceita,
+      turnPolicy
     });
 
     findingsParaProximaTentativa = criticosRemanescentes;
@@ -29535,6 +29635,17 @@ history.push({
   content: respostaFinal,
   createdAt: new Date()
 });
+
+// F6.2-C1: marca qualificação feita se a resposta enviada contém pergunta de orçamento
+const REGEX_QUALIFICACAO_FEITA = /(?:qual\s+faixa\s+de\s+investimento|faixa\s+de\s+investimento\s+(?:faz|faria)|or[çc]amento\s+(?:em\s+mente|que\s+(?:faz|faria))|alguma\s+faixa\s+de\s+investimento)/i;
+if (REGEX_QUALIFICACAO_FEITA.test(respostaFinal || "") && !currentLead?.taxaQualificacaoFeitaEm) {
+  try {
+    await saveLeadProfile(from, { taxaQualificacaoFeitaEm: new Date() });
+    console.log(`[F6.2-C1 qualificacao_feita] user=${from}`);
+  } catch (e) {
+    console.error(`[F6.2-C1 erro_marcar_qualificacao] user=${from} erro=${e.message}`);
+  }
+}
 
 const leadAtualizadoParaAgentes = await loadLeadProfile(from);
 auditLog("currentLead DEPOIS da resposta da SDR", {
