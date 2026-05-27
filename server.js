@@ -9679,16 +9679,24 @@ NÃO:
 🧭 FASE 2 — ESCLARECIMENTO (novo)
 ━━━━━━━━━━━━━━━━━━━━━━━
 
-Explicar de forma simples:
+PRIORIDADE: qualificar ANTES de explicar.
 
-"É uma parceria comercial onde você vende produtos direto da indústria, com suporte."
+Estrutura da resposta:
+1) Frase curta com a essência:
+   "É uma parceria comercial onde você vende produtos direto da indústria, com suporte."
+2) Pergunta de qualificação calibrada (escolher 1 conforme contexto):
+   "me conta rapidinho: você já atua com piscina ou tá pensando em começar agora?"
+   "antes de eu te explicar: o que mais te chamou atenção na proposta?"
+   "pra eu te orientar do jeito certo: você já vende algum produto químico hoje?"
+
+PROIBIDO terminar com pergunta genérica:
+- "Quer entender como funciona na prática?" ❌
+- "Ficou alguma dúvida?" ❌
+- "Tem algum ponto que gostaria de saber?" ❌
 
 IMPORTANTE:
 - Não despejar informação
-- Fazer pergunta leve
-
-Exemplo:
-"Quer entender como funciona na prática?"
+- Pergunta calibrada (como/o que/qual), não fechada
 
 Se pedir material:
 oferecer → não enviar sem permissão
@@ -16308,6 +16316,41 @@ function enforceQualificacaoTaxaPrimeiro({ respostaFinal, currentLead, history, 
   };
 
   return { changed: true, reason: "qualificacao_taxa_omitida", finding };
+}
+
+// F7.2a — Guard de qualificação inicial (Bug A).
+// Detecta pergunta genérica proibida na 1ª resposta da SDR (gate: assistantMsgs===0).
+// Tipo descartável: se regen falhar, é melhoria de condução (não perigo) — manda mesmo assim.
+function enforceQualificacaoInicial({ respostaFinal, history } = {}) {
+  const assistantMsgs = (history || []).filter(m => m?.role === "assistant").length;
+  if (assistantMsgs !== 0) {
+    return { changed: false, reason: "not_first_response" };
+  }
+
+  const resposta = (respostaFinal || "").toLowerCase();
+  const PROIBIDAS = [
+    /quer entender como funciona( na pr[áa]tica)?\??/i,
+    /ficou alguma d[úu]vida/i,
+    /tem (mais|alguma) (perguntas?|d[úu]vidas?)/i,
+    /alguma outra coisa/i,
+    /tem algum ponto que.*(saber|discutir)/i,
+    /alguma d[úu]vida ou ponto/i
+  ];
+
+  const padraoDetectado = PROIBIDAS.find(re => re.test(resposta));
+  if (!padraoDetectado) {
+    return { changed: false, reason: "qualificacao_ok" };
+  }
+
+  return {
+    changed: true,
+    reason: "qualificacao_inicial_omitida",
+    finding: {
+      tipo: "qualificacao_inicial_omitida",
+      prioridade: "critica",
+      orientacao: "Esta é a primeira resposta ao lead. PROIBIDO terminar com pergunta genérica ('quer entender', 'ficou dúvida', 'tem dúvida', 'tem algum ponto'). OBRIGATÓRIO terminar com pergunta de QUALIFICAÇÃO calibrada (você já atua com piscina? o que mais te chamou atenção? você já vende algum produto químico hoje?). Aplicar REGRA 2 SPIN do Pré-SDR."
+    }
+  };
 }
 
 function getLastAssistantMessage(history = []) {
@@ -28952,6 +28995,14 @@ if (resultadoQualificacao.changed && resultadoQualificacao.finding) {
 }
 // ════════════ /F6.2-C1 ════════════
 
+// ════════════ F7.2a: Guard qualificação inicial (Bug A) — só na 1ª resposta ════════════
+const resultadoQualifInicial = enforceQualificacaoInicial({ respostaFinal, history });
+if (resultadoQualifInicial.changed && resultadoQualifInicial.finding) {
+  sdrReviewFindings.push(resultadoQualifInicial.finding);
+  console.log(`[F7.2a qualificacao_inicial_omitida] from=${from}`);
+}
+// ════════════ /F7.2a ════════════
+
 const routeMixGuard = await runFinalRouteMixGuard({
   lead: currentLead || {},
   leadText: text,
@@ -29231,7 +29282,7 @@ if (sdrReviewFindings.length > 0) {
   // disciplina_funil é uma melhoria de cadência, não um perigo real ao lead.
   // Não justifica handoff humano — a última regeneração (mesmo imperfeita) é melhor.
   // Outros tipos críticos (falsa promessa, pré-análise prematura, etc.) continuam gatilhando handoff.
-  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil");
+  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida");
 
   if (criticosQueExigemHandoff.length > 0) {
     respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
@@ -29245,9 +29296,9 @@ if (sdrReviewFindings.length > 0) {
     try {
       await auditSystemEvent("regeneracao_sdr_soft_critico_descartado", "low", from, {
         tiposIgnorados: criticosRemanescentes.map(f => f.tipo),
-        intencional: criticosRemanescentes.every(f => (f?.tipo || f) === "disciplina_funil"),
-        motivoDescarte: criticosRemanescentes.every(f => (f?.tipo || f) === "disciplina_funil")
-          ? "disciplina_funil_e_melhoria_de_cadencia_nao_perigo"
+        intencional: criticosRemanescentes.every(f => ["disciplina_funil", "qualificacao_inicial_omitida"].includes(f?.tipo || f)),
+        motivoDescarte: criticosRemanescentes.every(f => ["disciplina_funil", "qualificacao_inicial_omitida"].includes(f?.tipo || f))
+          ? "disciplina_funil_qualificacao_inicial_melhoria_conducao_nao_perigo"
           : "outro_motivo_investigar",
         respostaEnviadaLen: typeof respostaFinal === "string" ? respostaFinal.length : 0,
         respostaEnviadaTrecho: typeof respostaFinal === "string" ? respostaFinal.slice(0, 200) : null
