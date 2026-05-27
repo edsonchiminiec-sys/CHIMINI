@@ -21580,6 +21580,17 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
       "  • MODO 3 (micro-compromisso Cialdini): 'Posso te enviar [algo específico]?' / 'Topa fazer 1 pergunta breve?'",
       "  • MODO 4 (observação contextual): 'Lembrei de algo que pode te interessar...' / 'Surgiu informação nova que talvez ajude...'",
       "",
+      // ════════ BLOCO F6.2-C3 — CONTEXTO F6 SILENTE (pós-taxa) ════════
+      ...(isF6Silente(history) ? [
+        "🎯 CONTEXTO F6 SILENTE (F6.2-C3):",
+        "Lead já recebeu apresentação da taxa de R$1.990 e silenciou ou respondeu minimalmente. NÃO repita pitch genérico ('ficou alguma dúvida sobre o comodato?'). Use ESTRATÉGIA ESCALONADA conforme o step:",
+        "Step 1 → Pergunta calibrada (Voss): 'dos pontos que conversamos, o que mais pesou pra você refletir?'",
+        "Step 2 → Reframing ROI: lote R$5.000 em PV cobre taxa R$1.990 nas primeiras vendas",
+        "Step 3 → Prova social: parceiros recuperam investimento no primeiro mês",
+        "Step 4 → Ancoragem parcelamento: 10x R$199 sem comprometer fluxo",
+        "Mensagem CURTA (2-3 frases), tom consultivo, sem pressão. NÃO repita estrutura entre cadências.",
+        "",
+      ] : []),
       "ORIENTAÇÃO DO CONSULTOR PRÉ-SDR:",
       `Estratégia: ${preSdrResult?.estrategiaRecomendada || "manter_nutricao"}`,
       `Próxima ação: ${preSdrResult?.proximaMelhorAcao || "-"}`,
@@ -21887,6 +21898,12 @@ const FOLLOWUP_STEP_MESSAGES = {
     3: "uma dúvida que costuma surgir aqui é se o pré-cadastro compromete em algo. Não compromete — é só uma etapa de avaliação de perfil. Quer seguir por aí?",
     4: "se quiser dar o próximo passo agora, é simples: começamos pelo pré-cadastro. Posso te orientar?"
   },
+  taxaSilenciosa: {
+    1: "vi que conversamos sobre o investimento e você precisou de um tempo pra avaliar — totalmente compreensível. Posso te perguntar: dos pontos que conversamos, o que mais pesou pra você refletir?",
+    2: "pensando no que conversamos, queria reforçar um ponto: o lote inicial em comodato representa mais de R$ 5.000 em preço de venda — ou seja, a taxa de adesão se recupera nas primeiras vendas. Como você enxerga essa relação?",
+    3: "parceiros que entraram com essa estrutura geralmente fazem as primeiras vendas nos primeiros dias e já no primeiro mês já recuperam o investimento. Faz sentido pra você esse tipo de retorno?",
+    4: "se o que estiver pesando for o momento financeiro, vale lembrar que a taxa pode ser parcelada em até 10x de R$ 199 — sem comprometer fluxo. Isso muda algo na sua análise?"
+  },
   faltaResponsabilidades: {
     1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
     2: "sobre a atuação como Parceiro Homologado: a IQG estrutura cada etapa pra que você atue com clareza, mesmo sem experiência prévia. Faz sentido pra você esse formato?",
@@ -21991,6 +22008,14 @@ function getSafeStageFollowupMessage(lead = {}, step = 1, history = []) {
   */
   if (etapas.compromisso === true) {
     return `${prefixo}${pickStepMessage("compromisso", step)}`;
+  }
+
+  // F6.2-C3: rotear pra fase taxaSilenciosa se lead silenciou pós-taxa.
+  // Posicionado ANTES da Regra 4 (taxaNaoAlinhada) — é versão mais específica.
+  // APÓS Regra 1/2/3 — não sequestra leads prontos pra coleta, afiliado,
+  // ambos ou comprometidos.
+  if (isF6Silente(history)) {
+    return `${prefixo}${pickStepMessage("taxaSilenciosa", step)}`;
   }
 
   /*
@@ -22242,6 +22267,47 @@ function detectarOrcamentoEspontaneo(history) {
       if (regex.test(texto)) return true;
     }
   }
+  return false;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// F6.2-C3: Detector de silêncio pós-taxa apresentada (history-based)
+// Não depende de taxaApresentadaEm (campo fantasma intencionalmente não
+// setado — vide proteção contra bug pré-análise antecipada).
+// Detecta via varredura do histórico: SDR mencionou taxa (R$1.990 /
+// taxa de adesão / taxa de implantação) + lead silenciou ou respondeu
+// minimalmente após.
+// ════════════════════════════════════════════════════════════════════
+function isF6Silente(history) {
+  if (!Array.isArray(history)) return false;
+
+  const RX_TAXA = /(?:1[\.,]?990|taxa de ades[ãa]o|taxa de implanta[çc][ãa]o)/i;
+
+  // Mensagens da SDR que apresentaram taxa
+  const msgsTaxa = history.filter(m =>
+    m?.role === "assistant" && RX_TAXA.test(m?.content || "")
+  );
+  if (msgsTaxa.length === 0) return false; // taxa nunca apresentada
+
+  const ultimaTaxaEm = new Date(msgsTaxa[msgsTaxa.length - 1].createdAt);
+  if (isNaN(ultimaTaxaEm.getTime())) return false;
+
+  // Última msg do lead
+  const ultimaMsgLead = [...history].reverse().find(m => m?.role === "user");
+  if (!ultimaMsgLead) return true; // recebeu taxa, nunca respondeu
+
+  const ultimaMsgEm = new Date(ultimaMsgLead.createdAt);
+  if (isNaN(ultimaMsgEm.getTime())) return false;
+
+  // Silenciou após apresentação da taxa
+  if (ultimaMsgEm < ultimaTaxaEm) return true;
+
+  // Última msg foi minimalista após a taxa
+  const textoMin = (ultimaMsgLead.content || "").trim().toLowerCase();
+  if (textoMin.length <= 10 && /^(ok|sim|t[áa]|tah|blz|👍|🙏|entendi|claro)/.test(textoMin)) {
+    return true;
+  }
+
   return false;
 }
 
