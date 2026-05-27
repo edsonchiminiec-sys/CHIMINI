@@ -22214,9 +22214,25 @@ const TEMPLATES_RESPEITO_TEMPO = [
   "Combinado{vocativo}. Respeito totalmente o seu tempo. Quando se sentir pronto, me chama por aqui.",
 ];
 
-function montarRespostaRespeitoTempo(leadOuFrom) {
-  const idx = Math.floor(Math.random() * TEMPLATES_RESPEITO_TEMPO.length);
-  const template = TEMPLATES_RESPEITO_TEMPO[idx];
+// F6.2-C4: templates específicos quando lead JÁ recebeu apresentação da taxa
+// (taxaJaApresentada=true via historyOrLeadIndicatesTaxExplained).
+// Ancoram o adiamento no contexto de decisão de investimento.
+// Afiliado mencionado em APENAS 1 de 3 (33%) pra não down-sellar prematuramente
+// — a escalada do afiliado fica no F6.2-C3 (step 5 do break-up).
+const TEMPLATES_RESPEITO_TEMPO_F6 = [
+  "Claro{vocativo}! Investimento é decisão importante mesmo — vale o tempo pra analisar com calma. Quando quiser revisitar, é só me chamar.",
+  "Tranquilo{vocativo}. Faz todo sentido analisar com calma uma decisão de investimento. Estarei por aqui quando quiser conversar.",
+  "Sem problema{vocativo}. Pensa com calma — investimento merece análise. Se mudar de ideia ou quiser explorar uma alternativa sem custo (o programa de afiliados), é só me chamar.",
+];
+
+function montarRespostaRespeitoTempo(leadOuFrom, history, currentLead) {
+  // F6.2-C4: se a taxa já foi apresentada, usar templates específicos F6
+  // (ancoram no contexto de decisão de investimento). Senão, pool genérico.
+  const taxaJaApresentada = historyOrLeadIndicatesTaxExplained(currentLead, history);
+  const templatesPool = taxaJaApresentada ? TEMPLATES_RESPEITO_TEMPO_F6 : TEMPLATES_RESPEITO_TEMPO;
+
+  const idx = Math.floor(Math.random() * templatesPool.length);
+  const template = templatesPool[idx];
 
   // F6.2-A: usar getFirstName + isInvalidLooseNameCandidate (globais)
   // em vez de isReliableName (que é local ao buildBreakupAffiliateMessage)
@@ -22239,7 +22255,11 @@ function montarRespostaRespeitoTempo(leadOuFrom) {
     : null;
 
   const vocativo = nomeOk ? `, ${nomeOk}` : "";
-  return { texto: template.replace("{vocativo}", vocativo), templateIndex: idx };
+  return {
+    texto: template.replace("{vocativo}", vocativo),
+    templateIndex: idx,
+    tipo: taxaJaApresentada ? "f6_especifico" : "generico"
+  };
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -25802,9 +25822,9 @@ if (devePularGptsNaColeta) {
   const pedidoTempoLive = detectarPedidoDeTempoLive(text);
 
   if (pedidoTempoLive.detectado) {
-    const { texto: respostaRespeitoTempo, templateIndex } = montarRespostaRespeitoTempo(currentLead?.nome || from);
+    const { texto: respostaRespeitoTempo, templateIndex, tipo } = montarRespostaRespeitoTempo(currentLead?.nome || from, history, currentLead);
 
-    console.log(`[F6.2-A pedido_tempo_detectado] user=${from} padrao=${pedidoTempoLive.padrao} trecho="${pedidoTempoLive.trecho}" template=${templateIndex}`);
+    console.log(`[F6.2-A pedido_tempo_detectado] user=${from} padrao=${pedidoTempoLive.padrao} trecho="${pedidoTempoLive.trecho}" template=${templateIndex} tipo=${tipo}`);
 
     // Modelo "adiar": só adia 72h (sem cadenciaPausadaPorCliente=true).
     const proximo72h = new Date(Date.now() + 72 * 60 * 60 * 1000);
