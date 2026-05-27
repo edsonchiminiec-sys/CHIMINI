@@ -22331,6 +22331,50 @@ function isF6Silente(history) {
   return false;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// F6.2-B: Detector de engajamento mínimo antes de break-up afiliado
+// Evita break-up prematuro em leads que mal conversaram.
+//
+// BYPASS: se taxa já apresentada (historyOrLeadIndicatesTaxExplained),
+// engajamento é AUTOMÁTICO — leads F6 silentes (F6.2-C3) devem fluir
+// normalmente pro break-up/afiliado.
+//
+// CRITÉRIOS (todos AND, após BYPASS):
+//   1. Min 3 mensagens substantivas do lead (>10 chars cada)
+//   2. Fase NÃO está em ["inicio", "esclarecimento", ""] (denylist)
+//   3. Min 24h desde primeira interação (history[0] = outreach proxy)
+// ════════════════════════════════════════════════════════════════════
+function temEngajamentoMinimo(lead, history) {
+  if (!Array.isArray(history)) return false;
+
+  // BYPASS: se taxa já apresentada, engajamento já confirmado
+  if (typeof historyOrLeadIndicatesTaxExplained === "function"
+      && historyOrLeadIndicatesTaxExplained(lead, history)) {
+    return true;
+  }
+
+  // Critério 1: min 3 mensagens substantivas
+  const msgsLead = history.filter(m =>
+    m?.role === "user" &&
+    typeof m?.content === "string" &&
+    m.content.trim().length > 10
+  );
+  if (msgsLead.length < 3) return false;
+
+  // Critério 2: DENYLIST de fases iniciais
+  const faseAtual = lead?.faseFunil || "";
+  const fasesIniciais = ["inicio", "esclarecimento", ""];
+  if (fasesIniciais.includes(faseAtual)) return false;
+
+  // Critério 3: min 24h desde primeira interação
+  const primeiraMsg = history[0];
+  if (!primeiraMsg?.createdAt) return false;
+  const horasDesde = (Date.now() - new Date(primeiraMsg.createdAt).getTime()) / (1000 * 60 * 60);
+  if (horasDesde < 24) return false;
+
+  return true;
+}
+
 /*
   ===========================================================
   sendAutomaticFollowupIfStillValid (V2 — LOCK + AUDIT)
@@ -22543,6 +22587,36 @@ async function sendAutomaticFollowupIfStillValid({
   let messageToSend;
 
   if ((followup.step || 0) === 5) {
+    // F6.2-B: gate de engajamento mínimo antes de break-up afiliado.
+    // Se lead mal engajou (e ainda não foi adiado), adiar +72h em vez
+    // de queimar com break-up. Limite 1 adiamento — depois disso o break-up
+    // dispara mesmo sem engajamento (não trava lead pra sempre).
+    // BYPASS de leads F6 (taxa apresentada) está dentro de temEngajamentoMinimo.
+    if (!temEngajamentoMinimo(latestLead, latestHistory)
+        && (latestLead?.engajamentoMinimoAdiamentos || 0) < 1) {
+
+      const msgsLeadCount = (latestHistory || []).filter(m =>
+        m?.role === "user" &&
+        typeof m?.content === "string" &&
+        m.content.trim().length > 10
+      ).length;
+      const horasDesde = latestHistory?.[0]?.createdAt
+        ? Math.round((Date.now() - new Date(latestHistory[0].createdAt).getTime()) / (1000 * 60 * 60))
+        : 0;
+
+      await saveLeadProfile(from, {
+        proximoFollowupEm: new Date(Date.now() + 72 * 60 * 60 * 1000),
+        cadenciaPausadaMotivo: "engajamento_minimo_insuficiente",
+        engajamentoMinimoAdiamentos: (latestLead?.engajamentoMinimoAdiamentos || 0) + 1,
+        followupLockEm: null
+      });
+
+      console.log(`[F6.2-B engajamento_minimo] user=${from} engajamento=insuficiente msgsLead=${msgsLeadCount} fase=${latestLead?.faseFunil || ""} horasDesde=${horasDesde} acao=adiar adiamentos=${(latestLead?.engajamentoMinimoAdiamentos || 0) + 1}`);
+      return false;
+    }
+
+    console.log(`[F6.2-B engajamento_minimo] user=${from} engajamento=suficiente acao=break-up`);
+
     messageToSend = buildBreakupAffiliateMessage(latestLead, "step5");
     isBreakupStep5 = true;
     console.log(`[F5.5e] Step 5 bypass — usando break-up template para ${from}`);
