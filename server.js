@@ -21403,7 +21403,7 @@ Para conhecer e se cadastrar: https://minhaiqg.com.br/`;
 
   const blocoDespedida = `
 
-Se mais pra frente fizer sentido conversarmos sobre o Programa Parceiro Homologado, é só me chamar por aqui — fico à disposição.
+Se mais pra frente fizer sentido conversarmos sobre o Programa Parceiro Homologado, é só me chamar por aqui.
 
 Sucesso na sua jornada! 🙏`;
 
@@ -21500,7 +21500,7 @@ Qualquer coisa, é só me chamar por aqui.`;
 
   return `${prefixo}vou encerrar por aqui por enquanto 😊
 
-Fico à disposição caso queira retomar depois ou tirar alguma dúvida sobre o Programa Parceiro Homologado IQG.
+Se mais pra frente fizer sentido retomar essa conversa sobre o Programa Parceiro Homologado IQG, é só me chamar por aqui.
 
 E se neste momento você preferir começar de uma forma mais simples, sem estoque físico e divulgando por link, também existe o Programa de Afiliados IQG.
 
@@ -22908,6 +22908,7 @@ async function sendAutomaticFollowupIfStillValid({
     não saber). Por isso loga audit em sucesso/falha.
   */
   try {
+    messageToSend = enforceNoBordaoFechamento(messageToSend);  // F7.5
     await sendWhatsAppMessage(from, messageToSend);
   } catch (sendError) {
     console.error("Erro ao enviar follow-up no WhatsApp:", sendError.message);
@@ -26270,7 +26271,7 @@ if (devePularGptsNaColeta) {
               "NÃO iniciar coleta de dados. NÃO pedir nome, CPF, telefone, cidade ou estado.",
               "NÃO retomar pré-análise. NÃO repetir taxa, benefícios, estoque ou responsabilidades.",
               "Todas as outras orientações sobre 'iniciar coleta' ou 'pedir dados' ficam SUSPENSAS até o recontato acontecer.",
-              "A resposta deve ser curta, cordial e em português: confirmar que a conversa fica para o horário combinado e se colocar à disposição.",
+              "A resposta deve ser curta, cordial e em português, no estilo do exemplo abaixo: confirmar o horário combinado e oferecer disponibilidade pontual ('é só me chamar antes disso') — SEM usar 'fico à disposição', 'estou à disposição' ou variantes.",
               "Exemplo de tom: \"Combinado! Te chamo no horário que combinamos. Qualquer coisa antes disso, é só me chamar. 😊\""
             ].join("\n")
           });
@@ -28690,6 +28691,44 @@ if (
   }
 }
      
+// F7.5 — Substituidor programático de bordão "fico à disposição".
+// Enforcement HARD (determinístico, antes do envio). Cobre 6 variantes
+// principais (fico/estou/ficamos/sigo/seguimos/estamos). Idempotente:
+// msgs já limpas passam intactas. Detecta FRASE COMPLETA (até pontuação)
+// para não quebrar gramática. Variação rotativa de substituição evita
+// criar novo bordão. NÃO substitui o detector @28704 (badPatterns soft);
+// é a rede HARD complementar.
+const F75_BORDAO_FECHAMENTO_REGEX =
+  /(?:^|[\s,—.;])(?:fico|estou|ficamos|sigo|seguimos|estamos)\s+[àa]\s+disposi[çc][ãa]o[^.!?\n]*[.!?]?/gi;
+
+const F75_SUBSTITUTOS = [
+  "Se quiser, é só me chamar por aqui.",
+  "Qualquer coisa, me chama por aqui.",
+  "Se fizer sentido, é só me chamar.",
+  "É só me chamar por aqui."
+];
+
+// Counter módulo-level pra variação ROTATIVA ENTRE chamadas separadas
+// (sem isso, cada call reinicia em 0 e sempre usa F75_SUBSTITUTOS[0] —
+// cria novo bordão. Counter global garante ≥3 variantes em 4 disparos
+// consecutivos. Sem persistência: reseta a cada restart do server, OK.)
+let F75_SUBSTITUTO_COUNTER = 0;
+
+function enforceNoBordaoFechamento(message) {
+  if (!message || typeof message !== "string") return message;
+  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
+  if (!F75_BORDAO_FECHAMENTO_REGEX.test(message)) return message;
+  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
+  return message.replace(F75_BORDAO_FECHAMENTO_REGEX, (match) => {
+    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+    const substituto = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+    F75_SUBSTITUTO_COUNTER++;
+    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+      ? `${leadingSep} ${substituto}`
+      : ` ${substituto}`;
+  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+}
+
 // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
@@ -29976,6 +30015,7 @@ if (
 }
      
 // envia resposta
+respostaFinal = enforceNoBordaoFechamento(respostaFinal);  // F7.5
 await sendWhatsAppMessage(from, respostaFinal);
      
 history.push({
