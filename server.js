@@ -9818,6 +9818,12 @@ Depois do envio, conduzir com pergunta:
 
 "Quando você olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?"
 
+FECHE COM CLARITY-CHECK (confirmação de entendimento):
+Após apresentar os benefícios, confirme o entendimento com pergunta ESPECÍFICA ao tema:
+- "ficou claro como funciona o suporte e a margem?"
+- "fez sentido essa parte dos benefícios?"
+Esta é a forma CORRETA de fechar — substitui qualquer "ficou alguma dúvida?" genérico (proibido pela REGRA 3). O clarity-check é específico e calibrado ao que foi explicado.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 ❌ ERROS PROIBIDOS
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -9973,6 +9979,12 @@ Exemplo ERRADO (nunca responder assim):
 "Você não paga pelo envio da reposição do estoque."
 "A IQG se responsabiliza pelo envio das reposições."
 "Você não precisará pagar o frete do envio das mercadorias, tanto no recebimento do lote inicial quanto na reposição."
+
+FECHE COM CLARITY-CHECK (confirmação de entendimento):
+Após explicar o comodato/lote inicial, confirme o entendimento com pergunta ESPECÍFICA ao tema:
+- "ficou claro como funciona o comodato?"
+- "fez sentido essa lógica do estoque inicial?"
+Esta é a forma CORRETA de fechar — substitui qualquer "ficou alguma dúvida?" genérico (proibido pela REGRA 3).
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 5 — COMPROMETIMENTO (morno)
@@ -17166,6 +17178,13 @@ function iqgLeadHasBlockingDoubtOrObjection(text = "", semanticIntent = null) {
   retornava true sem nenhum sanity check textual, cascateando em markStep
   para todas as etapas explicadas pela SDR (Ponto 7 do mapa de etapas).
 */
+
+// F7.4b — clarity-check: SDR pergunta "ficou claro sobre X?" → afirmação marca X.
+// Distinta da OFFER_TRIGGER_REGEX (F7.4a): clarity-check é verbo passado/presente sobre
+// o que foi EXPLICADO; offer-next é verbo futuro de oferta do PRÓXIMO tópico.
+const CLARITY_CHECK_REGEX = /\b(ficou claro|fez sentido|t[áa] claro|est[áa] claro|deu pra entender|faz sentido)\b\s*[?.!]*/i;
+const AFFIRMATIVE_ACK_REGEX = /^(sim|ok|certo|beleza|blz|show|perfeito|fechado|topo|claro|isso|aceito|concordo|entendi|pode seguir|bora|vamos|partiu|t[óo] dentro)\b/i;
+
 const STRONG_UNDERSTANDING_TEXT_ANCHORS = [
   // verbos e expressões de compreensão
   "entendi", "entendido", "compreendi",
@@ -17496,6 +17515,22 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
         criterio: evidence.criterio || "lead_trouxe_duvida_ou_objecao_sem_entendimento_explicito"
       }
     };
+  }
+
+  /*
+    Caso F7.4b — Clarity-check: SDR perguntou "ficou claro?" e lead afirmou →
+    marca etapa(s) explicada(s) neste turno. Investimento NÃO entra (mantém
+    iqgLeadConfirmedInvestmentUnderstanding — proteção contra taxa precoce).
+  */
+  const lastSdrIsClarityCheck = CLARITY_CHECK_REGEX.test(lastAssistantText || "");
+  const leadIsAffirmativeAck = AFFIRMATIVE_ACK_REGEX.test(String(leadText || "").trim())
+    && !RX_OBJECAO_OU_RESSALVA.test(String(leadText || ""));
+  if (lastSdrIsClarityCheck && leadIsAffirmativeAck) {
+    for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
+      if (explainedPreviously[step] && !currentEtapas[step]) {
+        markStep(step, "clarity_check_confirmado_F7.4b");
+      }
+    }
   }
 
   /*
