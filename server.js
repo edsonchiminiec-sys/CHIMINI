@@ -17387,14 +17387,21 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
     lastSdrText.includes("dedicacao") ||
     lastSdrText.includes("dedicação");
 
-  const lastReplyIsOfferToExplain =
-    /\b(quer saber|quer que eu|posso te explicar|posso explicar|vou te explicar|gostaria de saber|quer entender)\b/i.test(lastAssistantText || "");
+  // F7.4a — slice-from-trigger: extrai a regex de oferta como constante e isola
+  // o SEGMENTO de oferta (do trigger em diante) para o reset. Assim a parte
+  // declarativa da mesma mensagem da SDR não tem seus tópicos resetados —
+  // preserva explicações reais quando a SDR explica + oferece próximo tema.
+  const OFFER_TRIGGER_REGEX = /\b(quer saber|quer que eu|posso te explicar|posso explicar|vou te explicar|gostaria de saber|quer entender)\b/i;
+  const lastReplyIsOfferToExplain = OFFER_TRIGGER_REGEX.test(lastAssistantText || "");
 
   if (lastReplyIsOfferToExplain) {
-    // A SDR ofereceu explicar — os temas mencionados nessa oferta
+    // A SDR ofereceu explicar — os temas mencionados NO SEGMENTO DA OFERTA
     // NÃO devem ser marcados como concluídos. "Sim" do lead = "quero ouvir".
-    // Desmarca as detecções para os temas que foram só oferecidos, não explicados.
-    const offerText = String(lastAssistantText || "").toLowerCase();
+    // F7.4a: slice-from-trigger preserva tópicos da parte declarativa.
+    const offerTriggerMatch = String(lastAssistantText || "").match(OFFER_TRIGGER_REGEX);
+    const offerText = offerTriggerMatch
+      ? String(lastAssistantText).slice(offerTriggerMatch.index).toLowerCase()
+      : "";
 
     if (/estoque|comodato|lote/.test(offerText) && !currentEtapas.estoque) {
       explainedPreviously.estoque = false;
