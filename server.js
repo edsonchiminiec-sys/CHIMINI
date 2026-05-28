@@ -21666,7 +21666,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
       `É uma mensagem de retomada/reengajamento porque o lead parou de responder.`,
       `O lead está inativo. A SDR deve enviar UMA mensagem curta e consultiva para reengajar.`,
       step === 1
-        ? `📌 IMPORTANTE — INCLUIR NO FINAL DA MENSAGEM:
+        ? `IMPORTANTE — INCLUIR NO FINAL DA MENSAGEM:
      Adicione no FINAL da mensagem (sem alterar o conteúdo principal) este aviso de opt-out, exatamente como aparece abaixo, em uma nova linha após o conteúdo principal:
 
      ---
@@ -28789,7 +28789,27 @@ if (isBadResponse(respostaFinal)) {
     respostaFinal
   });
 }
-     
+
+// F8.0b — Camada B: defesa contra resposta SDR vazia/marker solto
+// Causa raiz era @21669 (instrução "📌 IMPORTANTE..." que GPT às
+// vezes devolvia só o emoji). Mesmo após Camada A, mantém detector
+// pra caso GPT gere msg <10 chars por outro motivo.
+if (typeof respostaFinal === "string" && respostaFinal.trim().length < 10) {
+  console.warn("⚠️ [F8.0b] Resposta SDR suspeita (len<10):", {
+    from,
+    resp: respostaFinal,
+    lenTrim: respostaFinal.trim().length
+  });
+  sdrReviewFindings.push({
+    tipo: "resposta_vazia_ou_emoji_solto",
+    prioridade: "critica",
+    orientacao:
+      "A resposta gerada é vazia, contém apenas emoji ou é curtíssima demais. "
+      + "Regenerar com contexto EXPLÍCITO da última mensagem do lead, garantindo "
+      + "resposta substantiva (>30 caracteres) que responda diretamente ao que foi perguntado."
+  });
+}
+
 // 🚫 BLOQUEIO SEGURO: só falar "material já enviado" se o LEAD pediu material de novo
 const leadPediuMaterialAgora = hasExplicitFileRequest(text);
 
@@ -29428,7 +29448,7 @@ if (sdrReviewFindings.length > 0) {
   // disciplina_funil é uma melhoria de cadência, não um perigo real ao lead.
   // Não justifica handoff humano — a última regeneração (mesmo imperfeita) é melhor.
   // Outros tipos críticos (falsa promessa, pré-análise prematura, etc.) continuam gatilhando handoff.
-  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida");
+  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida" && f.tipo !== "resposta_vazia_ou_emoji_solto");
 
   if (criticosQueExigemHandoff.length > 0) {
     respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
