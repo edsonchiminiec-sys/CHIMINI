@@ -2491,7 +2491,7 @@ Orientação correta:
 Lead:
 "Não"
 
-Se a SDR perguntou "ficou alguma dúvida?":
+Se a SDR perguntou "ficou claro?", "fez sentido?" ou "ficou alguma dúvida?":
 "Interpretar como: não tenho dúvida. Não tratar como rejeição. Conduzir para o próximo passo."
 
 Se a SDR perguntou "os dados estão corretos?":
@@ -9816,7 +9816,7 @@ Após explicar os benefícios, SEMPRE envie o folder:
 
 Depois do envio, conduzir com pergunta:
 
-"Quando você olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?"
+"Quando você olhar, me diz: ficou claro como funcionam os benefícios e o suporte, ou tem algum ponto que queira que eu reforce?"
 
 FECHE COM CLARITY-CHECK (confirmação de entendimento):
 Após apresentar os benefícios, confirme o entendimento com pergunta ESPECÍFICA ao tema:
@@ -15905,7 +15905,7 @@ Você não começa sozinho: a IQG oferece suporte, materiais, treinamento e orie
 
 Pra te ajudar a visualizar melhor, vou te enviar um material explicativo bem direto.
 
-Quando olhar, me diz: fez sentido pra você como funciona ou ficou alguma dúvida?`,
+Quando olhar, me conta: ficou claro como funcionam os benefícios e o suporte da IQG, ou tem algum ponto que queira que eu reforce?`,
       fileKey: "folder"
     };
   }
@@ -17521,11 +17521,19 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
     Caso F7.4b — Clarity-check: SDR perguntou "ficou claro?" e lead afirmou →
     marca etapa(s) explicada(s) neste turno. Investimento NÃO entra (mantém
     iqgLeadConfirmedInvestmentUnderstanding — proteção contra taxa precoce).
+    F7.6 — guarda lastIsCadencia: cadência só MENCIONA tema (não EXPLICA);
+    se C4 disparasse pós-cadência, marcaria etapa via menção → catapulta o
+    funil indevidamente. Cobre as 3 variantes reais de origem cadência:
+    followup_automatico / followup_breakup_saida_explicita /
+    followup_breakup_purga_retroativa (startsWith "followup_").
   */
+  const lastAssistantObj = [...(history || [])].reverse().find(m => m?.role === "assistant");
+  const lastIsCadencia = String(lastAssistantObj?.origem || "").startsWith("followup_")
+    || (lastAssistantObj?.followupStep && lastAssistantObj.followupStep > 0);
   const lastSdrIsClarityCheck = CLARITY_CHECK_REGEX.test(lastAssistantText || "");
   const leadIsAffirmativeAck = AFFIRMATIVE_ACK_REGEX.test(String(leadText || "").trim())
     && !RX_OBJECAO_OU_RESSALVA.test(String(leadText || ""));
-  if (lastSdrIsClarityCheck && leadIsAffirmativeAck) {
+  if (lastSdrIsClarityCheck && leadIsAffirmativeAck && !lastIsCadencia) {
     for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
       if (explainedPreviously[step] && !currentEtapas[step]) {
         markStep(step, "clarity_check_confirmado_F7.4b");
@@ -21678,9 +21686,9 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
       "- NÃO falar de temas que ainda não foram abordados",
       "- NÃO pedir dados pessoais (nome, CPF, telefone)",
       "- Retomar a conversa de onde parou, baseado no histórico",
-      "- Se o lead já viu benefícios, perguntar sobre dúvidas dos benefícios",
-      "- Se o lead já viu estoque, perguntar se fez sentido o comodato",
-      "- Se o lead já viu responsabilidades, perguntar se ficou alguma dúvida",
+      "- Se o lead já viu benefícios, fazer clarity-check específico (ex: 'ficou claro como funcionam os benefícios e o suporte?')",
+      "- Se o lead já viu estoque, fazer clarity-check específico (ex: 'fez sentido como funciona o comodato?')",
+      "- Se o lead já viu responsabilidades, fazer clarity-check específico (ex: 'ficou claro como funciona sua atuação no dia a dia?')",
       "- Se a taxa já foi explicada, perguntar se faz sentido o investimento",
       "- Se o lead está em Fase 1 (apresentação inicial), NÃO mencione",
       "  comodato, vitalícia, R$ 5.000, renda passiva, margem 40%, ou taxa.",
@@ -22022,25 +22030,25 @@ async function flagLeadAsRevendedorLojista(from, contexto = {}) {
 
 const FOLLOWUP_STEP_MESSAGES = {
   programa: {
-    1: "ficou alguma dúvida sobre como funciona o Programa Parceiro Homologado IQG?",
+    1: "ficou claro como funciona o Programa Parceiro Homologado IQG, ou tem algum ponto que queira que eu reforce?",
     2: "um ponto do Programa que costuma fazer diferença: você começa com o lote de produtos da IQG em comodato, sem precisar comprar estoque. Como esse modelo se encaixa no que você tinha em mente?",
     3: "uma dúvida que costuma aparecer nessa fase é se o Programa exige experiência prévia com vendas. Não exige — a IQG oferece treinamento e acompanhamento desde o começo. Posso te explicar melhor?",
     4: "se o Programa fizer sentido pra você, o próximo passo é conhecer os benefícios que a IQG oferece a quem é Parceiro Homologado. Quer que eu te apresente?"
   },
   beneficios: {
-    1: "ficou alguma dúvida sobre os benefícios, suporte ou treinamento do Programa Parceiro Homologado IQG?",
+    1: "fez sentido a parte dos benefícios, suporte e treinamento, ou tem algo que queira que eu detalhe?",
     2: "um ponto importante: o suporte da IQG é contínuo — você tem acompanhamento durante toda a sua atuação como Parceiro, não só no início. Quer saber mais sobre como funciona?",
     3: "uma dúvida comum nessa fase é se vale a pena sem já ter uma carteira de clientes. O treinamento da IQG cobre justamente como construir isso do zero. Onde você está hoje em relação a isso — começando do zero ou já tem alguma base de contatos?",
     4: "se os benefícios estão fazendo sentido pra você, o próximo passo é entender como funciona o lote de produtos em comodato. Posso seguir nesse tema ou tem algum ponto dos benefícios que ainda quer esclarecer antes?"
   },
   estoque: {
-    1: "ficou alguma dúvida sobre o lote inicial em comodato ou sobre como você começa sem precisar comprar estoque?",
+    1: "ficou claro como funciona o lote inicial em comodato — você não compra estoque — ou tem algum ponto que queira que eu reforce?",
     2: "sobre o comodato: você recebe o lote da IQG pra trabalhar sem desembolsar pra comprar estoque. Isso reduz bastante a barreira de começar. Como você vê esse modelo?",
     3: "uma dúvida comum sobre o comodato é o que acontece se o produto não girar como esperado. A IQG faz acompanhamento e ajuda no ajuste da operação — você não fica sozinho com estoque parado. Quer entender melhor?",
     4: "se o modelo de comodato fizer sentido pra você, o próximo passo é conhecer como funciona a atuação como Parceiro no dia a dia. Quer seguir?"
   },
   responsabilidades: {
-    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    1: "fez sentido como funciona sua atuação como Parceiro Homologado, ou tem algum ponto que queira que eu detalhe?",
     2: "sobre as responsabilidades do Parceiro: a IQG estrutura cada etapa pra que você atue com clareza — mesmo quem nunca trabalhou nesse modelo consegue se adaptar. Como você vê esse formato?",
     3: "uma dúvida frequente nessa etapa é como a rotina de Parceiro se encaixa no dia a dia. Posso te explicar como outros parceiros organizam isso na prática. Quer conversar sobre?",
     4: "se a forma de atuação fizer sentido pra você, o próximo passo é falar sobre o investimento pra entrar no Programa. Quer que eu te apresente?"
@@ -22070,13 +22078,13 @@ const FOLLOWUP_STEP_MESSAGES = {
     4: "se o que estiver pesando for o momento financeiro, vale lembrar que a taxa pode ser parcelada em até 10x de R$ 199 — sem comprometer fluxo. Isso muda algo na sua análise?"
   },
   faltaResponsabilidades: {
-    1: "ficou alguma dúvida sobre as responsabilidades de atuação como Parceiro Homologado?",
+    1: "ficou claro a parte das responsabilidades de atuação no dia a dia, ou tem algo que queira que eu reforce?",
     2: "sobre a atuação como Parceiro Homologado: a IQG estrutura cada etapa pra que você atue com clareza, mesmo sem experiência prévia. Faz sentido pra você esse formato?",
     3: "uma dúvida frequente sobre a atuação é como a rotina se encaixa no dia a dia. Posso te explicar como isso funciona na prática. Quer conversar sobre?",
     4: "pra gente seguir, falta só entender como é a atuação como Parceiro no dia a dia. Pelo que conversamos, faz sentido eu te apresentar isso agora?"
   },
   fallbackNeutro: {
-    1: "ficou alguma dúvida sobre o que conversamos até aqui? 😊",
+    1: "do que conversamos até aqui, ficou tudo claro pra ti, ou tem algum ponto que queira que eu reforce? 😊",
     2: "um ponto do Programa Parceiro Homologado IQG que costuma fazer diferença pra quem está começando é o suporte e o treinamento da equipe — você não atua sozinho em nenhuma etapa. Faz sentido pra você?",
     3: "se você ainda está avaliando, uma coisa que costuma ajudar a decidir é entender o passo a passo completo, do começo ao funcionamento. Quer que eu te apresente?",
     4: "se quiser conhecer melhor o Parceiro Homologado IQG, é só me chamar — o caminho é guiado em cada passo. Posso continuar?"
@@ -28813,7 +28821,9 @@ if (startedDataCollection && !podeIniciarColeta && !coletaLiberadaPorTaxaAceita)
 
   const jaPerguntouDuvida =
     ultimaRespostaBot.includes("ficou alguma dúvida específica") ||
-    ultimaRespostaBot.includes("ficou alguma dúvida");
+    ultimaRespostaBot.includes("ficou alguma dúvida") ||
+    ultimaRespostaBot.includes("ficou claro") ||
+    ultimaRespostaBot.includes("fez sentido");
 
   sdrReviewFindings.push({
     tipo: "coleta_prematura",
