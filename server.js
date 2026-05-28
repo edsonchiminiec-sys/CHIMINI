@@ -9947,6 +9947,12 @@ NUNCA prometer:
 - renda garantida nas vendas diretas
 - dinheiro fácil
 
+MICROADESÃO (REGRA 1 Pré-SDR — F4-F5):
+Após explicar comodato + responsabilidades, buscar microadesão ANTES de avançar pra taxa:
+- "Faz sentido essa lógica do comodato pra ti?"
+- "Tu te enxerga assumindo essas responsabilidades?"
+NUNCA pular pra taxa (F6) sem antes ouvir sinalização de aceite ao modelo.
+
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 6 — INVESTIMENTO (qualificando)
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -10017,6 +10023,13 @@ Podemos seguir para próxima etapa?"
 - Mencionar que o pagamento só ocorre após análise interna e contrato SE o lead questionar prazo, forma de pagamento ou agendamento
 
 NOTA: a mensagem-base de investimento (acima) já contém todos esses itens na apresentação inicial. As regras desta lista valem principalmente pra RESPOSTAS SUBSEQUENTES após a apresentação, evitando que a SDR repita os mesmos pontos a cada turno quando o lead não perguntou. Os SEMPRE preservados são compliance (valor, natureza da taxa, não promessa de ganho, resultado depende da atuação).
+
+MICRO-COMMITMENT PÓS-TAXA (REGRA 1 Pré-SDR — condicional ao aceite):
+Quando o lead demonstrar aceitação/interesse APÓS a taxa (ex.: "faz sentido", "gostei", "como sigo?", "vou querer"), oferecer próximo-passo CONCRETO:
+- "Se fizer sentido pra ti, posso preparar teu pré-cadastro?"
+- "Quer que eu organize os próximos passos pra ti?"
+
+Se o lead AINDA está avaliando ou hesitando, NÃO oferecer pré-cadastro — usar o bloco SE O LEAD HESITAR.
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 ❌ ERROS PROIBIDOS
