@@ -28467,6 +28467,11 @@ const startedDataCollection =
   e quando não existe pergunta comercial aberta do lead.
 */
 
+// F8.0a — fix TDZ: declaração movida pra ANTES do uso na TRAVA FINAL
+const coletaLiberadaPorTaxaAceita =
+  hasTaxAcceptedDecisionToCollect(currentLead || {}) &&
+  canStartDataCollection(currentLead || {}) === true;
+
 // 🛡️ TRAVA FINAL OBRIGATÓRIA — impede coleta se investimento não foi explicado
 if (
   startedDataCollection &&
@@ -28813,10 +28818,6 @@ if (
   });
 }
 
-     const coletaLiberadaPorTaxaAceita =
-  hasTaxAcceptedDecisionToCollect(currentLead || {}) &&
-  canStartDataCollection(currentLead || {}) === true;
-     
 const mencionouPreAnalise =
   /pre[-\s]?analise|pré[-\s]?análise/i.test(respostaFinal);
 
