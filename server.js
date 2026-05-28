@@ -4178,6 +4178,15 @@ function iqgGetExplicitUnderstoodFunnelStepsFromLead(text = "") {
   return understoodSteps;
 }
 
+// F7.3 — Detector determinístico: reação positiva a feature Homologado em lastSdrText
+// NÃO é sinal de Afiliado. Usado em iqgNormalizeSemanticIntentAfterClassifier (Caso F7.3).
+// ESPELHA regex pediuAfiliado @5853 — se mudar lá, mudar aqui também.
+const RX_PEDIU_AFILIADO_REPLICADA = /\b(programa de afiliados|afiliado|afiliados|link de afiliado|comissao por link|comissão por link|divulgacao online|divulgação online|vender online|sem estoque fisico|sem estoque físico)\b/i;
+const HOMOLOGADO_FEATURES = /margem de 40|R\$\s?5\.?000|vital[íi]cia|comodato|lote inicial|taxa de ades[ãa]o|parceiro homologado|comiss[ãa]o vital/i;
+// Saudação opcional + reação positiva pura (cobre "gostei" e "Boa noite, gostei").
+const REACAO_POSITIVA_PURA = /^(?:(?:bom dia|boa tarde|boa noite|ol[áa]|oi)[,\s!]+)?(gostei|adorei|interessante|legal|show|massa|bacana|[óo]timo|perfeito|maravilha|excelente|amei|gostei muito)\b/i;
+const RX_OBJECAO_OU_RESSALVA = /\b(mas|por[ée]m|s[óo] que|entretanto|n[ãa]o tenho|n[ãa]o posso|sem espa[çc]o)\b/i;
+
 function iqgNormalizeSemanticIntentAfterClassifier({
   semanticIntent = {},
   lastUserText = "",
@@ -4226,6 +4235,30 @@ function iqgNormalizeSemanticIntentAfterClassifier({
   */
   if (mentionsHomologadoContext) {
     normalized.wantsHomologado = true;
+  }
+
+  /*
+    Caso F7.3 — Reação positiva a feature exclusiva do Homologado em lastSdrText
+    NÃO é sinal de Afiliado (corrige bug do classificador gpt-4o-mini que
+    aproxima "comissão" → "comissão por link"). Precedência:
+      1. Afiliado explícito → não força
+      2. Objeção/ressalva → não força (deixa desambiguar)
+      3. Só então: reação positiva pura + feature Homologado → força Homologado
+  */
+  if (
+    !RX_PEDIU_AFILIADO_REPLICADA.test(text) &&
+    !RX_OBJECAO_OU_RESSALVA.test(text) &&
+    REACAO_POSITIVA_PURA.test(text.trim()) &&
+    HOMOLOGADO_FEATURES.test(String(lastSdrText || ""))
+  ) {
+    normalized.wantsHomologado = true;
+    normalized.wantsAffiliate = false;
+    normalized.blockingObjection = false;
+    normalized.reason = [
+      normalized.reason || "",
+      "Correção backend F7.3: reação positiva a feature do Homologado em lastSdrText — wantsAffiliate=false."
+    ].filter(Boolean).join(" ");
+    console.log(`[F7.3 forcado_homologado] text="${text.slice(0, 40)}"`);
   }
 
   /*
@@ -4944,6 +4977,14 @@ Só classifique como Afiliado se houver sinal claro de Afiliado, como:
 - "só divulgar".
 
 Se esses sinais não estiverem claros, NÃO marque wantsAffiliate como true.
+
+━━━━━━━━━━━━━━━━━━━━━━━
+REAÇÃO POSITIVA A FEATURE DO HOMOLOGADO ≠ AFILIADO
+━━━━━━━━━━━━━━━━━━━━━━━
+
+Se a SDR ACABOU de apresentar o Programa Homologado (comissão vitalícia 10%, comodato, margem de 40%) e o lead responde "gostei da comissão" / "gostei da vitalícia" / "gostei da margem" / "interessante" → wantsHomologado=true, wantsAffiliate=false.
+A comissão vitalícia de 10% é EXCLUSIVA do Homologado — reagir bem a ela = interesse no HOMOLOGADO, não no Afiliado.
+Só marque wantsAffiliate=true se o lead mencionar EXPLICITAMENTE "afiliado", "link", "vender online", "sem estoque", ou REJEITAR o Homologado.
 
 Sinais que podem apontar mais para Homologado:
 - "homologado";
