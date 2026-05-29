@@ -30994,6 +30994,17 @@ app.get("/auditoria", async (req, res) => {
             '<input id="dataInicio" type="datetime-local" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
             '<input id="dataFim" type="datetime-local" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
           '</div>' +
+          // F-AUDIT-COHORT — bloco modo + preview (Q1+Q3+Q4)
+          '<div id="modoFiltroBlock" style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<label style="font-size:12px;color:#94a3b8;font-weight:700;">Modo filtro:</label>' +
+            '<select id="modoFiltroSelect" onchange="onModoFiltroChange()" style="border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:8px 10px;font-size:12px;">' +
+              '<option value="atividade">Atividade no range (atual)</option>' +
+              '<option value="cohort_entrada">Cohort por entrada (NOVO)</option>' +
+            '</select>' +
+            '<span id="modoHint" style="font-size:11px;color:#64748b;display:none;">Cohort = só leads CRIADOS no range, conversa completa. SEM cap. Custo pode ser alto.</span>' +
+            '<button type="button" id="btnPreviewCohort" onclick="previewCohort()" style="display:none;border:0;border-radius:999px;height:34px;padding:0 14px;font-size:12px;font-weight:800;cursor:pointer;background:#f59e0b;color:#0f172a;">📊 Preview cohort</button>' +
+            '<span id="cohortPreviewResult" style="font-size:12px;color:#cbd5e1;"></span>' +
+          '</div>' +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;">' +
             '<input id="auditorLeadFilter" type="text" style="flex:1;min-width:200px;border:1px solid rgba(255,255,255,0.16);background:rgba(15,23,42,0.72);color:#fff;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;font-family:monospace;" placeholder="Filtrar por user (opcional)">' +
             '<label style="font-size:12px;color:#94a3b8;">Máx leads:</label>' +
@@ -31092,12 +31103,51 @@ app.get("/auditoria", async (req, res) => {
             'document.body.appendChild(link); link.click(); document.body.removeChild(link);' +
           '} catch(err){ alert("Erro ao baixar MD: " + (err.message || err)); }' +
         '}' +
+        // F-AUDIT-COHORT — handlers do modo + preview (Q4: UX safety guard)
+        'function onModoFiltroChange(){' +
+          'var sel = document.getElementById("modoFiltroSelect");' +
+          'var hint = document.getElementById("modoHint");' +
+          'var btnPrev = document.getElementById("btnPreviewCohort");' +
+          'var btnRun = document.getElementById("askAuditorBtn");' +
+          'var prevRes = document.getElementById("cohortPreviewResult");' +
+          'var isCohort = sel && sel.value === "cohort_entrada";' +
+          'if(hint) hint.style.display = isCohort ? "inline" : "none";' +
+          'if(btnPrev) btnPrev.style.display = isCohort ? "inline-block" : "none";' +
+          // Em cohort: bloquear "Auditar conversas" até preview rodar
+          'if(btnRun){' +
+            'btnRun.disabled = !!isCohort;' +
+            'btnRun.title = isCohort ? "Clique em Preview cohort primeiro" : "";' +
+            'btnRun.style.opacity = isCohort ? "0.5" : "1";' +
+          '}' +
+          // Reset preview result ao trocar modo
+          'if(prevRes) prevRes.innerHTML = "";' +
+        '}' +
+        'async function previewCohort(){' +
+          'var resEl = document.getElementById("cohortPreviewResult");' +
+          'var btnRun = document.getElementById("askAuditorBtn");' +
+          'var di = (document.getElementById("dataInicio")||{}).value;' +
+          'var df = (document.getElementById("dataFim")||{}).value;' +
+          'if(!di || !df){ if(resEl) resEl.innerHTML = `<span style="color:#fca5a5;">Defina data início e fim (use modo Custom).</span>`; return; }' +
+          'if(resEl) resEl.innerHTML = `<span style="color:#94a3b8;">Calculando...</span>`;' +
+          'try {' +
+            'var url = "/auditoria/preview-cohort?dataInicio=" + encodeURIComponent(new Date(di).toISOString()) + "&dataFim=" + encodeURIComponent(new Date(df).toISOString()) + (auditorSenha ? "&senha=" + encodeURIComponent(auditorSenha) : "");' +
+            'var resp = await fetch(url);' +
+            'var data = await resp.json();' +
+            'if(!resp.ok || !data.ok) throw new Error(data.erro || data.error || "Falha no preview");' +
+            'var avisoHtml = data.aviso ? `<br><span style="color:#f59e0b;font-weight:700;">${data.aviso}</span>` : "";' +
+            'if(resEl) resEl.innerHTML = `<strong>${data.count}</strong> leads — custo: ${data.estimativaCusto.min} a ${data.estimativaCusto.max} <span style="color:#94a3b8;">(avg ${data.estimativaCusto.avg})</span>${avisoHtml}`;' +
+            // Habilitar btn auditor após preview OK
+            'if(btnRun){ btnRun.disabled = false; btnRun.title = ""; btnRun.style.opacity = "1"; }' +
+          '} catch(err){ if(resEl) resEl.innerHTML = `<span style="color:#fca5a5;">Erro: ${err.message || err}</span>`; }' +
+        '}' +
         'async function askSalesMasterAuditor(){' +
           'var rBox = document.getElementById("auditorResponse");' +
           'var btn = document.getElementById("askAuditorBtn");' +
           'var leadFiltro = String((document.getElementById("auditorLeadFilter")||{}).value || "").trim();' +
           'var maxLeads = parseInt((document.getElementById("auditorMaxLeads")||{}).value || "50", 10) || 50;' +
-          'var corpo = { janela: smJanela, maxLeads: maxLeads };' +
+          // F-AUDIT-COHORT — incluir modoFiltro no payload
+          'var modoFiltroSel = (document.getElementById("modoFiltroSelect")||{}).value || "atividade";' +
+          'var corpo = { janela: smJanela, maxLeads: maxLeads, modoFiltro: modoFiltroSel };' +
           'if(leadFiltro) corpo.leadFilter = leadFiltro;' +
           'var apenasCadenciaRecente = (document.getElementById("auditorCadenciaRecente")||{}).checked || false;' +
           'var dataMinimaInput = (document.getElementById("auditorDataMinima")||{}).value || null;' +
@@ -31498,6 +31548,54 @@ function calcularMetricasF55_4a(cadenciasPorLead) {
   };
 }
 
+// F-AUDIT-COHORT (Q3) — endpoint de preview separado. Retorna count + custo estimado
+// SEM rodar o GPT auditor. Frontend chama isso antes de "Auditar conversas"
+// pra user confirmar custo (lição cohort 30d ≈ $350).
+app.get("/auditoria/preview-cohort", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  try {
+    await connectMongo();
+
+    const { dataInicio, dataFim } = req.query;
+    if (!dataInicio || !dataFim) {
+      return res.status(400).json({ ok: false, erro: "dataInicio e dataFim obrigatórios (ISO YYYY-MM-DDTHH:mm)" });
+    }
+
+    const inicio = new Date(dataInicio);
+    const fim = new Date(dataFim);
+    if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) {
+      return res.status(400).json({ ok: false, erro: "dataInicio ou dataFim inválida (use ISO YYYY-MM-DDTHH:mm)" });
+    }
+
+    const count = await db.collection("leads").countDocuments({
+      createdAt: { $gte: inicio, $lte: fim }
+    });
+
+    // Custo calibrado A.6: $0.28/lead avg, range $0.15-$0.40 (gpt-4o)
+    const custoMin = (count * 0.15).toFixed(2);
+    const custoAvg = (count * 0.28).toFixed(2);
+    const custoMax = (count * 0.40).toFixed(2);
+
+    return res.json({
+      ok: true,
+      modoFiltro: "cohort_entrada",
+      dataInicio: inicio.toISOString(),
+      dataFim: fim.toISOString(),
+      count,
+      estimativaCusto: {
+        min: `$${custoMin}`,
+        avg: `$${custoAvg}`,
+        max: `$${custoMax}`
+      },
+      aviso: count > 200 ? "⚠️ Cohort grande — confirme antes de executar" : null
+    });
+  } catch (error) {
+    console.error("[/auditoria/preview-cohort] erro:", error);
+    return res.status(500).json({ ok: false, erro: error.message });
+  }
+});
+
 app.post("/auditoria/c-level-auditor", async (req, res) => {
   if (!requireDashboardAuth(req, res)) return;
 
@@ -31509,12 +31607,21 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       dataInicio = null,
       dataFim = null,
       maxLeads = 50,
-      leadFilter = ""
+      leadFilter = "",
+      // F-AUDIT-COHORT: "atividade" (atual) OU "cohort_entrada" (novo: createdAt-only, sem cap)
+      modoFiltro = "atividade"
     } = req.body || {};
 
-    // Hard cap de leads por batch (proteção de custo)
+    if (!["atividade", "cohort_entrada"].includes(modoFiltro)) {
+      return res.status(400).json({ ok: false, erro: "modoFiltro inválido. Use 'atividade' ou 'cohort_entrada'." });
+    }
+
+    // Hard cap de leads por batch (proteção de custo) — só vale em modoFiltro=atividade
+    // Em cohort_entrada, sem cap (user pediu conversa completa de todo o cohort)
     const MAX_LEADS_PERMITIDO = 100;
-    const maxLeadsEfetivo = Math.min(Number(maxLeads) || 50, MAX_LEADS_PERMITIDO);
+    const maxLeadsEfetivo = modoFiltro === "cohort_entrada"
+      ? null  // sem cap em cohort
+      : Math.min(Number(maxLeads) || 50, MAX_LEADS_PERMITIDO);
 
     // 1. Range de tempo
     const agora = new Date();
@@ -31525,6 +31632,10 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       }
       inicio = new Date(dataInicio);
       fim = new Date(dataFim);
+      // F-AUDIT-COHORT — validação isNaN (Q6)
+      if (isNaN(inicio.getTime()) || isNaN(fim.getTime())) {
+        return res.status(400).json({ ok: false, erro: "dataInicio ou dataFim inválida (use ISO YYYY-MM-DDTHH:mm)" });
+      }
     } else {
       const horas = { "24h": 24, "48h": 48, "7d": 168 }[janela];
       if (!horas) {
@@ -31534,13 +31645,22 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       fim = agora;
     }
 
-    // 2. Leads com interação no range (inclui em_atendimento). Filtro opcional por user.
-    let leadQuery = {
-      $or: [
-        { updatedAt: { $gte: inicio, $lte: fim } },
-        { createdAt: { $gte: inicio, $lte: fim } }
-      ]
-    };
+    // 2. Filtro de leads — F-AUDIT-COHORT (Q1): modoFiltro decide o tipo
+    let leadQuery;
+    if (modoFiltro === "cohort_entrada") {
+      // Cohort puro — APENAS leads criados no range (createdAt). Conversa completa via loadConversation.
+      leadQuery = {
+        createdAt: { $gte: inicio, $lte: fim }
+      };
+    } else {
+      // Comportamento atual preservado — atividade OU criação no range
+      leadQuery = {
+        $or: [
+          { updatedAt: { $gte: inicio, $lte: fim } },
+          { createdAt: { $gte: inicio, $lte: fim } }
+        ]
+      };
+    }
     const filtroLead = String(leadFilter || "").trim();
     if (filtroLead) {
       leadQuery.user = { $regex: filtroLead, $options: "i" };
@@ -31559,8 +31679,16 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
       };
     }
 
-    // F5.5-4a-VAL: sort por updatedAt desc (elimina viés de _id antigo — pega os mais recentes)
-    const leads = await db.collection("leads").find(leadQuery).sort({ updatedAt: -1 }).limit(maxLeadsEfetivo).toArray();
+    // F-AUDIT-COHORT (Q5): sort + cap CONDICIONAL ao modoFiltro
+    //   atividade:       sort updatedAt:-1 + limit maxLeadsEfetivo (preservado)
+    //   cohort_entrada:  sort createdAt:1 (ordem cronológica) + sem limit
+    let leadsCursor = db.collection("leads").find(leadQuery);
+    if (modoFiltro === "cohort_entrada") {
+      leadsCursor = leadsCursor.sort({ createdAt: 1 });
+    } else {
+      leadsCursor = leadsCursor.sort({ updatedAt: -1 }).limit(maxLeadsEfetivo);
+    }
+    const leads = await leadsCursor.toArray();
 
     if (leads.length === 0) {
       return res.json({
