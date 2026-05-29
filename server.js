@@ -9740,6 +9740,9 @@ NÃO:
 - usar lista numerada (1. 2. 3...) ou bullets
 - enviar paredões com mais de 3 linhas
 - usar bordões como "Fico feliz", "Fico à disposição", "Que ótima escolha"
+- mencionar Programa de Afiliados e Programa Parceiro Homologado na MESMA
+  resposta — cada programa tem fluxo próprio (exceção: break-up final
+  step 5 quando lead rejeita Homologado) — F8.4
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 🧭 FASE 2 — ESCLARECIMENTO (novo)
@@ -29528,7 +29531,7 @@ if (sdrReviewFindings.length > 0) {
   // disciplina_funil é uma melhoria de cadência, não um perigo real ao lead.
   // Não justifica handoff humano — a última regeneração (mesmo imperfeita) é melhor.
   // Outros tipos críticos (falsa promessa, pré-análise prematura, etc.) continuam gatilhando handoff.
-  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida" && f.tipo !== "resposta_vazia_ou_emoji_solto");
+  const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida" && f.tipo !== "resposta_vazia_ou_emoji_solto" && f.tipo !== "mistura_afiliado_homologado");  // F8.4
 
   if (criticosQueExigemHandoff.length > 0) {
     respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
@@ -29542,9 +29545,16 @@ if (sdrReviewFindings.length > 0) {
     try {
       await auditSystemEvent("regeneracao_sdr_soft_critico_descartado", "low", from, {
         tiposIgnorados: criticosRemanescentes.map(f => f.tipo),
-        intencional: criticosRemanescentes.every(f => ["disciplina_funil", "qualificacao_inicial_omitida"].includes(f?.tipo || f)),
-        motivoDescarte: criticosRemanescentes.every(f => ["disciplina_funil", "qualificacao_inicial_omitida"].includes(f?.tipo || f))
-          ? "disciplina_funil_qualificacao_inicial_melhoria_conducao_nao_perigo"
+        // F8.4 — sync com filtro @29531 (4 tipos soft)
+        intencional: criticosRemanescentes.every(f =>
+          ["disciplina_funil", "qualificacao_inicial_omitida",
+           "resposta_vazia_ou_emoji_solto", "mistura_afiliado_homologado"
+          ].includes(f?.tipo || f)),
+        motivoDescarte: criticosRemanescentes.every(f =>
+          ["disciplina_funil", "qualificacao_inicial_omitida",
+           "resposta_vazia_ou_emoji_solto", "mistura_afiliado_homologado"
+          ].includes(f?.tipo || f))
+          ? "soft_findings_melhoria_conducao_nao_perigo"
           : "outro_motivo_investigar",
         respostaEnviadaLen: typeof respostaFinal === "string" ? respostaFinal.length : 0,
         respostaEnviadaTrecho: typeof respostaFinal === "string" ? respostaFinal.slice(0, 200) : null
