@@ -28850,6 +28850,113 @@ function enforceNoFichouAlgumaDuvida(message) {
   }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
 }
 
+// F8.γ.2 — Enforcer programático de clarity-check após explicação de etapa.
+//
+// Problema (auditoria 2026-05-28): só 6% das msgs SDR têm clarity-check
+// (vs ~50% esperado). 61% dos leads suspeitos com 0 etapas marcadas estão
+// no padrão P1: SDR explicou substantivo MAS NÃO perguntou "ficou claro?".
+// → F7.4b detector NUNCA dispara porque clarity-check não existe na msg.
+//
+// Solução simétrica a F7.5/F8.2: append determinístico de clarity-check
+// quando SDR explicou etapa NOVA e não fechou com pergunta. Não toca o
+// detector F7.4b nem o prompt — só adiciona o gatilho que faltava.
+//
+// 7 HARD LIMITS:
+//   1. SKIP se msg já contém CLARITY_CHECK_REGEX (idempotente)
+//   2. SKIP se msg.length < 80 (resposta curta ≠ explicação substantiva)
+//   3. SKIP se faseFunil ∉ {"", "esclarecimento"} (não tocar fases avançadas)
+//   4. SKIP se etapa-alvo já marcada (currentLead.etapas[step] === true)
+//   5. SKIP se status terminal (fechado/perdido/em_atendimento/enviado_crm)
+//   6. SKIP em fluxo cadência (NÃO integrado em @22994; só LIVE @30164)
+//   7. SKIP etapas com gates próprios (investimento, compromisso)
+//
+// Etapa-alvo: primeira em [programa, beneficios, estoque, responsabilidades]
+// detectada como explicada AGORA e ainda não marcada em currentLead.etapas.
+const F8GAMMA2_CLARITY_CHECK_BY_STEP = {
+  programa: [
+    "Ficou claro como funciona o programa?",
+    "Faz sentido até aqui?",
+    "Deu pra entender o programa?"
+  ],
+  beneficios: [
+    "Ficou claro o suporte que você teria?",
+    "Faz sentido como a gente te apoia?",
+    "Deu pra entender os benefícios?"
+  ],
+  estoque: [
+    "Ficou claro como funciona o lote inicial?",
+    "Faz sentido o esquema do comodato?",
+    "Deu pra entender como o estoque é entregue?"
+  ],
+  responsabilidades: [
+    "Ficou claro o que fica sob sua responsabilidade?",
+    "Faz sentido a divisão de responsabilidades?",
+    "Deu pra entender a parte do parceiro?"
+  ]
+};
+
+// Counter módulo-level por etapa — variação rotativa entre chamadas
+// (mesmo padrão F75_SUBSTITUTO_COUNTER @28808 e F77_FICOU_DUVIDA_COUNTER @28837).
+const F8GAMMA2_COUNTERS = {
+  programa: 0,
+  beneficios: 0,
+  estoque: 0,
+  responsabilidades: 0
+};
+
+async function enforceClarityCheckAfterExplanation(message, from, currentLead) {
+  if (!message || typeof message !== "string") return message;
+
+  // Limit 1: idempotente — se já tem clarity-check, NÃO duplica
+  if (CLARITY_CHECK_REGEX.test(message)) return message;
+
+  // Limit 2: msg curta não é explicação substantiva
+  if (message.length < 80) return message;
+
+  // Limit 3: fora de esclarecimento, não interferir
+  const fase = currentLead?.faseFunil || "";
+  if (fase !== "" && fase !== "esclarecimento") return message;
+
+  // Limit 5: status terminal/avançado
+  const status = currentLead?.status || "";
+  if (["fechado", "perdido", "em_atendimento", "enviado_crm",
+       "erro_dados", "erro_envio_crm"].includes(status)) return message;
+
+  // Detecta etapas explicadas NA MENSAGEM ATUAL (reusa detector F7.4b/canonical)
+  const explainedNow = iqgDetectFunnelStepsExplainedInText(message);
+  const etapasAtuais = currentLead?.etapas || {};
+
+  // Limit 4 + 7: primeira etapa-alvo em ordem funil; exclui investimento+compromisso
+  let stepAlvo = null;
+  for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
+    if (explainedNow[step] && !etapasAtuais[step]) {
+      stepAlvo = step;
+      break;
+    }
+  }
+  if (!stepAlvo) return message;
+
+  // Rotação determinística por etapa
+  const variantes = F8GAMMA2_CLARITY_CHECK_BY_STEP[stepAlvo];
+  const substituto = variantes[F8GAMMA2_COUNTERS[stepAlvo] % variantes.length];
+  F8GAMMA2_COUNTERS[stepAlvo]++;
+
+  const original = message;
+  const trimmed = original.replace(/[\s]+$/, "");
+  const separador = /[.!?]$/.test(trimmed) ? " " : ". ";
+  const result = trimmed + separador + substituto;
+
+  // Audit (fire-and-forget — não bloqueia envio)
+  auditSystemEvent("clarity_check_appended_F8gamma2", "low", from, {
+    stepExplained: stepAlvo,
+    clarityCheckUsed: substituto,
+    lastSdrLen: original.length,
+    reason: "etapa_nova_explicada_sem_clarity_check"
+  }).catch(() => {});
+
+  return result;
+}
+
 // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
@@ -30162,6 +30269,7 @@ if (
 // envia resposta
 respostaFinal = enforceNoBordaoFechamento(respostaFinal);  // F7.5
 respostaFinal = enforceNoFichouAlgumaDuvida(respostaFinal);  // F8.2
+respostaFinal = await enforceClarityCheckAfterExplanation(respostaFinal, from, currentLead);  // F8.γ.2
 await sendWhatsAppMessage(from, respostaFinal);
      
 history.push({
