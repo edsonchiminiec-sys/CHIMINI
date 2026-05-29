@@ -593,6 +593,7 @@ async function saveLeadProfile(user, data = {}) {
   await connectMongo();
 
   const currentLead = await db.collection("leads").findOne({ user });
+  const F8DELTA_expectedUpdatedAt = currentLead?.updatedAt;  // δ — version field implícito p/ race detection (NON-BLOCKING)
 
   // REMOVE CAMPOS QUE NÃO DEVEM SER ATUALIZADOS DIRETAMENTE
   const {
@@ -722,6 +723,39 @@ async function saveLeadProfile(user, data = {}) {
         currentLead?.rotaComercial ||
         currentLead?.origemConversao ||
         "homologado";
+    }
+  }
+
+  // δ (F8.delta) — INSTRUMENTAÇÃO NON-BLOCKING de race condition no lead document.
+  // Detecta janela findOne@595 → updateOne abaixo onde outro caller também escreveu.
+  // ZERO mudança no save (apenas observa). Audit fire-and-forget.
+  // Pseudo-version field: currentLead.updatedAt capturado em F8DELTA_expectedUpdatedAt.
+  // Custo: +1-2 findOne lightweight (projection {_id, updatedAt}) por save.
+  // Trade-off aceito: race entre o stillSame check e updateOne abaixo (~5ms) escapa (falso negativo).
+  if (F8DELTA_expectedUpdatedAt) {
+    try {
+      const stillSame = await db.collection("leads").findOne(
+        { user, updatedAt: F8DELTA_expectedUpdatedAt },
+        { projection: { _id: 1, updatedAt: 1 } }
+      );
+      if (!stillSame) {
+        const actual = await db.collection("leads").findOne(
+          { user },
+          { projection: { _id: 1, updatedAt: 1 } }
+        );
+        auditSystemEvent("save_lead_race_detected_F8delta", "medium", user, {
+          expectedUpdatedAt: F8DELTA_expectedUpdatedAt,
+          actualUpdatedAt: actual?.updatedAt,
+          gapMs: actual?.updatedAt
+            ? new Date(actual.updatedAt).getTime() - new Date(F8DELTA_expectedUpdatedAt).getTime()
+            : null,
+          modifiedFields: Object.keys(data || {}).slice(0, 10),
+          reason: "lead_modified_between_load_and_save_window"
+        }).catch(() => {});
+      }
+    } catch (instErr) {
+      // Nunca derruba o save — apenas loga
+      console.warn("⚠️ δ race-check falhou (não-crítico):", instErr.message);
     }
   }
 
