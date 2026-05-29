@@ -12141,7 +12141,10 @@ function getFirstName(name = "") {
 
   if (!cleanName) return "";
 
-  return cleanName.split(" ")[0];
+  const first = cleanName.split(" ")[0];
+  if (!first) return "";
+  // F8.3 — capitalizar (Nanci, Valdecir, Marciovancin)
+  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
 }
 
 function detectGenderByName(name = "") {
@@ -21379,27 +21382,43 @@ function getDelayUntilNextBusinessTime() {
 //   1. Lead pediu pra parar/recusou explicitamente (F5.5a saida_explicita)
 //   2. Step 5 natural da cadência (F5.5e)
 // ============================================================
+
+// F8.3 — heurísticas reforçadas + blacklist genéricos (32 termos)
+// Movida pra módulo-level pra ser usada também por buildFollowupGreetingPrefix
+const F83_GENERIC_NAME_BLACKLIST = new Set([
+  "loja","casa","empresa","trabalho","cliente","vendedor","comprador",
+  "mercado","comercio","negocio","atendimento","admin","financeiro",
+  "rh","vendas","whatsapp","sdr","contato","representacao","escritorio",
+  "oficina","matriz","filial","pdv","balcao","caixa","secretaria",
+  "gerencia","comercial","diretoria","marketing","depto"
+]);
+
+function isReliableName(s) {
+  if (!s || typeof s !== "string") return false;
+  const t = s.trim();
+  if (t.length < 2 || t.length > 40) return false;
+  if (/\d{3,}/.test(t)) return false;
+  if (/\s+-\s+/.test(t)) return false;
+  if (t.split(/\s+/).length > 4) return false;
+  // F8.3 — bloqueia single-word > 20 chars (rutercarlossantosdasilva = 24)
+  if (t.split(/\s+/).length === 1 && t.length > 20) return false;
+  // F8.3 — blacklist genéricos
+  const lower = t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+  if (F83_GENERIC_NAME_BLACKLIST.has(lower)) return false;
+  const first = getFirstName(t);
+  if (!first || first.length < 2) return false;
+  if (/[bcdfghjklmnpqrstvwxyz]{5,}/i.test(first)) return false;
+  if ((first.match(/[kxz]/gi) || []).length >= 3) return false;
+  return true;
+}
+
 function buildBreakupAffiliateMessage(lead, motivo = "step5") {
   // FIX Y (25/05/2026) — Sanitização inteligente do displayName.
   // "Scepavendas - Márcio Aurélio Scepaniuk" / "marilsonkxeiaozek" eram concatenados
   // crus no break-up. Quando o nome não é confiável, usa saudação genérica "Oi! 😊 "
   // (mesmo fallback de buildFollowupGreetingPrefix) em vez de chutar nome errado:
   // "Empresa - Pessoa" pode não ser quem atende o número.
-  function isReliableName(s) {
-    if (!s || typeof s !== "string") return false;
-    const t = s.trim();
-    if (t.length < 2 || t.length > 40) return false;
-    if (/\d{3,}/.test(t)) return false;
-    if (/\s+-\s+/.test(t)) return false;
-    if (t.split(/\s+/).length > 4) return false;
-
-    const first = getFirstName(t);
-    if (!first || first.length < 2) return false;
-    if (/[bcdfghjklmnpqrstvwxyz]{5,}/i.test(first)) return false;
-    if ((first.match(/[kxz]/gi) || []).length >= 3) return false;
-
-    return true;
-  }
+  // F8.3 — isReliableName movida pra módulo-level (reusada por buildFollowupGreetingPrefix).
 
   const rawName = lead?.nomeWhatsApp || lead?.nome || "";
   const saudacao = isReliableName(rawName)
@@ -21437,7 +21456,10 @@ Sucesso na sua jornada! 🙏`;
 
 function buildFollowupGreetingPrefix(lead = {}) {
   const candidato = lead?.nomeWhatsApp || lead?.nome || "";
-  if (isInvalidLooseNameCandidate(candidato)) {
+  // F8.3 — defesa em profundidade: 3 filtros cascateados
+  if (isInvalidLooseNameCandidate(candidato)
+      || !isReliableName(candidato)
+      || looksLikeCorporateName(candidato)) {
     return "Oi! 😊 ";
   }
   const nome = getFirstName(candidato);
