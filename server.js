@@ -2919,6 +2919,16 @@ sinalizam fim sem propor próximo passo. Substitua por:
 Exceções (legítimo, manter): "se precisar de X, é só me chamar"
 dentro de despedidas formais ou msgs pós-CRM.
 
+🎯 EXEMPLOS DO QUE NÃO FAZER (cadência reengajamento — F8.2):
+❌ "queria saber se ficou alguma dúvida sobre o programa"
+❌ "ficou alguma dúvida ou ponto que gostaria de discutir?"
+❌ "...se ficou alguma dúvida, estou aqui pra ajudar!"
+
+EM VEZ DISSO, USE CLARITY-CHECK ESPECÍFICO OU PERGUNTA CALIBRADA:
+✅ "ficou claro como funciona o comodato, ou tem ponto pra reforçar?"
+✅ "do que vimos sobre o suporte, qual parte fez mais sentido?"
+✅ "considerou a comissão vitalícia no seu cálculo de renda?"
+
 ### REGRA 5 — ANTI-REPETIÇÃO: PIVOTE, NÃO REPITA
 
 Auditor detectou em 3 de 3 leads: SDR repetiu informação já dita quando lead não respondeu especificamente, ao invés de avançar a conversa.
@@ -22924,6 +22934,7 @@ async function sendAutomaticFollowupIfStillValid({
   */
   try {
     messageToSend = enforceNoBordaoFechamento(messageToSend);  // F7.5
+    messageToSend = enforceNoFichouAlgumaDuvida(messageToSend);  // F8.2
     await sendWhatsAppMessage(from, messageToSend);
   } catch (sendError) {
     console.error("Erro ao enviar follow-up no WhatsApp:", sendError.message);
@@ -28753,6 +28764,34 @@ function enforceNoBordaoFechamento(message) {
   }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
 }
 
+// F8.2 — Helper simétrico ao F7.5 pra "ficou alguma dúvida"
+// Cobre os 16 GPT-livres que F7.6 hardcoded não pega (Patterns A/B/C)
+const F77_FICOU_DUVIDA_REGEX =
+  /(?:^|[\s,—.;])(?:e\s+|se\s+|que\s+|ou\s+)?ficou alguma d[úu]vida[^.!?\n]*[.!?]?/gi;
+
+const F77_FICOU_DUVIDA_SUBSTITUTOS = [
+  "Ficou claro o que conversamos até aqui?",
+  "Do que vimos, o que mais fez sentido pra você?",
+  "Tem algum ponto específico que quer reforçar?",
+  "Qual parte ficou mais clara pra você?"
+];
+
+let F77_FICOU_DUVIDA_COUNTER = 0;
+
+function enforceNoFichouAlgumaDuvida(message) {
+  if (!message || typeof message !== "string") return message;
+  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
+  if (!F77_FICOU_DUVIDA_REGEX.test(message)) return message;
+  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
+  return message.replace(F77_FICOU_DUVIDA_REGEX, (match) => {
+    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+    const sub = F77_FICOU_DUVIDA_SUBSTITUTOS[F77_FICOU_DUVIDA_COUNTER % F77_FICOU_DUVIDA_SUBSTITUTOS.length];
+    F77_FICOU_DUVIDA_COUNTER++;
+    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+      ? `${leadingSep} ${sub}` : ` ${sub}`;
+  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+}
+
 // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
@@ -30056,6 +30095,7 @@ if (
      
 // envia resposta
 respostaFinal = enforceNoBordaoFechamento(respostaFinal);  // F7.5
+respostaFinal = enforceNoFichouAlgumaDuvida(respostaFinal);  // F8.2
 await sendWhatsAppMessage(from, respostaFinal);
      
 history.push({
