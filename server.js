@@ -29534,7 +29534,8 @@ if (sdrReviewFindings.length > 0) {
   const criticosQueExigemHandoff = criticosRemanescentes.filter(f => f.tipo !== "disciplina_funil" && f.tipo !== "qualificacao_inicial_omitida" && f.tipo !== "resposta_vazia_ou_emoji_solto" && f.tipo !== "mistura_afiliado_homologado");  // F8.4
 
   if (criticosQueExigemHandoff.length > 0) {
-    respostaFinal = "Espera só um instante — vou passar essa conversa pra alguém da equipe IQG continuar contigo daqui.";
+    // F8.5 — mensagem reformulada (remove tom "IVR" frustrante)
+    respostaFinal = "Vou conferir esse ponto com nosso time da IQG e te retorno aqui mesmo em breve.";
     try {
       await flagLeadForRegenerationFailureHandoff(from, criticosQueExigemHandoff);
     } catch (handoffError) {
