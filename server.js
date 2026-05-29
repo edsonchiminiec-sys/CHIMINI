@@ -2904,6 +2904,21 @@ USAR perguntas calibradas começando com "como", "o que" ou "qual":
 
 Perguntas calibradas mantêm o lead PENSANDO e ENGAJADO. Perguntas genéricas encerram conversa.
 
+⚠️ AFIRMAÇÕES DE FECHAMENTO TAMBÉM PROIBIDAS (F8.1):
+Além das perguntas genéricas acima, NÃO termine mensagem com
+AFIRMAÇÕES vazias do tipo:
+- "estou aqui para ajudar" / "estou aqui pra ajudar"
+- "fique à vontade"
+- "fico à disposição" / "estou à disposição"
+
+Essas frases parecem cordiais mas funcionam como NÃO-condução:
+sinalizam fim sem propor próximo passo. Substitua por:
+- PRÓXIMO PASSO CONCRETO ("Posso te enviar X?", "Te chamo amanhã?")
+- PERGUNTA CALIBRADA específica ao último tema discutido
+
+Exceções (legítimo, manter): "se precisar de X, é só me chamar"
+dentro de despedidas formais ou msgs pós-CRM.
+
 ### REGRA 5 — ANTI-REPETIÇÃO: PIVOTE, NÃO REPITA
 
 Auditor detectou em 3 de 3 leads: SDR repetiu informação já dita quando lead não respondeu especificamente, ao invés de avançar a conversa.
@@ -28703,8 +28718,12 @@ if (
 // para não quebrar gramática. Variação rotativa de substituição evita
 // criar novo bordão. NÃO substitui o detector @28704 (badPatterns soft);
 // é a rede HARD complementar.
+// F8.1 — Família ampliada: 3 padrões SEGUROS (zero falsos positivos).
+// "se precisar" e "qualquer dúvida" catalogados pra F8.1b
+// (precisam guard contextual pra evitar modificação de templates
+// hardcoded @26800, @27230, @28375).
 const F75_BORDAO_FECHAMENTO_REGEX =
-  /(?:^|[\s,—.;])(?:fico|estou|ficamos|sigo|seguimos|estamos)\s+[àa]\s+disposi[çc][ãa]o[^.!?\n]*[.!?]?/gi;
+  /(?:^|[\s,—.;])(?:fico|estou|ficamos|sigo|seguimos|estamos)\s+[àa]\s+disposi[çc][ãa]o[^.!?\n]*[.!?]?|(?:^|[\s,—.;])estou aqui p(?:ara|ra) ajudar[^.!?\n]*[.!?]?|(?:^|[\s,—.;])fique [àa] vontade[^.!?\n]*[.!?]?/gi;
 
 const F75_SUBSTITUTOS = [
   "Se quiser, é só me chamar por aqui.",
