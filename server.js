@@ -22755,6 +22755,290 @@ function temEngajamentoMinimo(lead, history) {
       cancelamento) — agora aparece na tela de Auditoria.
     - Mantém todas as proteções anti-disparo-duplo existentes.
 */
+// F7.5 — Substituidor programático de bordão "fico à disposição".
+// Enforcement HARD (determinístico, antes do envio). Cobre 6 variantes
+// principais (fico/estou/ficamos/sigo/seguimos/estamos). Idempotente:
+// msgs já limpas passam intactas. Detecta FRASE COMPLETA (até pontuação)
+// para não quebrar gramática. Variação rotativa de substituição evita
+// criar novo bordão. NÃO substitui o detector @28704 (badPatterns soft);
+// é a rede HARD complementar.
+// F8.1 — Família ampliada: 3 padrões SEGUROS (zero falsos positivos).
+// "se precisar" e "qualquer dúvida" catalogados pra F8.1b
+// (precisam guard contextual pra evitar modificação de templates
+// hardcoded @26800, @27230, @28375).
+const F75_BORDAO_FECHAMENTO_REGEX =
+  /(?:^|[\s,—.;])(?:fico|estou|ficamos|sigo|seguimos|estamos)\s+[àa]\s+disposi[çc][ãa]o[^.!?\n]*[.!?]?|(?:^|[\s,—.;])estou aqui p(?:ara|ra) ajudar[^.!?\n]*[.!?]?|(?:^|[\s,—.;])fique [àa] vontade[^.!?\n]*[.!?]?/gi;
+
+const F75_SUBSTITUTOS = [
+  "Se quiser, é só me chamar por aqui.",
+  "Qualquer coisa, me chama por aqui.",
+  "Se fizer sentido, é só me chamar.",
+  "É só me chamar por aqui."
+];
+
+// Counter módulo-level pra variação ROTATIVA ENTRE chamadas separadas
+// (sem isso, cada call reinicia em 0 e sempre usa F75_SUBSTITUTOS[0] —
+// cria novo bordão. Counter global garante ≥3 variantes em 4 disparos
+// consecutivos. Sem persistência: reseta a cada restart do server, OK.)
+let F75_SUBSTITUTO_COUNTER = 0;
+
+function enforceNoBordaoFechamento(message) {
+  if (!message || typeof message !== "string") return message;
+  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
+  if (!F75_BORDAO_FECHAMENTO_REGEX.test(message)) return message;
+  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
+  return message.replace(F75_BORDAO_FECHAMENTO_REGEX, (match) => {
+    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+    const substituto = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+    F75_SUBSTITUTO_COUNTER++;
+    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+      ? `${leadingSep} ${substituto}`
+      : ` ${substituto}`;
+  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+}
+
+// F8.2 — Helper simétrico ao F7.5 pra "ficou alguma dúvida"
+// Cobre os 16 GPT-livres que F7.6 hardcoded não pega (Patterns A/B/C)
+const F77_FICOU_DUVIDA_REGEX =
+  /(?:^|[\s,—.;])(?:e\s+|se\s+|que\s+|ou\s+)?ficou alguma d[úu]vida[^.!?\n]*[.!?]?/gi;
+
+const F77_FICOU_DUVIDA_SUBSTITUTOS = [
+  "Ficou claro o que conversamos até aqui?",
+  "Do que vimos, o que mais fez sentido pra você?",
+  "Tem algum ponto específico que quer reforçar?",
+  "Qual parte ficou mais clara pra você?"
+];
+
+let F77_FICOU_DUVIDA_COUNTER = 0;
+
+function enforceNoFichouAlgumaDuvida(message) {
+  if (!message || typeof message !== "string") return message;
+  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
+  if (!F77_FICOU_DUVIDA_REGEX.test(message)) return message;
+  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
+  return message.replace(F77_FICOU_DUVIDA_REGEX, (match) => {
+    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+    const sub = F77_FICOU_DUVIDA_SUBSTITUTOS[F77_FICOU_DUVIDA_COUNTER % F77_FICOU_DUVIDA_SUBSTITUTOS.length];
+    F77_FICOU_DUVIDA_COUNTER++;
+    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+      ? `${leadingSep} ${sub}` : ` ${sub}`;
+  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+}
+
+// F8.γ.2 — Enforcer programático de clarity-check após explicação de etapa.
+//
+// Problema (auditoria 2026-05-28): só 6% das msgs SDR têm clarity-check
+// (vs ~50% esperado). 61% dos leads suspeitos com 0 etapas marcadas estão
+// no padrão P1: SDR explicou substantivo MAS NÃO perguntou "ficou claro?".
+// → F7.4b detector NUNCA dispara porque clarity-check não existe na msg.
+//
+// Solução simétrica a F7.5/F8.2: append determinístico de clarity-check
+// quando SDR explicou etapa NOVA e não fechou com pergunta. Não toca o
+// detector F7.4b nem o prompt — só adiciona o gatilho que faltava.
+//
+// 7 HARD LIMITS:
+//   1. SKIP se msg já contém CLARITY_CHECK_REGEX (idempotente)
+//   2. SKIP se msg.length < 80 (resposta curta ≠ explicação substantiva)
+//   3. SKIP se faseFunil ∉ {"", "esclarecimento"} (não tocar fases avançadas)
+//   4. SKIP se etapa-alvo já marcada (currentLead.etapas[step] === true)
+//   5. SKIP se status terminal (fechado/perdido/em_atendimento/enviado_crm)
+//   6. SKIP em fluxo cadência (NÃO integrado em @22994; só LIVE @30164)
+//   7. SKIP etapas com gates próprios (investimento, compromisso)
+//
+// Etapa-alvo: primeira em [programa, beneficios, estoque, responsabilidades]
+// detectada como explicada AGORA e ainda não marcada em currentLead.etapas.
+const F8GAMMA2_CLARITY_CHECK_BY_STEP = {
+  programa: [
+    "Ficou claro como funciona o programa?",
+    "Faz sentido até aqui?",
+    "Deu pra entender o programa?"
+  ],
+  beneficios: [
+    "Ficou claro o suporte que você teria?",
+    "Faz sentido como a gente te apoia?",
+    "Deu pra entender os benefícios?"
+  ],
+  estoque: [
+    "Ficou claro como funciona o lote inicial?",
+    "Faz sentido o esquema do comodato?",
+    "Deu pra entender como o estoque é entregue?"
+  ],
+  responsabilidades: [
+    "Ficou claro o que fica sob sua responsabilidade?",
+    "Faz sentido a divisão de responsabilidades?",
+    "Deu pra entender a parte do parceiro?"
+  ]
+};
+
+// Counter módulo-level por etapa — variação rotativa entre chamadas
+// (mesmo padrão F75_SUBSTITUTO_COUNTER @28808 e F77_FICOU_DUVIDA_COUNTER @28837).
+const F8GAMMA2_COUNTERS = {
+  programa: 0,
+  beneficios: 0,
+  estoque: 0,
+  responsabilidades: 0
+};
+
+async function enforceClarityCheckAfterExplanation(message, from, currentLead) {
+  if (!message || typeof message !== "string") return message;
+
+  // Limit 1: idempotente — se já tem clarity-check, NÃO duplica
+  if (CLARITY_CHECK_REGEX.test(message)) return message;
+
+  // Limit 2: msg curta não é explicação substantiva
+  if (message.length < 80) return message;
+
+  // Limit 3: fora de esclarecimento, não interferir
+  const fase = currentLead?.faseFunil || "";
+  if (fase !== "" && fase !== "esclarecimento") return message;
+
+  // Limit 5: status terminal/avançado
+  const status = currentLead?.status || "";
+  if (["fechado", "perdido", "em_atendimento", "enviado_crm",
+       "erro_dados", "erro_envio_crm"].includes(status)) return message;
+
+  // Detecta etapas explicadas NA MENSAGEM ATUAL (reusa detector F7.4b/canonical)
+  const explainedNow = iqgDetectFunnelStepsExplainedInText(message);
+  const etapasAtuais = currentLead?.etapas || {};
+
+  // Limit 4 + 7: primeira etapa-alvo em ordem funil; exclui investimento+compromisso
+  let stepAlvo = null;
+  for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
+    if (explainedNow[step] && !etapasAtuais[step]) {
+      stepAlvo = step;
+      break;
+    }
+  }
+  if (!stepAlvo) return message;
+
+  // Rotação determinística por etapa
+  const variantes = F8GAMMA2_CLARITY_CHECK_BY_STEP[stepAlvo];
+  const substituto = variantes[F8GAMMA2_COUNTERS[stepAlvo] % variantes.length];
+  F8GAMMA2_COUNTERS[stepAlvo]++;
+
+  const original = message;
+  const trimmed = original.replace(/[\s]+$/, "");
+  const separador = /[.!?]$/.test(trimmed) ? " " : ". ";
+  const result = trimmed + separador + substituto;
+
+  // Audit (fire-and-forget — não bloqueia envio)
+  auditSystemEvent("clarity_check_appended_F8gamma2", "low", from, {
+    stepExplained: stepAlvo,
+    clarityCheckUsed: substituto,
+    lastSdrLen: original.length,
+    reason: "etapa_nova_explicada_sem_clarity_check"
+  }).catch(() => {});
+
+  return result;
+}
+
+// F8.1b — Substituidor "se precisar" + "qualquer dúvida" com guards contextuais.
+//
+// Catálogo F8.1: regex simples agressiva pegaria templates hardcoded junto com
+// GPT-livre. Solução: 5 hard limits + idempotência hardcoded. REUSA
+// F75_SUBSTITUTOS + F75_SUBSTITUTO_COUNTER (família semântica "fechamento informal"
+// = F7.5 + F8.1 + F8.1b — telemetria unificada via counter compartilhado).
+//
+// Templates protegidos (idempotência hardcoded + status/fase guards):
+//   T1 @26884 — despedida_apos_afiliado (status → "perdido")
+//   T2 @28459 — guardrail pós-CRM (status="enviado_crm" OR faseFunil="crm")
+//   T4 @27314 — confirmedMsg pós-coleta (faseQ="aguardando_confirmacao_dados")
+//
+// 5 HARD LIMITS:
+//   1. Idempotência hardcoded — texto contém marcador T1/T2/T4 (defesa profunda)
+//   2. Status terminal/avançado (fechado/perdido/enviado_crm/em_atendimento/erro_*)
+//   3. Fase de coleta (faseQualificacao em coletando_dados/etc)
+//   4. Rota/fluxo afiliado (rota OR status OR faseQ OR faseFunil = "afiliado")
+//   5. Cadência — SKIP via não-integração em @22994-22995 (escopo LIVE only)
+//
+// Cobertura projetada: 97% das ocorrências GPT-livres (32/33 no JSON 28/05).
+// Falsos positivos esperados: ~0. Bucket E (status afiliado isolado) coberto
+// pelo Limit 4 refinado.
+
+const F81B_SE_PRECISAR_REGEX =
+  /(?:^|[\s,—.;])se precisar[^.!?\n]*[.!?]?/gi;
+
+const F81B_QUALQUER_DUVIDA_REGEX =
+  /(?:^|[\s,—.;])(?:e\s+|pra\s+|para\s+|se\s+|que\s+|ou\s+)?qualquer d[úu]vida(?! sobre)[^.!?\n]*[.!?]?/gi;
+
+// Defesa em profundidade — idempotência por marcador hardcoded dos 3 templates.
+// Status/fase guards (Limits 2-4) já bloqueariam, mas marker textual é proteção
+// independente caso lifecycle não tenha sido atualizado ainda.
+const F81B_HARDCODED_MARKERS = /foi um prazer conversar com você|seus dados já estão com a equipe comercial da IQG|Encaminhei seus dados para a equipe comercial/i;
+
+async function enforceNoSePrecisarNoQualquerDuvida(message, from, currentLead) {
+  if (!message || typeof message !== "string") return message;
+
+  // Limit 1: idempotência hardcoded — preserva T1/T2/T4 mesmo se status atrasado
+  if (F81B_HARDCODED_MARKERS.test(message)) return message;
+
+  // Limit 2: status terminal/avançado
+  const status = currentLead?.status || "";
+  if (["fechado", "perdido", "enviado_crm", "em_atendimento",
+       "erro_dados", "erro_envio_crm"].includes(status)) return message;
+
+  // Limit 3: fase de coleta de dados
+  const faseQ = currentLead?.faseQualificacao || "";
+  if (["coletando_dados", "aguardando_confirmacao_dados",
+       "aguardando_dados", "dados_confirmados"].includes(faseQ)) return message;
+
+  // Limit 4: rota/fluxo afiliado (4 condições — refinado pós-anomalia A.4 Bucket E)
+  const rota = currentLead?.rotaComercial || "";
+  const faseFunil = currentLead?.faseFunil || "";
+  if (rota === "afiliado" || status === "afiliado" ||
+      faseQ === "afiliado" || faseFunil === "afiliado") return message;
+
+  // Detecta padrões (lastIndex reset entre testes — regex /g requer)
+  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
+  const hasSP = F81B_SE_PRECISAR_REGEX.test(message);
+  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  const hasQD = F81B_QUALQUER_DUVIDA_REGEX.test(message);
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  if (!hasSP && !hasQD) return message;
+
+  let result = message;
+  const patternsHit = [];
+
+  if (hasSP) {
+    result = result.replace(F81B_SE_PRECISAR_REGEX, (match) => {
+      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+      F75_SUBSTITUTO_COUNTER++;
+      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+        ? `${leadingSep} ${sub}` : ` ${sub}`;
+    });
+    patternsHit.push("se_precisar");
+  }
+
+  // Re-test pós-1º replace — "qualquer dúvida" pode ter sido consumida na frase de "se precisar"
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  if (F81B_QUALQUER_DUVIDA_REGEX.test(result)) {
+    F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+    result = result.replace(F81B_QUALQUER_DUVIDA_REGEX, (match) => {
+      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+      F75_SUBSTITUTO_COUNTER++;
+      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+        ? `${leadingSep} ${sub}` : ` ${sub}`;
+    });
+    patternsHit.push("qualquer_duvida");
+  }
+
+  result = result.replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+
+  if (result !== message) {
+    auditSystemEvent("se_precisar_qualquer_duvida_replaced_F81b", "low", from, {
+      patternsHit,
+      lastSdrLen: message.length,
+      resultLen: result.length,
+      originalExcerpt: message.slice(0, 200),
+      reason: "bordao_fechamento_familia_F75"
+    }).catch(() => {});
+  }
+
+  return result;
+}
 async function sendAutomaticFollowupIfStillValid({
   from,
   followup,
@@ -28884,290 +29168,6 @@ if (
   }
 }
      
-// F7.5 — Substituidor programático de bordão "fico à disposição".
-// Enforcement HARD (determinístico, antes do envio). Cobre 6 variantes
-// principais (fico/estou/ficamos/sigo/seguimos/estamos). Idempotente:
-// msgs já limpas passam intactas. Detecta FRASE COMPLETA (até pontuação)
-// para não quebrar gramática. Variação rotativa de substituição evita
-// criar novo bordão. NÃO substitui o detector @28704 (badPatterns soft);
-// é a rede HARD complementar.
-// F8.1 — Família ampliada: 3 padrões SEGUROS (zero falsos positivos).
-// "se precisar" e "qualquer dúvida" catalogados pra F8.1b
-// (precisam guard contextual pra evitar modificação de templates
-// hardcoded @26800, @27230, @28375).
-const F75_BORDAO_FECHAMENTO_REGEX =
-  /(?:^|[\s,—.;])(?:fico|estou|ficamos|sigo|seguimos|estamos)\s+[àa]\s+disposi[çc][ãa]o[^.!?\n]*[.!?]?|(?:^|[\s,—.;])estou aqui p(?:ara|ra) ajudar[^.!?\n]*[.!?]?|(?:^|[\s,—.;])fique [àa] vontade[^.!?\n]*[.!?]?/gi;
-
-const F75_SUBSTITUTOS = [
-  "Se quiser, é só me chamar por aqui.",
-  "Qualquer coisa, me chama por aqui.",
-  "Se fizer sentido, é só me chamar.",
-  "É só me chamar por aqui."
-];
-
-// Counter módulo-level pra variação ROTATIVA ENTRE chamadas separadas
-// (sem isso, cada call reinicia em 0 e sempre usa F75_SUBSTITUTOS[0] —
-// cria novo bordão. Counter global garante ≥3 variantes em 4 disparos
-// consecutivos. Sem persistência: reseta a cada restart do server, OK.)
-let F75_SUBSTITUTO_COUNTER = 0;
-
-function enforceNoBordaoFechamento(message) {
-  if (!message || typeof message !== "string") return message;
-  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
-  if (!F75_BORDAO_FECHAMENTO_REGEX.test(message)) return message;
-  F75_BORDAO_FECHAMENTO_REGEX.lastIndex = 0;
-  return message.replace(F75_BORDAO_FECHAMENTO_REGEX, (match) => {
-    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
-    const substituto = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
-    F75_SUBSTITUTO_COUNTER++;
-    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
-      ? `${leadingSep} ${substituto}`
-      : ` ${substituto}`;
-  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
-}
-
-// F8.2 — Helper simétrico ao F7.5 pra "ficou alguma dúvida"
-// Cobre os 16 GPT-livres que F7.6 hardcoded não pega (Patterns A/B/C)
-const F77_FICOU_DUVIDA_REGEX =
-  /(?:^|[\s,—.;])(?:e\s+|se\s+|que\s+|ou\s+)?ficou alguma d[úu]vida[^.!?\n]*[.!?]?/gi;
-
-const F77_FICOU_DUVIDA_SUBSTITUTOS = [
-  "Ficou claro o que conversamos até aqui?",
-  "Do que vimos, o que mais fez sentido pra você?",
-  "Tem algum ponto específico que quer reforçar?",
-  "Qual parte ficou mais clara pra você?"
-];
-
-let F77_FICOU_DUVIDA_COUNTER = 0;
-
-function enforceNoFichouAlgumaDuvida(message) {
-  if (!message || typeof message !== "string") return message;
-  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
-  if (!F77_FICOU_DUVIDA_REGEX.test(message)) return message;
-  F77_FICOU_DUVIDA_REGEX.lastIndex = 0;
-  return message.replace(F77_FICOU_DUVIDA_REGEX, (match) => {
-    const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
-    const sub = F77_FICOU_DUVIDA_SUBSTITUTOS[F77_FICOU_DUVIDA_COUNTER % F77_FICOU_DUVIDA_SUBSTITUTOS.length];
-    F77_FICOU_DUVIDA_COUNTER++;
-    return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
-      ? `${leadingSep} ${sub}` : ` ${sub}`;
-  }).replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
-}
-
-// F8.γ.2 — Enforcer programático de clarity-check após explicação de etapa.
-//
-// Problema (auditoria 2026-05-28): só 6% das msgs SDR têm clarity-check
-// (vs ~50% esperado). 61% dos leads suspeitos com 0 etapas marcadas estão
-// no padrão P1: SDR explicou substantivo MAS NÃO perguntou "ficou claro?".
-// → F7.4b detector NUNCA dispara porque clarity-check não existe na msg.
-//
-// Solução simétrica a F7.5/F8.2: append determinístico de clarity-check
-// quando SDR explicou etapa NOVA e não fechou com pergunta. Não toca o
-// detector F7.4b nem o prompt — só adiciona o gatilho que faltava.
-//
-// 7 HARD LIMITS:
-//   1. SKIP se msg já contém CLARITY_CHECK_REGEX (idempotente)
-//   2. SKIP se msg.length < 80 (resposta curta ≠ explicação substantiva)
-//   3. SKIP se faseFunil ∉ {"", "esclarecimento"} (não tocar fases avançadas)
-//   4. SKIP se etapa-alvo já marcada (currentLead.etapas[step] === true)
-//   5. SKIP se status terminal (fechado/perdido/em_atendimento/enviado_crm)
-//   6. SKIP em fluxo cadência (NÃO integrado em @22994; só LIVE @30164)
-//   7. SKIP etapas com gates próprios (investimento, compromisso)
-//
-// Etapa-alvo: primeira em [programa, beneficios, estoque, responsabilidades]
-// detectada como explicada AGORA e ainda não marcada em currentLead.etapas.
-const F8GAMMA2_CLARITY_CHECK_BY_STEP = {
-  programa: [
-    "Ficou claro como funciona o programa?",
-    "Faz sentido até aqui?",
-    "Deu pra entender o programa?"
-  ],
-  beneficios: [
-    "Ficou claro o suporte que você teria?",
-    "Faz sentido como a gente te apoia?",
-    "Deu pra entender os benefícios?"
-  ],
-  estoque: [
-    "Ficou claro como funciona o lote inicial?",
-    "Faz sentido o esquema do comodato?",
-    "Deu pra entender como o estoque é entregue?"
-  ],
-  responsabilidades: [
-    "Ficou claro o que fica sob sua responsabilidade?",
-    "Faz sentido a divisão de responsabilidades?",
-    "Deu pra entender a parte do parceiro?"
-  ]
-};
-
-// Counter módulo-level por etapa — variação rotativa entre chamadas
-// (mesmo padrão F75_SUBSTITUTO_COUNTER @28808 e F77_FICOU_DUVIDA_COUNTER @28837).
-const F8GAMMA2_COUNTERS = {
-  programa: 0,
-  beneficios: 0,
-  estoque: 0,
-  responsabilidades: 0
-};
-
-async function enforceClarityCheckAfterExplanation(message, from, currentLead) {
-  if (!message || typeof message !== "string") return message;
-
-  // Limit 1: idempotente — se já tem clarity-check, NÃO duplica
-  if (CLARITY_CHECK_REGEX.test(message)) return message;
-
-  // Limit 2: msg curta não é explicação substantiva
-  if (message.length < 80) return message;
-
-  // Limit 3: fora de esclarecimento, não interferir
-  const fase = currentLead?.faseFunil || "";
-  if (fase !== "" && fase !== "esclarecimento") return message;
-
-  // Limit 5: status terminal/avançado
-  const status = currentLead?.status || "";
-  if (["fechado", "perdido", "em_atendimento", "enviado_crm",
-       "erro_dados", "erro_envio_crm"].includes(status)) return message;
-
-  // Detecta etapas explicadas NA MENSAGEM ATUAL (reusa detector F7.4b/canonical)
-  const explainedNow = iqgDetectFunnelStepsExplainedInText(message);
-  const etapasAtuais = currentLead?.etapas || {};
-
-  // Limit 4 + 7: primeira etapa-alvo em ordem funil; exclui investimento+compromisso
-  let stepAlvo = null;
-  for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
-    if (explainedNow[step] && !etapasAtuais[step]) {
-      stepAlvo = step;
-      break;
-    }
-  }
-  if (!stepAlvo) return message;
-
-  // Rotação determinística por etapa
-  const variantes = F8GAMMA2_CLARITY_CHECK_BY_STEP[stepAlvo];
-  const substituto = variantes[F8GAMMA2_COUNTERS[stepAlvo] % variantes.length];
-  F8GAMMA2_COUNTERS[stepAlvo]++;
-
-  const original = message;
-  const trimmed = original.replace(/[\s]+$/, "");
-  const separador = /[.!?]$/.test(trimmed) ? " " : ". ";
-  const result = trimmed + separador + substituto;
-
-  // Audit (fire-and-forget — não bloqueia envio)
-  auditSystemEvent("clarity_check_appended_F8gamma2", "low", from, {
-    stepExplained: stepAlvo,
-    clarityCheckUsed: substituto,
-    lastSdrLen: original.length,
-    reason: "etapa_nova_explicada_sem_clarity_check"
-  }).catch(() => {});
-
-  return result;
-}
-
-// F8.1b — Substituidor "se precisar" + "qualquer dúvida" com guards contextuais.
-//
-// Catálogo F8.1: regex simples agressiva pegaria templates hardcoded junto com
-// GPT-livre. Solução: 5 hard limits + idempotência hardcoded. REUSA
-// F75_SUBSTITUTOS + F75_SUBSTITUTO_COUNTER (família semântica "fechamento informal"
-// = F7.5 + F8.1 + F8.1b — telemetria unificada via counter compartilhado).
-//
-// Templates protegidos (idempotência hardcoded + status/fase guards):
-//   T1 @26884 — despedida_apos_afiliado (status → "perdido")
-//   T2 @28459 — guardrail pós-CRM (status="enviado_crm" OR faseFunil="crm")
-//   T4 @27314 — confirmedMsg pós-coleta (faseQ="aguardando_confirmacao_dados")
-//
-// 5 HARD LIMITS:
-//   1. Idempotência hardcoded — texto contém marcador T1/T2/T4 (defesa profunda)
-//   2. Status terminal/avançado (fechado/perdido/enviado_crm/em_atendimento/erro_*)
-//   3. Fase de coleta (faseQualificacao em coletando_dados/etc)
-//   4. Rota/fluxo afiliado (rota OR status OR faseQ OR faseFunil = "afiliado")
-//   5. Cadência — SKIP via não-integração em @22994-22995 (escopo LIVE only)
-//
-// Cobertura projetada: 97% das ocorrências GPT-livres (32/33 no JSON 28/05).
-// Falsos positivos esperados: ~0. Bucket E (status afiliado isolado) coberto
-// pelo Limit 4 refinado.
-
-const F81B_SE_PRECISAR_REGEX =
-  /(?:^|[\s,—.;])se precisar[^.!?\n]*[.!?]?/gi;
-
-const F81B_QUALQUER_DUVIDA_REGEX =
-  /(?:^|[\s,—.;])(?:e\s+|pra\s+|para\s+|se\s+|que\s+|ou\s+)?qualquer d[úu]vida(?! sobre)[^.!?\n]*[.!?]?/gi;
-
-// Defesa em profundidade — idempotência por marcador hardcoded dos 3 templates.
-// Status/fase guards (Limits 2-4) já bloqueariam, mas marker textual é proteção
-// independente caso lifecycle não tenha sido atualizado ainda.
-const F81B_HARDCODED_MARKERS = /foi um prazer conversar com você|seus dados já estão com a equipe comercial da IQG|Encaminhei seus dados para a equipe comercial/i;
-
-async function enforceNoSePrecisarNoQualquerDuvida(message, from, currentLead) {
-  if (!message || typeof message !== "string") return message;
-
-  // Limit 1: idempotência hardcoded — preserva T1/T2/T4 mesmo se status atrasado
-  if (F81B_HARDCODED_MARKERS.test(message)) return message;
-
-  // Limit 2: status terminal/avançado
-  const status = currentLead?.status || "";
-  if (["fechado", "perdido", "enviado_crm", "em_atendimento",
-       "erro_dados", "erro_envio_crm"].includes(status)) return message;
-
-  // Limit 3: fase de coleta de dados
-  const faseQ = currentLead?.faseQualificacao || "";
-  if (["coletando_dados", "aguardando_confirmacao_dados",
-       "aguardando_dados", "dados_confirmados"].includes(faseQ)) return message;
-
-  // Limit 4: rota/fluxo afiliado (4 condições — refinado pós-anomalia A.4 Bucket E)
-  const rota = currentLead?.rotaComercial || "";
-  const faseFunil = currentLead?.faseFunil || "";
-  if (rota === "afiliado" || status === "afiliado" ||
-      faseQ === "afiliado" || faseFunil === "afiliado") return message;
-
-  // Detecta padrões (lastIndex reset entre testes — regex /g requer)
-  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
-  const hasSP = F81B_SE_PRECISAR_REGEX.test(message);
-  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
-  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
-  const hasQD = F81B_QUALQUER_DUVIDA_REGEX.test(message);
-  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
-  if (!hasSP && !hasQD) return message;
-
-  let result = message;
-  const patternsHit = [];
-
-  if (hasSP) {
-    result = result.replace(F81B_SE_PRECISAR_REGEX, (match) => {
-      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
-      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
-      F75_SUBSTITUTO_COUNTER++;
-      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
-        ? `${leadingSep} ${sub}` : ` ${sub}`;
-    });
-    patternsHit.push("se_precisar");
-  }
-
-  // Re-test pós-1º replace — "qualquer dúvida" pode ter sido consumida na frase de "se precisar"
-  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
-  if (F81B_QUALQUER_DUVIDA_REGEX.test(result)) {
-    F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
-    result = result.replace(F81B_QUALQUER_DUVIDA_REGEX, (match) => {
-      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
-      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
-      F75_SUBSTITUTO_COUNTER++;
-      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
-        ? `${leadingSep} ${sub}` : ` ${sub}`;
-    });
-    patternsHit.push("qualquer_duvida");
-  }
-
-  result = result.replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
-
-  if (result !== message) {
-    auditSystemEvent("se_precisar_qualquer_duvida_replaced_F81b", "low", from, {
-      patternsHit,
-      lastSdrLen: message.length,
-      resultLen: result.length,
-      originalExcerpt: message.slice(0, 200),
-      reason: "bordao_fechamento_familia_F75"
-    }).catch(() => {});
-  }
-
-  return result;
-}
 
 // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
