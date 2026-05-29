@@ -37887,7 +37887,7 @@ app.get("/diagnostico-bug-1", async (req, res) => {
 
   // ============ FASE 7: AUDIT EVENTS RECENTES ============
   try {
-    const db = await connectMongo();
+    await connectMongo();
     const failures = await db.collection("audit_events").find({
       eventType: { $in: ["followup_failed", "erro_sistema", "supervisor_abortado", "regeneracao_sdr_tentativa_falha"] },
       timestamp: { $gte: new Date(Date.now() - 60 * 60 * 1000) }
@@ -37906,7 +37906,7 @@ app.get("/diagnostico-bug-1", async (req, res) => {
 
   // ============ FASE 8: LEAD STATE CHECKS ============
   try {
-    const db = await connectMongo();
+    await connectMongo();
     const leadsToCheck = {
       Harrykeim: "555196.*96$",
       João: "551999.*68$",
@@ -37930,7 +37930,7 @@ app.get("/diagnostico-bug-1", async (req, res) => {
 
   // ============ FASE 9: VOLUME LEADS/DIA ============
   try {
-    const db = await connectMongo();
+    await connectMongo();
     const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
     const volumeAgg = await db.collection("leads").aggregate([
       { $match: { createdAt: { $gte: fiveDaysAgo } } },
@@ -37945,6 +37945,193 @@ app.get("/diagnostico-bug-1", async (req, res) => {
     report.errors.push({ phase: "phase9_volume", error: e.message });
     report.volume_leads_last_5_days = { error: e.message };
   }
+
+  // ============ FASE 10: VALIDACAO_FOLLOWUPS + STEP FINAL + RISCO BAN ============
+  try {
+    await connectMongo();
+
+    // Detectores
+    const REGEX_DESPEDIDA = /(foi um prazer|agradeço o interesse|agradeço seu interesse|tudo de bom|tudo certo|boa sorte|sucesso|um abraço|abraços|até (mais|breve|logo|qualquer hora))/i;
+    const REGEX_DISPONIBILIDADE = /(estou (à|a) (disposição|sua disposição)|se precisar (de )?(algo|ajuda|mais)|qualquer (coisa|dúvida)|fico (à|a) (disposição|sua disposição)|aqui se precisar|se quiser (é só |me )?(me )?(chamar|chame|falar|avisar)|conta comigo|tô (por )?aqui)/i;
+    // P.7: URL afiliado descoberto = minhaiqg.com.br
+    const REGEX_AFILIADO = /(afiliado|programa de afiliados|link de afiliado|minhaiqg\.com\.br|loja virtual|loja online|e.commerce|catalog[oó] online|catalogo digital|comissão por venda|comprar pelo (site|app)|nossa loja online|nosso e.commerce)/i;
+
+    // Janela: maior entre uptime atual e últimos 120min
+    const processStart = new Date(Date.now() - process.uptime() * 1000);
+    const twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000);
+    const sinceWindow = processStart > twoHoursAgo ? processStart : twoHoursAgo;
+
+    // P.3: emite envio_followup (texto truncado 300) + followup_sent (texto full em respostaFinalSdr)
+    // P.4: payload tem step, closeAfter, respostaFinalSdr (full), mensagem (trunc), faseFunil, faseQualificacao, status
+    const followups = await db.collection("audit_events").find({
+      eventType: { $in: ["envio_followup", "ciclo_followup", "followup_sent"] },
+      timestamp: { $gte: sinceWindow }
+    }).sort({ timestamp: 1 }).limit(60).toArray();
+
+    const validations = [];
+    let step5Total = 0;
+    let step5Compliant = 0;
+    const highRiskLeads = [];
+
+    for (const fup of followups) {
+      const phone = fup.userPhone;
+      if (!phone) continue;
+
+      // Lead state
+      let lead = null;
+      try {
+        lead = await db.collection("leads").findOne(
+          { user: phone },
+          { projection: { user: 1, faseFunil: 1, etapas: 1, updatedAt: 1, createdAt: 1, status: 1, _id: 0 } }
+        );
+      } catch (e) { lead = { error: e.message }; }
+
+      // Conversation tail
+      // P.6: schema = { role, content, createdAt, origem, followupStep }
+      let lastMessages = [];
+      let totalSdrMsgs24h = 0;
+      let totalSdrMsgsLifetime = 0;
+      let consecutiveSdrCount = 0;
+      try {
+        const conv = await db.collection("conversations").findOne(
+          { user: phone },
+          { projection: { messages: 1 } }
+        );
+        if (conv && Array.isArray(conv.messages)) {
+          const allMsgs = conv.messages;
+          totalSdrMsgsLifetime = allMsgs.filter(m => m.role === "assistant").length;
+          const twentyFourHAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+          totalSdrMsgs24h = allMsgs.filter(m =>
+            m.role === "assistant" &&
+            m.createdAt &&
+            new Date(m.createdAt) >= twentyFourHAgo
+          ).length;
+
+          // Contar SDR consecutivos no FIM (sem user responder entre eles)
+          for (let i = allMsgs.length - 1; i >= 0; i--) {
+            if (allMsgs[i].role === "assistant") consecutiveSdrCount++;
+            else break;
+          }
+
+          lastMessages = allMsgs.slice(-8).map(m => ({
+            role: m.role,
+            createdAt: m.createdAt,
+            preview: typeof m.content === "string" ? m.content.substring(0, 200) : null
+          }));
+        }
+      } catch (e) { lastMessages = { error: e.message }; }
+
+      // Inactivity (last user msg)
+      let inactiveForHours = null;
+      try {
+        if (Array.isArray(lastMessages)) {
+          const lastUserMsg = [...lastMessages].reverse().find(m => m.role === "user");
+          if (lastUserMsg && lastUserMsg.createdAt) {
+            inactiveForHours = Math.round((Date.now() - new Date(lastUserMsg.createdAt).getTime()) / 3600000 * 10) / 10;
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      // P.3: step + closeAfter identification
+      const stepNum = fup.payload?.step ?? null;
+      const isCloseAfter = fup.payload?.closeAfter === true || stepNum === 5;
+
+      // P.4: respostaFinalSdr (full) tem prioridade sobre mensagem (truncado 300)
+      const msgText = fup.payload?.respostaFinalSdr || fup.payload?.mensagem || fup.payload?.messageText || fup.payload?.message || fup.payload?.text || "";
+
+      // Step 5 compliance
+      let step5Check = null;
+      if (isCloseAfter) {
+        step5Total++;
+        const hasDespedida = REGEX_DESPEDIDA.test(msgText);
+        const hasDisponibilidade = REGEX_DISPONIBILIDADE.test(msgText);
+        const hasAfiliado = REGEX_AFILIADO.test(msgText);
+        const allThree = hasDespedida && hasDisponibilidade && hasAfiliado;
+        if (allThree) step5Compliant++;
+        step5Check = {
+          isFinalStep: true,
+          despedida: hasDespedida,
+          disponibilidade: hasDisponibilidade,
+          afiliado: hasAfiliado,
+          all_three_present: allThree,
+          missing: [
+            !hasDespedida && "despedida",
+            !hasDisponibilidade && "disponibilidade",
+            !hasAfiliado && "afiliado"
+          ].filter(Boolean)
+        };
+      }
+
+      // Risk indicators
+      const riskIndicators = {
+        total_sdr_msgs_24h: totalSdrMsgs24h,
+        total_sdr_msgs_lifetime: totalSdrMsgsLifetime,
+        consecutive_sdr_count: consecutiveSdrCount,
+        last_lead_msg_age_hours: inactiveForHours,
+        ban_risk_level:
+          consecutiveSdrCount >= 5 ? "HIGH" :
+          consecutiveSdrCount >= 3 ? "MEDIUM" :
+          totalSdrMsgs24h >= 5 ? "MEDIUM" : "LOW"
+      };
+
+      if (riskIndicators.ban_risk_level === "HIGH" || riskIndicators.ban_risk_level === "MEDIUM") {
+        highRiskLeads.push({
+          phone: phone,
+          consecutive_sdr: consecutiveSdrCount,
+          msgs_24h: totalSdrMsgs24h,
+          msgs_lifetime: totalSdrMsgsLifetime,
+          faseFunil: lead?.faseFunil
+        });
+      }
+
+      validations.push({
+        followup: {
+          timestamp: fup.timestamp,
+          eventType: fup.eventType,
+          step: stepNum,
+          is_close_after: isCloseAfter,
+          textPreview: msgText.substring(0, 400),
+          textLength: msgText.length,
+          payloadKeys: Object.keys(fup.payload || {})
+        },
+        lead: {
+          phone: phone,
+          faseFunil: lead?.faseFunil || null,
+          etapas: lead?.etapas || null,
+          status: lead?.status || null,
+          updatedAt: lead?.updatedAt || null,
+          createdAt: lead?.createdAt || null,
+          inactiveForHours: inactiveForHours
+        },
+        conversation_tail: {
+          messages_count: Array.isArray(lastMessages) ? lastMessages.length : null,
+          last_8: lastMessages
+        },
+        step5_compliance: step5Check,
+        risk_indicators: riskIndicators
+      });
+    }
+
+    report.validacao_followups_recentes = {
+      windowFrom: sinceWindow.toISOString(),
+      processUptimeSeconds: Math.round(process.uptime()),
+      totalFollowupsFound: followups.length,
+      step5_summary: {
+        total_step5: step5Total,
+        compliant_with_all_three: step5Compliant,
+        compliance_rate: step5Total > 0 ? Math.round(step5Compliant / step5Total * 100) : null
+      },
+      ban_risk_summary: {
+        total_high_or_medium_risk: highRiskLeads.length,
+        high_risk_leads: highRiskLeads
+      },
+      validations: validations
+    };
+  } catch (e) {
+    report.errors.push({ phase: "phase10_followup_validation", error: e.message });
+    report.validacao_followups_recentes = { error: e.message };
+  }
+  // ============ FIM FASE 10 ============
 
   res.json(report);
 });
