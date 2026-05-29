@@ -37708,6 +37708,250 @@ app.get("/diagnostico-pos-purga-25-05", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
+// =====================================================
+// DIAGNÓSTICO BUG #1 — ENDPOINT TEMPORÁRIO
+// Adicionado: 2026-05-29 para investigar enforceNoBordaoFechamento
+// REMOVER APÓS COLETA DE EVIDÊNCIAS
+// =====================================================
+app.get("/diagnostico-bug-1", async (req, res) => {
+  const secret = req.query.secret;
+  const EXPECTED_SECRET = process.env.DIAG_SECRET || "iqg-diag-bug1-2026-05-29";
+  if (secret !== EXPECTED_SECRET) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    bug1_paradox_resolution: {},
+    counters_state: {},
+    process: {},
+    render_env: {},
+    recent_failures_last_60min: null,
+    lead_state_checks: {},
+    volume_leads_last_5_days: null,
+    errors: []
+  };
+
+  // ============ FASE 1: ARQUIVO server.js DEPLOYADO ============
+  try {
+    const fs = await import("fs");
+    const path = await import("path");
+    const serverPath = path.resolve("server.js");
+
+    let fileContent = "";
+    let fileLines = 0;
+    let fileSize = 0;
+    try {
+      fileContent = fs.readFileSync(serverPath, "utf-8");
+      fileLines = fileContent.split("\n").length;
+      fileSize = fs.statSync(serverPath).size;
+    } catch (e) {
+      report.errors.push({ phase: "fs_read", error: e.message });
+    }
+
+    // Procurar declarações e chamadas da função
+    const defRegex = /function\s+enforceNoBordaoFechamento\s*\(/g;
+    const callRegex = /enforceNoBordaoFechamento\s*\(/g;
+    const defMatches = [];
+    const callMatches = [];
+    let m;
+    while ((m = defRegex.exec(fileContent)) !== null) {
+      const lineNumber = fileContent.substring(0, m.index).split("\n").length;
+      defMatches.push({ line: lineNumber, snippet: fileContent.substring(m.index, m.index + 80) });
+    }
+    callRegex.lastIndex = 0;
+    while ((m = callRegex.exec(fileContent)) !== null) {
+      const lineNumber = fileContent.substring(0, m.index).split("\n").length;
+      const isDef = defMatches.some(d => Math.abs(d.line - lineNumber) <= 1);
+      if (!isDef) {
+        callMatches.push({ line: lineNumber, snippet: fileContent.substring(m.index, m.index + 100) });
+      }
+    }
+
+    report.bug1_paradox_resolution.file = {
+      path: serverPath,
+      lines: fileLines,
+      size_bytes: fileSize
+    };
+    report.bug1_paradox_resolution.enforceNoBordaoFechamento_in_file = {
+      definitions_found: defMatches,
+      calls_found: callMatches,
+      definitions_count: defMatches.length,
+      calls_count: callMatches.length
+    };
+  } catch (e) {
+    report.errors.push({ phase: "phase1_file_read", error: e.message });
+  }
+
+  // ============ FASE 2: TYPEOF RUNTIME ============
+  try {
+    const runtimeFunctions = {};
+    const candidates = [
+      "enforceNoBordaoFechamento",
+      "enforceNoFichouAlgumaDuvida",
+      "enforceClarityCheckAfterExplanation",
+      "enforceNoSePrecisarNoQualquerDuvida",
+      "sendAutomaticFollowupIfStillValid",
+      "markStep",
+      "saveLeadProfile",
+      "runFollowupCronTick",
+      "iqgBuildFunnelProgressUpdateFromLeadReply",
+      "auditSystemEvent"
+    ];
+    for (const fname of candidates) {
+      try {
+        runtimeFunctions[fname] = eval(`typeof ${fname}`);
+      } catch (e) {
+        runtimeFunctions[fname] = `EVAL_ERROR: ${e.message}`;
+      }
+    }
+    report.bug1_paradox_resolution.runtime_typeof = runtimeFunctions;
+  } catch (e) {
+    report.errors.push({ phase: "phase2_typeof", error: e.message });
+  }
+
+  // ============ FASE 3: TRY-CALL enforceNoBordaoFechamento ============
+  try {
+    const testInput = "Mensagem teste. Fico à disposição.";
+    let callResult;
+    try {
+      const result = eval("enforceNoBordaoFechamento")(testInput);
+      callResult = {
+        success: true,
+        inputLength: testInput.length,
+        outputLength: result?.length,
+        outputDiffers: result !== testInput,
+        outputPreview: typeof result === "string" ? result.substring(0, 120) : String(result)
+      };
+    } catch (e) {
+      callResult = {
+        success: false,
+        errorName: e.name,
+        errorMessage: e.message,
+        stackPreview: e.stack ? e.stack.substring(0, 500) : null
+      };
+    }
+    report.bug1_paradox_resolution.try_call_enforceNoBordaoFechamento = callResult;
+  } catch (e) {
+    report.errors.push({ phase: "phase3_trycall", error: e.message });
+  }
+
+  // ============ FASE 4: COUNTERS STATE ============
+  try {
+    try {
+      const gc = eval("F8GAMMA2_COUNTERS");
+      report.counters_state.F8GAMMA2_COUNTERS = JSON.parse(JSON.stringify(gc));
+    } catch (e) {
+      report.counters_state.F8GAMMA2_COUNTERS = `ERROR: ${e.message}`;
+    }
+    try {
+      const f75 = eval("F75_SUBSTITUTO_COUNTER");
+      report.counters_state.F75_SUBSTITUTO_COUNTER = f75;
+    } catch (e) {
+      report.counters_state.F75_SUBSTITUTO_COUNTER = `ERROR: ${e.message}`;
+    }
+  } catch (e) {
+    report.errors.push({ phase: "phase4_counters", error: e.message });
+  }
+
+  // ============ FASE 5: PROCESS INFO ============
+  try {
+    const up = process.uptime();
+    report.process = {
+      pid: process.pid,
+      cwd: process.cwd(),
+      uptime_seconds: Math.round(up),
+      uptime_human: `${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m`,
+      node_version: process.version,
+      platform: process.platform,
+      heapUsed_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      rss_mb: Math.round(process.memoryUsage().rss / 1024 / 1024)
+    };
+  } catch (e) {
+    report.errors.push({ phase: "phase5_process", error: e.message });
+  }
+
+  // ============ FASE 6: RENDER ENV ============
+  try {
+    report.render_env = {
+      RENDER: process.env.RENDER,
+      RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID,
+      RENDER_GIT_COMMIT: process.env.RENDER_GIT_COMMIT,
+      RENDER_GIT_BRANCH: process.env.RENDER_GIT_BRANCH,
+      RENDER_INSTANCE_ID: process.env.RENDER_INSTANCE_ID,
+      RENDER_EXTERNAL_HOSTNAME: process.env.RENDER_EXTERNAL_HOSTNAME
+    };
+  } catch (e) {
+    report.errors.push({ phase: "phase6_renderenv", error: e.message });
+  }
+
+  // ============ FASE 7: AUDIT EVENTS RECENTES ============
+  try {
+    const db = await connectMongo();
+    const failures = await db.collection("audit_events").find({
+      eventType: { $in: ["followup_failed", "erro_sistema", "supervisor_abortado", "regeneracao_sdr_tentativa_falha"] },
+      timestamp: { $gte: new Date(Date.now() - 60 * 60 * 1000) }
+    }).sort({ timestamp: -1 }).limit(20).toArray();
+    report.recent_failures_last_60min = failures.map(f => ({
+      eventType: f.eventType,
+      severity: f.severity,
+      timestamp: f.timestamp,
+      userPhone: f.userPhone,
+      payload: f.payload
+    }));
+  } catch (e) {
+    report.errors.push({ phase: "phase7_audit", error: e.message });
+    report.recent_failures_last_60min = { error: e.message };
+  }
+
+  // ============ FASE 8: LEAD STATE CHECKS ============
+  try {
+    const db = await connectMongo();
+    const leadsToCheck = {
+      Harrykeim: "555196.*96$",
+      João: "551999.*68$",
+      Ulisses: "555182.*11$",
+      JCardoso: "558591.*66$"
+    };
+    for (const [name, pattern] of Object.entries(leadsToCheck)) {
+      try {
+        const lead = await db.collection("leads").findOne(
+          { user: { $regex: new RegExp(pattern) } },
+          { projection: { user: 1, etapas: 1, faseFunil: 1, status: 1, updatedAt: 1, createdAt: 1, _id: 0 } }
+        );
+        report.lead_state_checks[name] = lead || "NOT_FOUND";
+      } catch (e) {
+        report.lead_state_checks[name] = { error: e.message };
+      }
+    }
+  } catch (e) {
+    report.errors.push({ phase: "phase8_leads", error: e.message });
+  }
+
+  // ============ FASE 9: VOLUME LEADS/DIA ============
+  try {
+    const db = await connectMongo();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const volumeAgg = await db.collection("leads").aggregate([
+      { $match: { createdAt: { $gte: fiveDaysAgo } } },
+      { $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          count: { $sum: 1 }
+      }},
+      { $sort: { _id: 1 } }
+    ]).toArray();
+    report.volume_leads_last_5_days = volumeAgg;
+  } catch (e) {
+    report.errors.push({ phase: "phase9_volume", error: e.message });
+    report.volume_leads_last_5_days = { error: e.message };
+  }
+
+  res.json(report);
+});
+// =====================================================
+// FIM DIAGNÓSTICO BUG #1
+// =====================================================
+
 ensureIndexes()
   .then(() => {
     app.listen(PORT, () => {
