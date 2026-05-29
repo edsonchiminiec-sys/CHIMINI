@@ -21908,12 +21908,30 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
           "A primeira tentativa repetiu tema/tokens da última resposta da SDR no histórico.",
           temaRepetido ? `Tema repetido: "${temaRepetido}".` : "",
           tokensRepetidos.length > 0 ? `Tokens repetidos: ${tokensRepetidos.join(", ")}.` : "",
+          // F8.6 — Camada A: citação verbatim + regras prescritivas mensuráveis
+          "",
+          ...(lastSdrText && lastSdrText.length > 0 ? [
+            "🚫 NÃO REPITA — A ÚLTIMA MENSAGEM DA SDR FOI (verbatim):",
+            `"""${lastSdrText.slice(0, 400)}"""`,
+            ""
+          ] : []),
+          "A NOVA mensagem PRECISA ter:",
+          "- Primeiras 2-3 PALAVRAS diferentes (compare verbatim)",
+          "- Verbos principais diferentes",
+          "- Tópico CENTRAL diferente (se anterior abordou suporte → use comissão vitalícia; se abordou comodato → use ROI; etc.)",
+          "- Se anterior fez PERGUNTA → faça OBSERVAÇÃO. Se fez observação → faça pergunta.",
           "REESCREVA com:",
           "- Estrutura DIFERENTE da última mensagem da SDR (se foi pergunta, faça observação; se começou com 'Oi!', NÃO comece com 'Oi!')",
           "- Ângulo NOVO do tema, sem repetir os mesmos valores monetários, frases-chave ou explicações",
           "- Se já citou R$ 5.000, R$ 1.990, comodato, 10% comissão, vitalícia, margem 40%, suporte+treinamento, taxa de adesão ou pré-análise — NÃO repita; busque outro argumento ou conduza para próximo passo natural",
           "- Mantenha as REGRAS DA CADÊNCIA originais (curta, 2-3 frases, tom consultivo)"
         ].filter(Boolean).join("\n");
+
+        // F8.6 — instrumentação Camada B (vars antes do retry fetch)
+        const retryStartTs = Date.now();
+        let retryHttpStatus = null;
+        let retryResponseLen = 0;
+        let retryResponseExcerpt = null;
 
         // Retry interno: 1 segunda tentativa
         const retryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -21933,10 +21951,13 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
             ]
           })
         });
+        retryHttpStatus = retryResponse.status;  // F8.6
 
         if (retryResponse.ok) {
           const retryData = await retryResponse.json();
           const retryMensagem = retryData?.choices?.[0]?.message?.content || "";
+          retryResponseLen = retryMensagem.length;  // F8.6
+          retryResponseExcerpt = retryMensagem.slice(0, 150) || null;  // F8.6
           const retryLimpa = sanitizeWhatsAppText(retryMensagem);
 
           if (retryLimpa) {
@@ -21961,7 +21982,13 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
             // Retry também repetiu — descarta e cai no fallback
             await auditSystemEvent("cadencia_retry_falhou", "medium", from, {
               step,
-              motivoFalha: "retry_tambem_repetiu"
+              motivoFalha: "retry_tambem_repetiu",
+              // F8.6 — instrumentação Camada B
+              latency_ms: Date.now() - retryStartTs,
+              http_status: retryHttpStatus,
+              attempt_n: 2,
+              response_len: retryResponseLen,
+              response_excerpt: retryResponseExcerpt
             });
             return null;
           }
@@ -21970,7 +21997,13 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
         // Retry falhou (resposta vazia ou HTTP erro) — descarta e cai no fallback
         await auditSystemEvent("cadencia_retry_falhou", "medium", from, {
           step,
-          motivoFalha: "retry_resposta_vazia_ou_erro_http"
+          motivoFalha: "retry_resposta_vazia_ou_erro_http",
+          // F8.6 — instrumentação Camada B
+          latency_ms: Date.now() - retryStartTs,
+          http_status: retryHttpStatus,
+          attempt_n: 2,
+          response_len: retryResponseLen,
+          response_excerpt: retryResponseExcerpt
         });
         return null;
       }
