@@ -28957,6 +28957,114 @@ async function enforceClarityCheckAfterExplanation(message, from, currentLead) {
   return result;
 }
 
+// F8.1b — Substituidor "se precisar" + "qualquer dúvida" com guards contextuais.
+//
+// Catálogo F8.1: regex simples agressiva pegaria templates hardcoded junto com
+// GPT-livre. Solução: 5 hard limits + idempotência hardcoded. REUSA
+// F75_SUBSTITUTOS + F75_SUBSTITUTO_COUNTER (família semântica "fechamento informal"
+// = F7.5 + F8.1 + F8.1b — telemetria unificada via counter compartilhado).
+//
+// Templates protegidos (idempotência hardcoded + status/fase guards):
+//   T1 @26884 — despedida_apos_afiliado (status → "perdido")
+//   T2 @28459 — guardrail pós-CRM (status="enviado_crm" OR faseFunil="crm")
+//   T4 @27314 — confirmedMsg pós-coleta (faseQ="aguardando_confirmacao_dados")
+//
+// 5 HARD LIMITS:
+//   1. Idempotência hardcoded — texto contém marcador T1/T2/T4 (defesa profunda)
+//   2. Status terminal/avançado (fechado/perdido/enviado_crm/em_atendimento/erro_*)
+//   3. Fase de coleta (faseQualificacao em coletando_dados/etc)
+//   4. Rota/fluxo afiliado (rota OR status OR faseQ OR faseFunil = "afiliado")
+//   5. Cadência — SKIP via não-integração em @22994-22995 (escopo LIVE only)
+//
+// Cobertura projetada: 97% das ocorrências GPT-livres (32/33 no JSON 28/05).
+// Falsos positivos esperados: ~0. Bucket E (status afiliado isolado) coberto
+// pelo Limit 4 refinado.
+
+const F81B_SE_PRECISAR_REGEX =
+  /(?:^|[\s,—.;])se precisar[^.!?\n]*[.!?]?/gi;
+
+const F81B_QUALQUER_DUVIDA_REGEX =
+  /(?:^|[\s,—.;])(?:e\s+|pra\s+|para\s+|se\s+|que\s+|ou\s+)?qualquer d[úu]vida(?! sobre)[^.!?\n]*[.!?]?/gi;
+
+// Defesa em profundidade — idempotência por marcador hardcoded dos 3 templates.
+// Status/fase guards (Limits 2-4) já bloqueariam, mas marker textual é proteção
+// independente caso lifecycle não tenha sido atualizado ainda.
+const F81B_HARDCODED_MARKERS = /foi um prazer conversar com você|seus dados já estão com a equipe comercial da IQG|Encaminhei seus dados para a equipe comercial/i;
+
+async function enforceNoSePrecisarNoQualquerDuvida(message, from, currentLead) {
+  if (!message || typeof message !== "string") return message;
+
+  // Limit 1: idempotência hardcoded — preserva T1/T2/T4 mesmo se status atrasado
+  if (F81B_HARDCODED_MARKERS.test(message)) return message;
+
+  // Limit 2: status terminal/avançado
+  const status = currentLead?.status || "";
+  if (["fechado", "perdido", "enviado_crm", "em_atendimento",
+       "erro_dados", "erro_envio_crm"].includes(status)) return message;
+
+  // Limit 3: fase de coleta de dados
+  const faseQ = currentLead?.faseQualificacao || "";
+  if (["coletando_dados", "aguardando_confirmacao_dados",
+       "aguardando_dados", "dados_confirmados"].includes(faseQ)) return message;
+
+  // Limit 4: rota/fluxo afiliado (4 condições — refinado pós-anomalia A.4 Bucket E)
+  const rota = currentLead?.rotaComercial || "";
+  const faseFunil = currentLead?.faseFunil || "";
+  if (rota === "afiliado" || status === "afiliado" ||
+      faseQ === "afiliado" || faseFunil === "afiliado") return message;
+
+  // Detecta padrões (lastIndex reset entre testes — regex /g requer)
+  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
+  const hasSP = F81B_SE_PRECISAR_REGEX.test(message);
+  F81B_SE_PRECISAR_REGEX.lastIndex = 0;
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  const hasQD = F81B_QUALQUER_DUVIDA_REGEX.test(message);
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  if (!hasSP && !hasQD) return message;
+
+  let result = message;
+  const patternsHit = [];
+
+  if (hasSP) {
+    result = result.replace(F81B_SE_PRECISAR_REGEX, (match) => {
+      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+      F75_SUBSTITUTO_COUNTER++;
+      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+        ? `${leadingSep} ${sub}` : ` ${sub}`;
+    });
+    patternsHit.push("se_precisar");
+  }
+
+  // Re-test pós-1º replace — "qualquer dúvida" pode ter sido consumida na frase de "se precisar"
+  F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+  if (F81B_QUALQUER_DUVIDA_REGEX.test(result)) {
+    F81B_QUALQUER_DUVIDA_REGEX.lastIndex = 0;
+    result = result.replace(F81B_QUALQUER_DUVIDA_REGEX, (match) => {
+      const leadingSep = match.match(/^[\s,—.;]/)?.[0] || "";
+      const sub = F75_SUBSTITUTOS[F75_SUBSTITUTO_COUNTER % F75_SUBSTITUTOS.length];
+      F75_SUBSTITUTO_COUNTER++;
+      return (leadingSep === "." || leadingSep === "!" || leadingSep === "?")
+        ? `${leadingSep} ${sub}` : ` ${sub}`;
+    });
+    patternsHit.push("qualquer_duvida");
+  }
+
+  result = result.replace(/\s+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+
+  if (result !== message) {
+    auditSystemEvent("se_precisar_qualquer_duvida_replaced_F81b", "low", from, {
+      patternsHit,
+      lastSdrLen: message.length,
+      resultLen: result.length,
+      originalExcerpt: message.slice(0, 200),
+      reason: "bordao_fechamento_familia_F75"
+    }).catch(() => {});
+  }
+
+  return result;
+}
+
 // 🔥 DETECTOR DE RESPOSTA RUIM DA IA
 function isBadResponse(text = "") {
   const t = text.toLowerCase().trim();
@@ -30270,6 +30378,7 @@ if (
 respostaFinal = enforceNoBordaoFechamento(respostaFinal);  // F7.5
 respostaFinal = enforceNoFichouAlgumaDuvida(respostaFinal);  // F8.2
 respostaFinal = await enforceClarityCheckAfterExplanation(respostaFinal, from, currentLead);  // F8.γ.2
+respostaFinal = await enforceNoSePrecisarNoQualquerDuvida(respostaFinal, from, currentLead);  // F8.1b
 await sendWhatsAppMessage(from, respostaFinal);
      
 history.push({
