@@ -17495,7 +17495,8 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
   leadText = "",
   history = [],
   currentLead = {},
-  semanticIntent = null
+  semanticIntent = null,
+  from = null
 } = {}) {
   /*
     CORREÇÃO PRODUÇÃO — entendimento explícito vence dúvida em outro tema.
@@ -17612,9 +17613,26 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
     if (etapasUpdate[step] !== true) {
       etapasUpdate[step] = true;
       understoodSteps.push(step);
+      if (from && typeof from === "string") {
+        auditSystemEvent("etapa_marcada_via_inferencia", "low", from, {
+          step,
+          reason,
+          viaCaminho: detectCaminho(reason)
+        }).catch(() => {});
+      }
     }
 
     evidence.criterio = evidence.criterio || reason;
+  }
+
+  function detectCaminho(reason) {
+    if (typeof reason !== "string") return "outro";
+    if (reason.includes("F7.4b") || reason.includes("clarity_check")) return "F7.4b_clarity_check";
+    if (reason.includes("F7.2a")) return "F7.2a_qualificacao";
+    if (reason.includes("explicito") || reason.includes("declarou")) return "lead_declarou";
+    if (reason.includes("avancou_topico") || reason.includes("movedToNext")) return "lead_avancou";
+    if (reason.includes("Bug7")) return "Bug7";
+    return "outro";
   }
 
   /*
@@ -29935,7 +29953,8 @@ const funnelProgressFromLead = iqgBuildFunnelProgressUpdateFromLeadReply({
   leadText: text,
   history,
   currentLead,
-  semanticIntent
+  semanticIntent,
+  from
 });
 
 let etapasDepoisDoEntendimento = {
