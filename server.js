@@ -525,6 +525,60 @@ function classifyError(err, response = null) {
   };
 }
 
+// Bug #1 — rate limit de cadência (anti-ban WhatsApp)
+const RATE_LIMIT_QUERY_TIMEOUT_MS = 3000;
+const MAX_SDR_MSGS_24H = parseInt(process.env.MAX_SDR_MSGS_24H || "10", 10);
+
+// ============================================================
+// isCountableSdrMessage — Bug #1 / Gap #1: msg SDR que conta
+// pro rate limit. Exclui content vazio e mensagens que são
+// SÓ tags [ACTION:...] (sem texto real pro lead).
+// Conta QUALQUER role:"assistant" real — followup OU resposta IA
+// (rajada de qualquer fonte é risco de ban).
+// ============================================================
+function isCountableSdrMessage(m) {
+  if (!m || m.role !== "assistant") return false;
+  if (!m.createdAt) return false;
+  const content = String(m.content || "");
+  if (content.trim().length === 0) return false;
+  const withoutActions = content.replace(/\[ACTION:[^\]]+\]/g, "").trim();
+  if (withoutActions.length === 0) return false;
+  return true;
+}
+
+// ============================================================
+// getRecentSdrStats — Bug #1: conta msgs SDR de um lead nas
+// últimas windowMs. Query com timeout fail-open (Mongo lento
+// não derruba cadência). Retorna { count, timeoutFallback }.
+// ============================================================
+async function getRecentSdrStats(user, windowMs = 24 * 60 * 60 * 1000) {
+  const queryPromise = db.collection("conversations").findOne(
+    { user },
+    { projection: { messages: { $slice: -100 } } }
+  );
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("rate_limit_query_timeout")), RATE_LIMIT_QUERY_TIMEOUT_MS)
+  );
+
+  let conv;
+  try {
+    conv = await Promise.race([queryPromise, timeoutPromise]);
+  } catch (err) {
+    return { count: 0, timeoutFallback: true };
+  }
+
+  const allMsgs = conv?.messages || [];
+  const now = Date.now();
+  const windowStart = now - windowMs;
+
+  const count = allMsgs.filter(m =>
+    isCountableSdrMessage(m) &&
+    new Date(m.createdAt).getTime() >= windowStart
+  ).length;
+
+  return { count, timeoutFallback: false };
+}
+
 async function claimMessage(messageId) {
   if (!messageId) return true;
 
@@ -23514,6 +23568,22 @@ async function sendAutomaticFollowupIfStillValid({
     return false;
   }
 
+  // ====== Bug #1 — Trava 5: rate limit de cadência (anti-ban) ======
+  const rateLimitStats = await getRecentSdrStats(from);
+  if (rateLimitStats.timeoutFallback) {
+    await auditFollowupEvent("rate_limit_query_timeout", "high", {
+      step: followup?.step || null
+    });
+  } else if (rateLimitStats.count >= MAX_SDR_MSGS_24H) {
+    await auditFollowupEvent("followup_rate_limited", "high", {
+      step: followup?.step || null,
+      sdrMsgs24h: rateLimitStats.count,
+      limit: MAX_SDR_MSGS_24H
+    });
+    return false;
+  }
+  // ====== fim Trava 5 ======
+
   const latestHistory = await loadConversation(from);
 
   // ============================================================
@@ -23680,7 +23750,7 @@ async function sendAutomaticFollowupIfStillValid({
   }
 
   /*
-    Trava 5: mensagem vazia (não deveria acontecer, mas protege).
+    Trava 6: mensagem vazia (não deveria acontecer, mas protege).
   */
   if (!messageToSend || !String(messageToSend).trim()) {
     console.log("🔕 Follow-up cancelado: mensagem vazia.", {
