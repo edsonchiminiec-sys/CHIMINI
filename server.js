@@ -38596,6 +38596,82 @@ app.get("/diagnostico-bug-1", async (req, res) => {
 // FIM DIAGNÓSTICO BUG #1
 // =====================================================
 
+// ====== ENDPOINT TEMPORÁRIO — remover após coleta (diagnóstico perdidos-fantasma) ======
+app.get("/diagnostico-perdidos-janela", async (req, res) => {
+  if (req.query.senha !== "iqg-diag-perdidos-2026") {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  try {
+    // getVisualStatus replicado (versão ATUAL com bug de precedência) — só diagnóstico
+    const getVisualStatusAtual = lead => {
+      const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+      const fase = lead.faseQualificacao || "";
+      const status = lead.status || "";
+      const etapas = lead.etapas || {};
+      const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+      if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+      if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+      if (fase === "qualificando") return "qualificando";
+      if (etapasConcluidas >= 3) return "qualificando";
+      if (fase === "morno" || fase === "afiliado") return "morno";
+      if (etapasConcluidas >= 1) return "morno";
+      if (status === "morno") return "morno";
+      return status || "novo";
+    };
+
+    const leads = await db.collection("leads").find({
+      $or: [{ status: "perdido" }, { faseQualificacao: "perdido" }]
+    }).toArray();
+
+    const analise = leads.map(lead => {
+      const visualStatus = getVisualStatusAtual(lead);
+      const dadosCompletos = Boolean(
+        lead.nome && lead.cpf &&
+        (lead.telefone || lead.telefoneWhatsApp || lead.user) &&
+        lead.cidade && lead.estado
+      );
+      return {
+        user: lead.user,
+        nome: lead.nome,
+        status: lead.status,
+        faseQualificacao: lead.faseQualificacao,
+        statusDashboard: lead.statusDashboard || null,
+        statusVisualDashboard: lead.statusVisualDashboard || null,
+        faseFunil: lead.faseFunil || null,
+        statusOperacional: lead.statusOperacional || null,
+        perdidoEm: lead.perdidoEm || null,
+        encerradoPor: lead.encerradoPor || null,
+        dadosCompletos,
+        getVisualStatusRetorna: visualStatus,
+        ehFantasma: visualStatus !== "perdido"
+      };
+    });
+
+    const fantasmas = analise.filter(a => a.ehFantasma);
+    const corretos = analise.filter(a => !a.ehFantasma);
+    const causaEarlyReturn = {};
+    fantasmas.forEach(f => {
+      const causa = f.statusDashboard || f.statusVisualDashboard || "(vazio)";
+      causaEarlyReturn[causa] = (causaEarlyReturn[causa] || 0) + 1;
+    });
+
+    res.json({
+      totalPerdidos: leads.length,
+      corretos_getVisualStatus_perdido: corretos.length,
+      fantasmas_getVisualStatus_outro: fantasmas.length,
+      valoresQueCausamEarlyReturn: causaEarlyReturn,
+      amostraFantasmas: fantasmas.slice(0, 25),
+      amostraCorretos: corretos.slice(0, 5)
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ====== fim endpoint temporário ======
+
 ensureIndexes()
   .then(() => {
     app.listen(PORT, () => {
