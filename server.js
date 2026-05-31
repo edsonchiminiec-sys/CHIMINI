@@ -35079,12 +35079,12 @@ const getVisualStatus = lead => {
   const etapas = lead.etapas || {};
   const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
 
-  // 1. Ação do humano no dashboard tem prioridade
-  if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
-
-  // 2. Estados terminais
+  // 1. Estados terminais autoritativos (superam dashboard stale — Bug fantasma)
   if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
   if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+
+  // 2. Dashboard só prevalece em estados não-terminais
+  if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
 
   // 3. Coleta de dados ativa = Pré-análise
   if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
@@ -37506,10 +37506,11 @@ app.get("/diagnostico-cadencia-mornos", async (req, res) => {
       const etapas = lead.etapas || {};
       const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
 
-      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
-
+      // Terminais autoritativos primeiro (superam dashboard stale — Bug fantasma)
       if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
       if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+      // Dashboard só prevalece em estados não-terminais
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
 
       if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
 
@@ -37732,10 +37733,11 @@ app.get("/admin-purga-mornos-retroativa", async (req, res) => {
       const etapas = lead.etapas || {};
       const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
 
-      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
-
+      // Terminais autoritativos primeiro (superam dashboard stale — Bug fantasma)
       if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
       if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+      // Dashboard só prevalece em estados não-terminais
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
 
       if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
 
