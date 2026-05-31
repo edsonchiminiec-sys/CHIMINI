@@ -8,9 +8,20 @@ import crypto from "crypto";
 
 dotenv.config();
 
+// Bug #2 — aviso de boot se secret HMAC ausente
+if (!(process.env.WHATSAPP_APP_SECRET || "").trim()) {
+  const mode = (process.env.HMAC_ENFORCEMENT || "strict").toLowerCase();
+  console.warn(`🔴 [BOOT] WHATSAPP_APP_SECRET ausente — HMAC do webhook desativado (modo=${mode}). Webhooks NÃO serão validados até configurar a env.`);
+}
+
 const app = express();
 
-app.use(express.json());
+app.use(express.json({
+  // Bug #2 — captura rawBody pra verificação HMAC do webhook Meta.
+  // O HMAC computa sobre os bytes exatos enviados; reserializar o JSON
+  // parseado poderia diferir em espaços/ordem de chaves.
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 
 /* =========================
    PWA DASHBOARD IQG
@@ -387,6 +398,72 @@ async function fetchOpenAIWithRetry(url, options = {}) {
   err.attempts = OPENAI_RETRY.maxAttempts;
   err.durationMs = Date.now() - startTime;
   throw err;
+}
+
+// ============================================================
+// verifyMetaSignature — Bug #2: valida HMAC SHA-256 do webhook Meta
+// ============================================================
+// Meta WhatsApp Cloud API assina cada POST com X-Hub-Signature-256.
+// Retorna { valid, reason, warn? } pra caller decidir ação por modo.
+//
+// Modos via env HMAC_ENFORCEMENT:
+//   strict (default) — rejeita inválido
+//   warn-only        — loga mas passa
+//   off              — desliga
+//
+// Secret ausente → pass-through + audit critical (NUNCA derruba SDR).
+// ============================================================
+function verifyMetaSignature(req) {
+  const enforcement = (process.env.HMAC_ENFORCEMENT || "strict").toLowerCase();
+
+  if (enforcement === "off") {
+    return { valid: true, reason: "enforcement_off" };
+  }
+
+  const secret = (process.env.WHATSAPP_APP_SECRET || "").trim();
+
+  if (!secret) {
+    return { valid: true, reason: "secret_missing", warn: true };
+  }
+
+  const signatureHeader = req.headers["x-hub-signature-256"];
+
+  if (!signatureHeader) {
+    return { valid: false, reason: "header_missing" };
+  }
+
+  if (!req.rawBody) {
+    return { valid: false, reason: "rawbody_missing" };
+  }
+
+  let expected;
+  try {
+    // NOTA: Meta WhatsApp sempre envia X-Hub-Signature-256 em lowercase hex.
+    // Comparação case-sensitive POR DESIGN. Se Meta mudar policy, normalizar
+    // com .toLowerCase() ANTES do Buffer.from() (mantendo timing-safe).
+    expected = "sha256=" + crypto
+      .createHmac("sha256", secret)
+      .update(req.rawBody)
+      .digest("hex");
+  } catch (hmacErr) {
+    return { valid: false, reason: "compute_error", error: hmacErr.message };
+  }
+
+  const sigBuf = Buffer.from(signatureHeader);
+  const expBuf = Buffer.from(expected);
+
+  if (sigBuf.length !== expBuf.length) {
+    return { valid: false, reason: "length_mismatch" };
+  }
+
+  let match;
+  try {
+    match = crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch (cmpErr) {
+    return { valid: false, reason: "compare_error", error: cmpErr.message };
+  }
+
+  return { valid: match, reason: match ? "valid" : "signature_mismatch" };
 }
 
 async function claimMessage(messageId) {
@@ -24569,6 +24646,33 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", async (req, res) => {
+  // ====== Bug #2 — HMAC signature verification ======
+  const hmacResult = verifyMetaSignature(req);
+  const hmacEnforcement = (process.env.HMAC_ENFORCEMENT || "strict").toLowerCase();
+
+  if (!hmacResult.valid) {
+    auditSystemEvent("webhook_hmac_invalid", "high", null, {
+      reason: hmacResult.reason,
+      enforcement: hmacEnforcement,
+      headerPresent: !!req.headers["x-hub-signature-256"],
+      bodySize: req.rawBody?.length || 0,
+      error: hmacResult.error || null
+    }).catch(() => {});
+
+    if (hmacEnforcement === "warn-only") {
+      console.warn(`⚠️ [HMAC warn-only] webhook inválido (${hmacResult.reason}) — passando mesmo assim`);
+    } else {
+      console.warn(`🚫 [HMAC strict] webhook rejeitado (${hmacResult.reason})`);
+      return res.sendStatus(401);
+    }
+  } else if (hmacResult.warn) {
+    auditSystemEvent("webhook_hmac_secret_missing", "critical", null, {
+      enforcement: hmacEnforcement
+    }).catch(() => {});
+    console.warn("🔴 [HMAC] WHATSAPP_APP_SECRET ausente — webhooks NÃO estão sendo validados!");
+  }
+  // ====== fim Bug #2 ======
+
   let messageId = null;
 
   try {
