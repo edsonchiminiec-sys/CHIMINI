@@ -226,6 +226,169 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUTS.DE
   }
 }
 
+// ============================================================
+// fetchOpenAIWithRetry — Bug #4: retry com backoff exponential
+// + circuit breaker + Retry-After RFC 7231 + jitter ±20%
+// ============================================================
+// Signature drop-in: fetchOpenAIWithRetry(url, options)
+// Timeout interno baseado em URL (chat vs audio).
+// Throw Error estruturado com code/openaiStatus/attempts pra Bug #6.
+// ============================================================
+
+const OPENAI_RETRY = {
+  maxAttempts: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 30000,
+  retryableStatus: [408, 425, 429, 500, 502, 503, 504]
+};
+
+const OPENAI_CIRCUIT = {
+  failures: 0,
+  openedAt: 0,
+  threshold: 10,
+  cooldownMs: 60 * 1000
+};
+
+function parseRetryAfter(headerValue) {
+  if (!headerValue) return null;
+  const asNumber = parseInt(headerValue, 10);
+  if (!isNaN(asNumber)) {
+    if (asNumber < 0) return null;
+    if (asNumber === 0) return 100;
+    return asNumber * 1000;
+  }
+  const asDate = Date.parse(headerValue);
+  if (!isNaN(asDate)) {
+    const diff = asDate - Date.now();
+    return Math.max(100, diff);
+  }
+  return null;
+}
+
+async function fetchOpenAIWithRetry(url, options = {}) {
+  const startTime = Date.now();
+
+  const timeoutMs = (typeof url === "string" && url.includes("/audio/"))
+    ? FETCH_TIMEOUTS.OPENAI_AUDIO
+    : FETCH_TIMEOUTS.OPENAI_CHAT;
+
+  if (OPENAI_CIRCUIT.openedAt > 0 &&
+      Date.now() - OPENAI_CIRCUIT.openedAt < OPENAI_CIRCUIT.cooldownMs) {
+    const err = new Error("OpenAI circuit open — cooldown ativo");
+    err.code = "OPENAI_CIRCUIT_OPEN";
+    err.openaiStatus = null;
+    err.openaiBody = null;
+    err.attempts = 0;
+    err.durationMs = Date.now() - startTime;
+    throw err;
+  }
+  if (OPENAI_CIRCUIT.openedAt > 0 &&
+      Date.now() - OPENAI_CIRCUIT.openedAt >= OPENAI_CIRCUIT.cooldownMs) {
+    OPENAI_CIRCUIT.openedAt = 0;
+    OPENAI_CIRCUIT.failures = 0;
+    auditSystemEvent("openai_circuit_half_open_test", "low", null, {
+      cooldownMs: OPENAI_CIRCUIT.cooldownMs
+    }).catch(() => {});
+  }
+
+  let lastResponse = null;
+  let lastBody = null;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= OPENAI_RETRY.maxAttempts; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options, timeoutMs);
+      lastResponse = response;
+
+      if (response.ok) {
+        if (OPENAI_CIRCUIT.failures > 0) {
+          auditSystemEvent("openai_circuit_closed_recovered", "low", null, {
+            previousFailures: OPENAI_CIRCUIT.failures
+          }).catch(() => {});
+        }
+        OPENAI_CIRCUIT.failures = 0;
+        OPENAI_CIRCUIT.openedAt = 0;
+        return response;
+      }
+
+      if (!OPENAI_RETRY.retryableStatus.includes(response.status)) {
+        return response;
+      }
+
+      try {
+        lastBody = await response.clone().text();
+      } catch (_) { lastBody = null; }
+
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterMs = parseRetryAfter(retryAfterHeader);
+
+      let delay;
+      if (retryAfterMs !== null) {
+        if (retryAfterMs > OPENAI_RETRY.maxDelayMs) {
+          OPENAI_CIRCUIT.openedAt = Date.now();
+          await auditSystemEvent("openai_circuit_opened_long_retry_after", "high", null, {
+            retryAfterMs,
+            status: response.status,
+            url: typeof url === "string" ? url.slice(0, 80) : "unknown"
+          }).catch(() => {});
+          const err = new Error(`OpenAI Retry-After excessivo: ${retryAfterMs}ms`);
+          err.code = "OPENAI_LONG_RETRY_AFTER";
+          err.openaiStatus = response.status;
+          err.openaiBody = lastBody?.slice(0, 500) || null;
+          err.attempts = attempt;
+          err.durationMs = Date.now() - startTime;
+          throw err;
+        }
+        delay = retryAfterMs;
+      } else {
+        delay = Math.min(
+          OPENAI_RETRY.baseDelayMs * Math.pow(2, attempt - 1),
+          OPENAI_RETRY.maxDelayMs
+        );
+      }
+
+      delay = Math.floor(delay * (0.8 + Math.random() * 0.4));
+
+      console.warn(`OpenAI ${response.status} attempt ${attempt}/${OPENAI_RETRY.maxAttempts}, delay=${delay}ms`);
+
+      if (attempt < OPENAI_RETRY.maxAttempts) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+    } catch (err) {
+      lastErr = err;
+      if (err.code === "OPENAI_LONG_RETRY_AFTER") throw err;
+      if (err.code === "OPENAI_CIRCUIT_OPEN") throw err;
+
+      const delay = Math.floor(
+        OPENAI_RETRY.baseDelayMs * Math.pow(2, attempt - 1) * (0.8 + Math.random() * 0.4)
+      );
+      console.warn(`OpenAI ${err.name || "error"} attempt ${attempt}/${OPENAI_RETRY.maxAttempts}: ${err.message?.slice(0, 100)}, delay=${delay}ms`);
+
+      if (attempt < OPENAI_RETRY.maxAttempts) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+
+  OPENAI_CIRCUIT.failures++;
+  if (OPENAI_CIRCUIT.failures >= OPENAI_CIRCUIT.threshold) {
+    OPENAI_CIRCUIT.openedAt = Date.now();
+    await auditSystemEvent("openai_circuit_opened", "critical", null, {
+      failures: OPENAI_CIRCUIT.failures,
+      threshold: OPENAI_CIRCUIT.threshold,
+      cooldownMs: OPENAI_CIRCUIT.cooldownMs
+    }).catch(() => {});
+  }
+
+  const err = lastErr || new Error(`OpenAI esgotou ${OPENAI_RETRY.maxAttempts} tentativas`);
+  err.code = err.code || "OPENAI_RETRY_EXHAUSTED";
+  err.openaiStatus = lastResponse?.status || null;
+  err.openaiBody = lastBody?.slice(0, 500) || null;
+  err.attempts = OPENAI_RETRY.maxAttempts;
+  err.durationMs = Date.now() - startTime;
+  throw err;
+}
+
 async function claimMessage(messageId) {
   if (!messageId) return true;
 
@@ -3209,7 +3372,7 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
   historicoRecente: recentHistory || []
 });
    
-  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -3230,7 +3393,7 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
         }
       ]
     })
-  }, FETCH_TIMEOUTS.OPENAI_CHAT);
+  });
 
   const data = await response.json();
 
@@ -3334,7 +3497,7 @@ async function runConversationContinuityAnalyzer({
   const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
 
   try {
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -3987,7 +4150,7 @@ Se houver objeção, use:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -4683,7 +4846,7 @@ async function recuperarDadosCadastraisDoHistorico({ history = [], lead = {} } =
       return vazio;
     }
 
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -4728,7 +4891,7 @@ Responda SOMENTE um JSON neste formato, sem texto extra:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -5018,7 +5181,7 @@ otherProductLineTopics: [],
     : [];
 
   try {
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -5637,7 +5800,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -7705,7 +7868,7 @@ async function runSupervisor({
     historicoRecente: recentHistory
   };
 
-  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -7726,7 +7889,7 @@ async function runSupervisor({
         }
       ]
     })
-  }, FETCH_TIMEOUTS.OPENAI_CHAT);
+  });
 
   const data = await response.json();
 
@@ -8705,7 +8868,7 @@ async function runFinalRouteMixGuard({
    
   try {
      
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -8838,7 +9001,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -9123,7 +9286,7 @@ async function regenerateSdrReplyWithGuardGuidance({
   };
 
   try {
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -9181,7 +9344,7 @@ Reescreva agora a resposta final que deve ser enviada ao lead.`
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -11935,14 +12098,14 @@ async function transcribeAudioBuffer(buffer, filename = "audio.ogg") {
     contentType: "audio/ogg"
   });
 
-  const response = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
+  const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       ...form.getHeaders()
     },
     body: form
-  }, FETCH_TIMEOUTS.OPENAI_AUDIO);
+  });
 
   const data = await response.json();
 
@@ -19243,7 +19406,7 @@ async function runDataFlowSemanticRouter({
    
   try {
      
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19343,7 +19506,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -19505,7 +19668,7 @@ async function answerDataFlowQuestion({
     : [];
 
   try {
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19554,7 +19717,7 @@ Responda em no máximo 2 blocos curtos antes da retomada.`
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -19685,7 +19848,7 @@ async function answerPostCrmQuestion({
     : [];
 
   try {
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19737,7 +19900,7 @@ Responda em até 3 blocos curtos.`
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
@@ -28740,7 +28903,7 @@ Resposta esperada: espelhar o tom do lead em UMA frase curta (ex: lead "👍" �
 
      const saudacaoHorario = getGreetingByBrazilTime();
      
-const openaiResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+const openaiResponse = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -28838,7 +29001,7 @@ Se estiver indefinido, prefira linguagem neutra e evite frases como "interessado
   ...history
 ]
 })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await openaiResponse.json();
 
@@ -31814,7 +31977,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
           console.warn(`[F5-Auditor] Lead ${maskUser(lead.user)} truncado p/ ${historyParaAudit.length} msgs (limite ${MAX_TOKENS_POR_LEAD} tokens).`);
         }
 
-        const openaiResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+        const openaiResp = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -31829,7 +31992,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
             response_format: { type: "json_object" },
             temperature: 0.3
           })
-        }, FETCH_TIMEOUTS.OPENAI_CHAT);
+        });
 
         if (!openaiResp.ok) {
           const errBody = await openaiResp.text();
@@ -34114,7 +34277,7 @@ async function generateHumanLeadBriefing({
       historicoConsiderado: historyText
     };
 
-    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -34190,7 +34353,7 @@ Retorne somente JSON válido neste formato:
           }
         ]
       })
-    }, FETCH_TIMEOUTS.OPENAI_CHAT);
+    });
 
     const data = await response.json();
 
