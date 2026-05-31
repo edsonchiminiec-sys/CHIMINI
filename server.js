@@ -466,6 +466,65 @@ function verifyMetaSignature(req) {
   return { valid: match, reason: match ? "valid" : "signature_mismatch" };
 }
 
+// ============================================================
+// classifyError — Bug #6: categoriza erro em vez de hardcode
+// ============================================================
+// Cobre AMBOS domínios:
+//   - OpenAI: err.code OPENAI_* (Bug #4) + openaiStatus
+//   - WhatsApp/fetch: FETCH_TIMEOUT (Bug #3) + HTTP status Meta
+//   - Erros tipados (ReferenceError, TypeError)
+//   - Fallback por mensagem (legado)
+// Retorna objeto estruturado pro caller injetar no payload do audit.
+// PRESERVA eventType do caller — só enriquece payload.classification.
+// ============================================================
+function classifyError(err, response = null) {
+  const code = err?.code || null;
+  const httpStatus = err?.openaiStatus ?? response?.status ?? null;
+  const message = (err?.message || "").slice(0, 200);
+  const url = err?.originalUrl || "";
+
+  let kind = "unknown";
+  let retryable = false;
+
+  if (code === "OPENAI_CIRCUIT_OPEN") {
+    kind = "openai_circuit"; retryable = false;
+  } else if (code === "OPENAI_LONG_RETRY_AFTER") {
+    kind = "openai_rate_limit_excessive"; retryable = false;
+  } else if (code === "OPENAI_RETRY_EXHAUSTED") {
+    kind = "openai_exhausted_retries"; retryable = false;
+  } else if (code === "FETCH_TIMEOUT") {
+    if (url.includes("openai.com")) kind = "openai_timeout";
+    else if (url.includes("graph.facebook")) kind = "whatsapp_timeout";
+    else kind = "external_timeout";
+    retryable = true;
+  }
+  else if (httpStatus === 401) { kind = "unauthorized"; retryable = false; }
+  else if (httpStatus === 403) { kind = "forbidden"; retryable = false; }
+  else if (httpStatus === 429) { kind = "rate_limited"; retryable = true; }
+  else if (httpStatus >= 500 && httpStatus < 600) { kind = "server_5xx"; retryable = true; }
+  else if (httpStatus >= 400 && httpStatus < 500) { kind = "client_4xx"; retryable = false; }
+  else if (err?.name === "ReferenceError") { kind = "code_reference_error"; retryable = false; }
+  else if (err?.name === "TypeError") { kind = "code_type_error"; retryable = false; }
+  else if (/falha ao enviar mensagem whatsapp|whatsapp/i.test(message)) {
+    kind = "whatsapp_send_failed"; retryable = true;
+  } else if (/falha ao chamar openai/i.test(message)) {
+    kind = "openai_failed_legacy"; retryable = true;
+  } else if (/econnrefused|enotfound|etimedout|socket hang up|network|fetch failed/i.test(message)) {
+    kind = "network"; retryable = true;
+  }
+
+  return {
+    kind,
+    code,
+    httpStatus,
+    retryable,
+    attempts: err?.attempts ?? null,
+    durationMs: err?.durationMs ?? null,
+    message,
+    originalUrl: url || null
+  };
+}
+
 async function claimMessage(messageId) {
   if (!messageId) return true;
 
@@ -22421,7 +22480,8 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
     await auditSystemEvent("erro_sistema", "high", from, {
       origem: "generateFollowupViaGPTs",
       step: step,
-      erro: error.message
+      erro: error.message,
+      classification: classifyError(error)
     });
     return null; // fallback para texto hardcoded
   }
@@ -23682,8 +23742,10 @@ async function sendAutomaticFollowupIfStillValid({
     await sendWhatsAppMessage(from, messageToSend);
   } catch (sendError) {
     console.error("Erro ao enviar follow-up no WhatsApp:", sendError.message);
+    const classification = classifyError(sendError);
     await auditFollowupEvent("followup_failed", "high", {
-      motivo: "whatsapp_send_failed",
+      motivo: classification.kind,
+      classification,
       step: followup?.step || null,
       error: sendError.message
     });
