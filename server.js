@@ -35067,7 +35067,7 @@ const query =
       .collection("leads")
       .find(query)
       .sort({ [sortField]: dir })
-      .limit(300)
+      .limit(2000)  // Bug #16: cobre crescimento; leads agora reflete todos (sem filtro), counts batem com cards
       .toArray();
 
     const allLeads = await db.collection("leads").find({}).toArray();
@@ -35560,37 +35560,37 @@ const kpiCardsHtml = [
       5 = Fechados
     */
     function classificarJanelaLead(lead) {
-      const status = lead.status || lead.statusDashboard || "";
+      // Unificação com o sistema: terminais derivam de getVisualStatus
+      // (mesma fonte dos cards do funil — elimina divergência de critério).
+      const visualStatus = getVisualStatus(lead);
 
-      // Janela 5 — Fechados
-      if (status === "fechado" || lead.statusDashboard === "fechado" || lead.statusDashboard === "negociado") {
+      // Janela 5 — Fechados (inclui negociado)
+      if (visualStatus === "fechado" || visualStatus === "negociado") {
         return 5;
       }
 
-      // Janela 4 — Perdidos
-      if (status === "perdido" || lead.statusDashboard === "perdido") {
+      // Janela 4 — Perdidos (agora pega status OR fase OR dashboard, igual ao funil)
+      if (visualStatus === "perdido") {
         return 4;
       }
 
       // Janela 3 — Humano já atendendo
+      // visualStatus terminal em_atendimento OU flags operacionais que getVisualStatus não cobre
       if (
+        visualStatus === "em_atendimento" ||
         lead.botBloqueadoPorHumano === true ||
         lead.humanoAssumiu === true ||
         lead.atendimentoHumanoAtivo === true ||
-        lead.statusOperacional === "em_atendimento" ||
-        status === "em_atendimento"
+        lead.statusOperacional === "em_atendimento"
       ) {
         return 3;
       }
 
-      // Janela 2 — Humano precisa assumir
-      // Critério A: lead pediu para falar com humano
+      // Janela 2 — Humano precisa assumir (conceito operacional puro, sem equivalente no funil)
       const pediuHumano =
         lead.leadPediuHumano === true ||
         lead.solicitouAtendimentoHumano === true ||
         lead.necessitaAtencaoHumanaDashboard === true;
-
-      // Critério B: dados completos, pronto para CRM
       const dadosCompletos = Boolean(
         lead.nome &&
         lead.cpf &&
@@ -35598,12 +35598,11 @@ const kpiCardsHtml = [
         lead.cidade &&
         lead.estado
       );
-
       if (pediuHumano || dadosCompletos) {
         return 2;
       }
 
-      // Janela 1 — IA gerindo sozinha (todo o resto)
+      // Janela 1 — IA gerindo sozinha (novo/morno/qualificando/pre_analise/quente)
       return 1;
     }
 
@@ -36956,7 +36955,7 @@ tr:hover td {
   </div>
 
           <div class="print-info">
-            ${leads.length} lead(s) no total, organizados em 5 janelas de gestão.
+            ${allLeads.length} lead(s) no total, organizados em 5 janelas de gestão.
           </div>
 
           ${recontatosHtml}
