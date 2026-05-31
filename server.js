@@ -188,6 +188,44 @@ async function connectMongo() {
   }
 }
 
+// ============================================================
+// fetchWithTimeout — Bug #3: proteção contra hang indefinido
+// ============================================================
+// Todos os fetch externos devem usar fetchWithTimeout com timeout
+// adequado por categoria de endpoint.
+// Em caso de timeout, throw Error("fetch_timeout_<ms>ms: <url>")
+// ============================================================
+const FETCH_TIMEOUTS = {
+  OPENAI_CHAT: 60000,
+  OPENAI_AUDIO: 90000,
+  WHATSAPP: 15000,
+  MEDIA_DOWNLOAD: 45000,
+  DEFAULT: 30000
+};
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUTS.DEFAULT) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      const urlPreview = typeof url === "string"
+        ? url.slice(0, 100)
+        : String(url).slice(0, 100);
+      const timeoutErr = new Error(`fetch_timeout_${timeoutMs}ms: ${urlPreview}`);
+      timeoutErr.code = "FETCH_TIMEOUT";
+      timeoutErr.originalUrl = urlPreview;
+      timeoutErr.timeoutMs = timeoutMs;
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function claimMessage(messageId) {
   if (!messageId) return true;
 
@@ -3171,7 +3209,7 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
   historicoRecente: recentHistory || []
 });
    
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -3192,7 +3230,7 @@ auditLog("Payload enviado ao Consultor Pre-SDR", {
         }
       ]
     })
-  });
+  }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
   const data = await response.json();
 
@@ -3296,7 +3334,7 @@ async function runConversationContinuityAnalyzer({
   const { dataHojeISO, diaSemanaHoje, horaAgora } = obterDataHojeBrasil();
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -3949,7 +3987,7 @@ Se houver objeção, use:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -4645,7 +4683,7 @@ async function recuperarDadosCadastraisDoHistorico({ history = [], lead = {} } =
       return vazio;
     }
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -4690,7 +4728,7 @@ Responda SOMENTE um JSON neste formato, sem texto extra:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -4980,7 +5018,7 @@ otherProductLineTopics: [],
     : [];
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -5599,7 +5637,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -7667,7 +7705,7 @@ async function runSupervisor({
     historicoRecente: recentHistory
   };
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -7688,7 +7726,7 @@ async function runSupervisor({
         }
       ]
     })
-  });
+  }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
   const data = await response.json();
 
@@ -8667,7 +8705,7 @@ async function runFinalRouteMixGuard({
    
   try {
      
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -8800,7 +8838,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -9085,7 +9123,7 @@ async function regenerateSdrReplyWithGuardGuidance({
   };
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -9143,7 +9181,7 @@ Reescreva agora a resposta final que deve ser enviada ao lead.`
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -11621,7 +11659,7 @@ cleanText = cleanText.replace(/^\d+\.\s\*\*/gm, function(match) {
 async function sendWhatsAppMessage(to, body) {
   const cleanBody = sanitizeWhatsAppText(body);
 
-  const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+  const response = await fetchWithTimeout(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -11633,7 +11671,7 @@ async function sendWhatsAppMessage(to, body) {
       type: "text",
       text: { body: cleanBody }
     })
-  });
+  }, FETCH_TIMEOUTS.WHATSAPP);
 
   const data = await response.json();
 
@@ -11646,7 +11684,7 @@ async function sendWhatsAppMessage(to, body) {
 async function sendTypingIndicator(messageId) {
   if (!messageId) return;
 
-  const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
+  const response = await fetchWithTimeout(`https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -11660,7 +11698,7 @@ async function sendTypingIndicator(messageId) {
         type: "text"
       }
     })
-  });
+  }, FETCH_TIMEOUTS.WHATSAPP);
 
   const data = await response.json();
 
@@ -11751,7 +11789,7 @@ async function sendWhatsAppDocument(to, file) {
     throw new Error("Arquivo inválido: link ou filename ausente.");
   }
 
-  const fileResponse = await fetch(file.link);
+  const fileResponse = await fetchWithTimeout(file.link, {}, FETCH_TIMEOUTS.MEDIA_DOWNLOAD);
 
   if (!fileResponse.ok) {
     throw new Error(`Erro ao baixar arquivo: ${fileResponse.status}`);
@@ -11779,7 +11817,7 @@ async function sendWhatsAppDocument(to, file) {
     contentType: "application/pdf"
   });
 
-  const upload = await fetch(
+  const upload = await fetchWithTimeout(
     `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/media`,
     {
       method: "POST",
@@ -11788,7 +11826,8 @@ async function sendWhatsAppDocument(to, file) {
         ...form.getHeaders()
       },
       body: form
-    }
+    },
+    FETCH_TIMEOUTS.WHATSAPP
   );
 
   const uploadData = await upload.json();
@@ -11803,7 +11842,7 @@ async function sendWhatsAppDocument(to, file) {
     mediaId: uploadData.id
   });
 
-  const sendDocument = await fetch(
+  const sendDocument = await fetchWithTimeout(
     `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
@@ -11821,7 +11860,8 @@ async function sendWhatsAppDocument(to, file) {
           caption: file.caption || ""
         }
       })
-    }
+    },
+    FETCH_TIMEOUTS.WHATSAPP
   );
 
   const sendDocumentData = await sendDocument.json();
@@ -11847,12 +11887,12 @@ async function sendWhatsAppDocument(to, file) {
   };
 }
 async function getWhatsAppMediaUrl(mediaId) {
-  const response = await fetch(`https://graph.facebook.com/v18.0/${mediaId}`, {
+  const response = await fetchWithTimeout(`https://graph.facebook.com/v18.0/${mediaId}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
     }
-  });
+  }, FETCH_TIMEOUTS.WHATSAPP);
 
   const data = await response.json();
 
@@ -11865,12 +11905,12 @@ async function getWhatsAppMediaUrl(mediaId) {
 }
 
 async function downloadWhatsAppMedia(mediaUrl) {
-  const response = await fetch(mediaUrl, {
+  const response = await fetchWithTimeout(mediaUrl, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`
     }
-  });
+  }, FETCH_TIMEOUTS.MEDIA_DOWNLOAD);
 
   if (!response.ok) {
     throw new Error(`Falha ao baixar mídia do WhatsApp: ${response.status}`);
@@ -11895,14 +11935,14 @@ async function transcribeAudioBuffer(buffer, filename = "audio.ogg") {
     contentType: "audio/ogg"
   });
 
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       ...form.getHeaders()
     },
     body: form
-  });
+  }, FETCH_TIMEOUTS.OPENAI_AUDIO);
 
   const data = await response.json();
 
@@ -19203,7 +19243,7 @@ async function runDataFlowSemanticRouter({
    
   try {
      
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19303,7 +19343,7 @@ Responda somente JSON válido neste formato:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -19465,7 +19505,7 @@ async function answerDataFlowQuestion({
     : [];
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19514,7 +19554,7 @@ Responda em no máximo 2 blocos curtos antes da retomada.`
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -19645,7 +19685,7 @@ async function answerPostCrmQuestion({
     : [];
 
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -19697,7 +19737,7 @@ Responda em até 3 blocos curtos.`
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
@@ -21957,7 +21997,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
     let mensagem = "";
 
     try {
-      const sdrResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+      const sdrResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -21976,7 +22016,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
             }
           ]
         })
-      });
+      }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
       const sdrData = await sdrResponse.json();
       mensagem = sdrData?.choices?.[0]?.message?.content || "";
@@ -22056,7 +22096,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
         let retryResponseExcerpt = null;
 
         // Retry interno: 1 segunda tentativa
-        const retryResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        const retryResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
             Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -22072,7 +22112,7 @@ async function generateFollowupViaGPTs(from, lead = {}, step = 1, opts = {}) {
               { role: "user", content: "[GERAR MENSAGEM DE CADÊNCIA — regeneração após detecção de repetição, varie o formato e o ângulo]" }
             ]
           })
-        });
+        }, FETCH_TIMEOUTS.OPENAI_CHAT);
         retryHttpStatus = retryResponse.status;  // F8.6
 
         if (retryResponse.ok) {
@@ -28700,7 +28740,7 @@ Resposta esperada: espelhar o tom do lead em UMA frase curta (ex: lead "👍" �
 
      const saudacaoHorario = getGreetingByBrazilTime();
      
-const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+const openaiResponse = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
   Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -28798,7 +28838,7 @@ Se estiver indefinido, prefira linguagem neutra e evite frases como "interessado
   ...history
 ]
 })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await openaiResponse.json();
 
@@ -31774,7 +31814,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
           console.warn(`[F5-Auditor] Lead ${maskUser(lead.user)} truncado p/ ${historyParaAudit.length} msgs (limite ${MAX_TOKENS_POR_LEAD} tokens).`);
         }
 
-        const openaiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+        const openaiResp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -31789,7 +31829,7 @@ app.post("/auditoria/c-level-auditor", async (req, res) => {
             response_format: { type: "json_object" },
             temperature: 0.3
           })
-        });
+        }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
         if (!openaiResp.ok) {
           const errBody = await openaiResp.text();
@@ -34074,7 +34114,7 @@ async function generateHumanLeadBriefing({
       historicoConsiderado: historyText
     };
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -34150,7 +34190,7 @@ Retorne somente JSON válido neste formato:
           }
         ]
       })
-    });
+    }, FETCH_TIMEOUTS.OPENAI_CHAT);
 
     const data = await response.json();
 
