@@ -37929,6 +37929,97 @@ app.get("/admin-purga-mornos-retroativa", async (req, res) => {
 });
 
 // ============================================================
+// Admin DELETE LEAD TESTE — apaga TODOS os dados do número informado
+// das coleções relacionadas. Whitelist hardcoded por segurança.
+// Default seguro: ?modo=dryRun simula sem alterar o banco.
+// Rota TEMPORÁRIA — remover após uso.
+// ============================================================
+app.get("/admin-delete-lead-teste", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  const WHITELIST_DELETE = ["5554996223975"];
+
+  const phone = String(req.query.phone || "").trim();
+  const modo = String(req.query.modo || "").trim();
+
+  if (!phone) {
+    return res.status(400).json({ ok: false, erro: "param 'phone' obrigatorio" });
+  }
+  if (!WHITELIST_DELETE.includes(phone)) {
+    return res.status(403).json({ ok: false, erro: "phone fora da whitelist", phone });
+  }
+  if (modo !== "dryRun" && modo !== "executar") {
+    return res.status(400).json({ ok: false, erro: "param 'modo' deve ser 'dryRun' ou 'executar'" });
+  }
+
+  try {
+    await connectMongo();
+
+    // Coleções a limpar — campo "user" exceto audit_events (userPhone).
+    // processed_messages (keyed por _id=messageId) e internal_alert_locks
+    // (keyed por alertId) não têm campo user → não incluídas.
+    const targets = [
+      { collection: "leads", field: "user" },
+      { collection: "conversations", field: "user" },
+      { collection: "scheduled_callbacks", field: "user" },
+      { collection: "crm_send_logs", field: "user" },
+      { collection: "file_send_logs", field: "user" },
+      { collection: "incoming_message_buffers", field: "user" },
+      { collection: "audit_events", field: "userPhone" }
+    ];
+
+    const contagensAntes = {};
+    for (const { collection, field } of targets) {
+      contagensAntes[collection] = await db.collection(collection).countDocuments({ [field]: phone });
+    }
+
+    if (modo === "dryRun") {
+      return res.json({
+        ok: true,
+        rota: "/admin-delete-lead-teste",
+        modo: "dryRun",
+        phone,
+        contagensAntes,
+        totalDocs: Object.values(contagensAntes).reduce((a, b) => a + b, 0),
+        observacao: "Nenhum documento removido. Re-execute com modo=executar para apagar.",
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const deletados = {};
+    for (const { collection, field } of targets) {
+      const r = await db.collection(collection).deleteMany({ [field]: phone });
+      deletados[collection] = r.deletedCount || 0;
+    }
+
+    await db.collection("audit_events").insertOne({
+      traceId: `admin_delete_lead_teste_${Date.now()}`,
+      component: "backend_admin",
+      eventType: "admin_delete_lead_teste_executado",
+      severity: "high",
+      userPhone: phone,
+      userMasked: maskPhone(phone),
+      timestamp: new Date(),
+      payload: { phone, contagensAntes, deletados }
+    });
+
+    return res.json({
+      ok: true,
+      rota: "/admin-delete-lead-teste",
+      modo: "executar",
+      phone,
+      contagensAntes,
+      deletados,
+      totalDeletados: Object.values(deletados).reduce((a, b) => a + b, 0),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("[/admin-delete-lead-teste] erro:", error);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ============================================================
 // F5.5g — Rota diagnóstica TEMPORÁRIA pós-purga (read-only)
 //
 // REMOVER junto com outras rotas temporárias no cleanup futuro.
