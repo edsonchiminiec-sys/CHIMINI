@@ -38020,6 +38020,98 @@ app.get("/admin-delete-lead-teste", async (req, res) => {
 });
 
 // ============================================================
+// Admin DIAG NÚMERO — investiga formato real do telefone no Mongo
+// (read-only — só conta + amostra, não modifica nada).
+// Whitelist mesma do delete pra evitar uso indevido.
+// Rota TEMPORÁRIA — remover após uso.
+// ============================================================
+app.get("/admin-diag-numero", async (req, res) => {
+  if (!requireDashboardAuth(req, res)) return;
+
+  const WHITELIST_NUMEROS = ["5554996223975"];
+
+  const sufixo = String(req.query.sufixo || "").trim();
+
+  if (!/^\d{6,}$/.test(sufixo)) {
+    return res.status(400).json({ ok: false, erro: "param 'sufixo' obrigatorio (minimo 6 digitos numericos)" });
+  }
+  if (!WHITELIST_NUMEROS.some(n => n.includes(sufixo))) {
+    return res.status(403).json({ ok: false, erro: "sufixo nao corresponde a nenhum numero da whitelist", sufixo });
+  }
+
+  try {
+    await connectMongo();
+
+    const rx = new RegExp(sufixo);
+
+    const queries = [
+      {
+        name: "leads",
+        filter: { $or: [{ user: rx }, { userPhone: rx }, { phone: rx }] },
+        project: { user: 1, userPhone: 1, phone: 1, _id: 0 }
+      },
+      {
+        name: "conversations",
+        filter: { $or: [{ user: rx }, { userId: rx }] },
+        project: { user: 1, userId: 1, _id: 0 }
+      },
+      {
+        name: "audit_events",
+        filter: { $or: [{ userPhone: rx }, { userId: rx }, { user: rx }, { userMasked: rx }] },
+        project: { userPhone: 1, userMasked: 1, userId: 1, user: 1, _id: 0 }
+      },
+      {
+        name: "scheduled_callbacks",
+        filter: { user: rx },
+        project: { user: 1, _id: 0 }
+      },
+      {
+        name: "crm_send_logs",
+        filter: { user: rx },
+        project: { user: 1, _id: 0 }
+      },
+      {
+        name: "file_send_logs",
+        filter: { user: rx },
+        project: { user: 1, _id: 0 }
+      },
+      {
+        name: "incoming_message_buffers",
+        filter: { user: rx },
+        project: { user: 1, _id: 0 }
+      }
+    ];
+
+    const hits = {};
+    let totalHits = 0;
+    for (const q of queries) {
+      const docs = await db.collection(q.name).find(q.filter).project(q.project).limit(3).toArray();
+      hits[q.name] = docs;
+      totalHits += docs.length;
+    }
+
+    const amostrasFormato = {
+      leads: await db.collection("leads").find({}).project({ user: 1, userPhone: 1, _id: 0 }).limit(3).toArray(),
+      audit_events: await db.collection("audit_events").find({}).project({ userPhone: 1, userMasked: 1, _id: 0 }).limit(3).toArray()
+    };
+
+    return res.json({
+      ok: true,
+      rota: "/admin-diag-numero",
+      sufixo,
+      hits,
+      totalHits,
+      amostrasFormato,
+      observacao: "Read-only. Hits limitados a 3 por colecao. Amostras mostram o formato real dos campos user/userPhone para comparacao.",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error("[/admin-diag-numero] erro:", error);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ============================================================
 // F5.5g — Rota diagnóstica TEMPORÁRIA pós-purga (read-only)
 //
 // REMOVER junto com outras rotas temporárias no cleanup futuro.
