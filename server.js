@@ -38598,6 +38598,112 @@ app.get("/diagnostico-bug-1", async (req, res) => {
 // FIM DIAGNÓSTICO BUG #1
 // =====================================================
 
+// ====== ENDPOINT TEMPORÁRIO — forense funil conversao (REMOVER apos analise) ======
+app.get("/diagnostico-funil-conversao", async (req, res) => {
+  if (req.query.senha !== "iqg-funil-2026") {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  try {
+    // getVisualStatus CORRIGIDO (terminais primeiro — versao pos-fix 0be303a)
+    const getVisualStatus = lead => {
+      const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+      const fase = lead.faseQualificacao || "";
+      const status = lead.status || "";
+      const etapas = lead.etapas || {};
+      const etapasConcluidas = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(status)) return status;
+      if (["perdido", "fechado", "negociado", "em_atendimento"].includes(fase)) return fase;
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+      if (["coletando_dados", "dados_parciais", "aguardando_dados", "aguardando_confirmacao_campo", "aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+      if (["dados_confirmados", "enviado_crm"].includes(fase)) return "quente";
+      if (fase === "qualificando") return "qualificando";
+      if (etapasConcluidas >= 3) return "qualificando";
+      if (fase === "morno" || fase === "afiliado") return "morno";
+      if (etapasConcluidas >= 1) return "morno";
+      if (status === "morno") return "morno";
+      return status || "novo";
+    };
+
+    // Detectar campo de array de mensagens (nome varia)
+    const detectarCampoMsgs = lead => {
+      const candidatos = ["mensagens", "historico", "historicoMensagens", "messages", "conversation", "conversa", "chatHistory"];
+      for (const c of candidatos) if (Array.isArray(lead[c])) return c;
+      return null;
+    };
+
+    const leads = await db.collection("leads").find({}).toArray();
+    const campoMsgs = leads.length ? detectarCampoMsgs(leads[0]) : null;
+
+    const funilEstagio = {};
+    const funilEtapas = { programa: 0, beneficios: 0, estoque: 0, responsabilidades: 0, investimento: 0 };
+    const distNumEtapas = {};
+    const perdidosPorMotivo = {};
+    const perdidosPorStep = {};
+    const engajamentoGeral = { "0_nunca_respondeu": 0, "1_msg": 0, "2a4_msgs": 0, "5mais_msgs": 0 };
+    const engajamentoPorFase = {};
+    let quentesTotal = 0, quentesFechados = 0;
+
+    leads.forEach(lead => {
+      const vs = getVisualStatus(lead);
+      funilEstagio[vs] = (funilEstagio[vs] || 0) + 1;
+
+      const etapas = lead.etapas || {};
+      if (etapas.programa) funilEtapas.programa++;
+      if (etapas.beneficios) funilEtapas.beneficios++;
+      if (etapas.estoque) funilEtapas.estoque++;
+      if (etapas.responsabilidades) funilEtapas.responsabilidades++;
+      if (etapas.investimento) funilEtapas.investimento++;
+      const n = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+      distNumEtapas[n] = (distNumEtapas[n] || 0) + 1;
+
+      if (vs === "perdido") {
+        const motivo = lead.motivoPerda || "(sem motivo)";
+        perdidosPorMotivo[motivo] = (perdidosPorMotivo[motivo] || 0) + 1;
+        const step = (lead.followupStep != null) ? ("step_" + lead.followupStep) : "(sem step)";
+        perdidosPorStep[step] = (perdidosPorStep[step] || 0) + 1;
+      }
+
+      if (campoMsgs) {
+        const arr = lead[campoMsgs] || [];
+        const nMsgsLead = arr.filter(m => m && (m.role === "user" || m.origem === "lead" || m.from === "lead")).length;
+        let bucket;
+        if (nMsgsLead === 0) bucket = "0_nunca_respondeu";
+        else if (nMsgsLead === 1) bucket = "1_msg";
+        else if (nMsgsLead <= 4) bucket = "2a4_msgs";
+        else bucket = "5mais_msgs";
+        engajamentoGeral[bucket]++;
+        if (!engajamentoPorFase[vs]) engajamentoPorFase[vs] = { "0": 0, "1": 0, "2a4": 0, "5+": 0 };
+        if (nMsgsLead === 0) engajamentoPorFase[vs]["0"]++;
+        else if (nMsgsLead === 1) engajamentoPorFase[vs]["1"]++;
+        else if (nMsgsLead <= 4) engajamentoPorFase[vs]["2a4"]++;
+        else engajamentoPorFase[vs]["5+"]++;
+      }
+
+      if (vs === "quente") {
+        quentesTotal++;
+        if (lead.status === "fechado" || lead.status === "negociado") quentesFechados++;
+      }
+    });
+
+    res.json({
+      totalLeads: leads.length,
+      campoMensagensDetectado: campoMsgs,
+      amostraCamposLead: leads.length ? Object.keys(leads[0]).sort() : [],
+      funil_estagio: funilEstagio,
+      funil_etapas_acumulado: funilEtapas,
+      distribuicao_num_etapas: distNumEtapas,
+      perdidos_por_motivo: perdidosPorMotivo,
+      perdidos_por_followup_step: perdidosPorStep,
+      engajamento_geral: campoMsgs ? engajamentoGeral : "campo de mensagens nao detectado",
+      engajamento_por_fase: campoMsgs ? engajamentoPorFase : "campo de mensagens nao detectado",
+      quentes: { total: quentesTotal, fechados: quentesFechados }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ====== fim endpoint temporário forense funil ======
+
 ensureIndexes()
   .then(() => {
     app.listen(PORT, () => {
