@@ -9484,7 +9484,7 @@ async function regenerateSdrReplyWithGuardGuidance({
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        model: process.env.OPENAI_SDR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
         temperature: 0.2,
         messages: [
           {
@@ -19901,7 +19901,7 @@ async function answerDataFlowQuestion({
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        model: process.env.OPENAI_SDR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
         temperature: 0.2,
         messages: [
           {
@@ -20081,7 +20081,7 @@ async function answerPostCrmQuestion({
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+        model: process.env.OPENAI_SDR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
         temperature: 0.2,
         messages: [
           {
@@ -29182,7 +29182,7 @@ const openaiResponse = await fetchOpenAIWithRetry("https://api.openai.com/v1/cha
   "Content-Type": "application/json"
 },
 body: JSON.stringify({
-  model: "gpt-4o-mini",
+  model: process.env.OPENAI_SDR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
   messages: [
   { role: "system", content: SYSTEM_PROMPT },
      {
@@ -29536,6 +29536,7 @@ auditLog("Primeira resposta gerada pela SDR antes das travas", {
   user: maskPhone(from),
   ultimaMensagemLead: text,
   respostaInicialSdr: respostaFinal,
+  modeloUsado: process.env.OPENAI_SDR_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
   currentLead: buildLeadAuditSnapshot(currentLead || {})
 });
 
