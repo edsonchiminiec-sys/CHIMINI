@@ -38704,6 +38704,91 @@ app.get("/diagnostico-funil-conversao", async (req, res) => {
 });
 // ====== fim endpoint temporário forense funil ======
 
+// ====== ENDPOINT TEMPORÁRIO — etapas reais vs apresentadas (REMOVER apos analise) ======
+app.get("/diagnostico-etapas-reais", async (req, res) => {
+  if (req.query.senha !== "iqg-etapas-2026") return res.status(403).json({ error: "forbidden" });
+  try {
+    const getVisualStatus = lead => {
+      const dashboard = lead.statusDashboard || lead.statusVisualDashboard || "";
+      const fase = lead.faseQualificacao || "";
+      const status = lead.status || "";
+      const etapas = lead.etapas || {};
+      const ec = [etapas.programa, etapas.beneficios, etapas.estoque, etapas.responsabilidades, etapas.investimento].filter(Boolean).length;
+      if (["perdido","fechado","negociado","em_atendimento"].includes(status)) return status;
+      if (["perdido","fechado","negociado","em_atendimento"].includes(fase)) return fase;
+      if (dashboard && dashboard !== "novo" && dashboard !== "inicio") return dashboard;
+      if (["coletando_dados","dados_parciais","aguardando_dados","aguardando_confirmacao_campo","aguardando_confirmacao_dados"].includes(fase)) return "pre_analise";
+      if (["dados_confirmados","enviado_crm"].includes(fase)) return "quente";
+      if (fase === "qualificando") return "qualificando";
+      if (ec >= 3) return "qualificando";
+      if (fase === "morno" || fase === "afiliado") return "morno";
+      if (ec >= 1) return "morno";
+      if (status === "morno") return "morno";
+      return status || "novo";
+    };
+
+    const convSample = await db.collection("conversations").findOne({});
+    const campoUser = ["user","telefone","from","waId","phone","numero"].find(k => convSample && convSample[k] != null) || "user";
+    const campoRole = ["role","origem","sender","direction","tipo"].find(k => convSample && convSample[k] != null && k !== campoUser) || null;
+    let msgsLeadPorUser = {};
+    const pipe = campoRole
+      ? [{ $match: { [campoRole]: { $in: ["user","lead","cliente","inbound","received","in"] } } }, { $group: { _id: "$"+campoUser, total: { $sum: 1 } } }]
+      : [{ $group: { _id: "$"+campoUser, total: { $sum: 1 } } }];
+    const agg = await db.collection("conversations").aggregate(pipe).toArray();
+    agg.forEach(a => { if (a._id != null) msgsLeadPorUser[String(a._id)] = a.total; });
+
+    const ordem = ["programa","beneficios","estoque","responsabilidades","investimento"];
+    const idxEtapa = nome => ordem.indexOf(nome);
+
+    const leads = await db.collection("leads").find({}).toArray();
+    const zero = { total: 0, responderam: 0, naoResponderam: 0, sdrApresentouAlgo: 0, sdrNaoApresentouNada: 0, comAguardandoEntendimento: 0, distUltimaApresentada: {} };
+    let divergenciaApresentadaMaiorQueConcluida = 0;
+    const amostra = [];
+
+    leads.forEach(lead => {
+      const etapas = lead.etapas || {};
+      const ne = ordem.filter(k => etapas[k]).length;
+      const ultimaApres = lead.ultimaEtapaApresentadaPelaSdr || "";
+      const idxApres = idxEtapa(ultimaApres);
+      const numApresentadas = idxApres >= 0 ? idxApres + 1 : 0;
+      const msgs = msgsLeadPorUser[String(lead.user)] || 0;
+      let ag = lead.etapasAguardandoEntendimento;
+      let temAg = Array.isArray(ag) ? ag.length > 0 : (ag && typeof ag === "object" ? Object.keys(ag).length > 0 : !!ag);
+
+      if (numApresentadas > ne) divergenciaApresentadaMaiorQueConcluida++;
+
+      if (ne === 0) {
+        zero.total++;
+        if (msgs > 0) zero.responderam++; else zero.naoResponderam++;
+        if (numApresentadas > 0) zero.sdrApresentouAlgo++; else zero.sdrNaoApresentouNada++;
+        if (temAg) zero.comAguardandoEntendimento++;
+        const ch = ultimaApres || "(nenhuma)";
+        zero.distUltimaApresentada[ch] = (zero.distUltimaApresentada[ch] || 0) + 1;
+        if (msgs > 0 && amostra.length < 10) {
+          amostra.push({
+            user: lead.user, getVisualStatus: getVisualStatus(lead), etapasConcluidas: ne,
+            ultimaEtapaApresentadaPelaSdr: ultimaApres || null,
+            etapasAguardandoEntendimento: ag || null,
+            ultimaEvidenciaEntendimentoFunil: lead.ultimaEvidenciaEntendimentoFunil || null,
+            faseQualificacao: lead.faseQualificacao, msgsDoLead: msgs, createdAt: lead.createdAt
+          });
+        }
+      }
+    });
+
+    res.json({
+      totalLeads: leads.length,
+      meta_conversations: { campoUser, campoRole, contandoMsgsDoLead: !!campoRole },
+      divergencia_apresentada_vs_concluida: divergenciaApresentadaMaiorQueConcluida,
+      zero_etapas_concluidas: zero,
+      amostra_zero_que_responderam: amostra
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+// ====== fim endpoint temporário etapas reais ======
+
 ensureIndexes()
   .then(() => {
     app.listen(PORT, () => {
