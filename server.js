@@ -18079,10 +18079,26 @@ function iqgBuildFunnelProgressUpdateFromLeadReply({
   const lastSdrIsClarityCheck = CLARITY_CHECK_REGEX.test(lastAssistantText || "");
   const leadIsAffirmativeAck = AFFIRMATIVE_ACK_REGEX.test(String(leadText || "").trim())
     && !RX_OBJECAO_OU_RESSALVA.test(String(leadText || ""));
-  if (lastSdrIsClarityCheck && leadIsAffirmativeAck && !lastIsCadencia) {
-    for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
-      if (explainedPreviously[step] && !currentEtapas[step]) {
-        markStep(step, "clarity_check_confirmado_F7.4b");
+  if (lastSdrIsClarityCheck && leadIsAffirmativeAck) {
+    // Fix 1A: clarity-check pode promover em cadência, mas LIMITADO a 1 etapa
+    // (a mais avançada já apresentada) pra conter o risco residual de fantasma.
+    // Em conversa não-cadência, mantém o comportamento original (loop completo).
+    if (lastIsCadencia) {
+      const ordemEtapas = ["programa", "beneficios", "estoque", "responsabilidades"];
+      let ultimaEtapaApresentada = null;
+      for (const step of ordemEtapas) {
+        if (explainedPreviously[step] && !currentEtapas[step]) {
+          ultimaEtapaApresentada = step;
+        }
+      }
+      if (ultimaEtapaApresentada) {
+        markStep(ultimaEtapaApresentada, "clarity_check_confirmado_F7.4b_pos_cadencia");
+      }
+    } else {
+      for (const step of ["programa", "beneficios", "estoque", "responsabilidades"]) {
+        if (explainedPreviously[step] && !currentEtapas[step]) {
+          markStep(step, "clarity_check_confirmado_F7.4b");
+        }
       }
     }
   }
